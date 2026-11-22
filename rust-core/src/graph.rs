@@ -501,6 +501,78 @@ fn compute_ahead_behind(
     (ahead, behind)
 }
 
+pub fn get_commit_detail(
+    repo_path: &std::path::Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    oid_hex: &str,
+) -> Result<crate::CommitDetail, MiniGitError> {
+    let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
+        .map_err(|e| MiniGitError::message(e.to_string()))?;
+    let repo = sync_repo.to_thread_local();
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| MiniGitError::message(e.to_string()))?;
+
+    let raw_msg = commit.message_raw_sloppy().to_str_lossy().into_owned();
+    let mut lines = raw_msg.lines();
+    let summary = lines.next().unwrap_or_default().trim().to_owned();
+    let body = lines.collect::<Vec<_>>().join("\n").trim().to_owned();
+
+    let (author_name, author_email) = commit
+        .author()
+        .map(|a| {
+            (
+                a.name.to_str_lossy().into_owned(),
+                a.email.to_str_lossy().into_owned(),
+            )
+        })
+        .unwrap_or_default();
+
+    let timestamp = commit.time().map(|t| t.seconds).unwrap_or_default();
+    let parent_oids = commit
+        .parent_ids()
+        .map(|p| p.detach().to_hex().to_string())
+        .collect();
+
+    let files_output = crate::git_cli::run(
+        repo_path,
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "--root",
+            oid_hex,
+        ],
+    )?;
+
+    let files = files_output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let status = parts.next()?.trim();
+            let path = parts.next()?.trim();
+            Some(crate::FileChange {
+                path: path.to_owned(),
+                status: status.chars().next().unwrap_or('M').to_string(),
+                staged: false,
+            })
+        })
+        .collect();
+
+    Ok(crate::CommitDetail {
+        oid_hex: oid_hex.to_owned(),
+        short_oid: oid_hex.chars().take(7).collect(),
+        summary,
+        body,
+        author_name,
+        author_email,
+        timestamp,
+        parent_oids,
+        files,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

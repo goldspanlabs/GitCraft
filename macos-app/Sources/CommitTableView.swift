@@ -4,16 +4,22 @@ import SwiftUI
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let workingChangesCount: Int
-    let scrollRequest: AppState.ScrollRequest?
+    let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
     let onSelectCommit: (CommitRow?) -> Void
+    let onCopyOid: (String) -> Void
+    let onCreateBranchAtCommit: (String) -> Void
+    let onCheckoutCommit: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             rows: rows,
             workingChangesCount: workingChangesCount,
             onLoadMore: onLoadMore,
-            onSelectCommit: onSelectCommit
+            onSelectCommit: onSelectCommit,
+            onCopyOid: onCopyOid,
+            onCreateBranchAtCommit: onCreateBranchAtCommit,
+            onCheckoutCommit: onCheckoutCommit
         )
     }
 
@@ -39,6 +45,10 @@ struct CommitTableView: NSViewRepresentable {
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
 
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        table.menu = menu
+
         scrollView.documentView = table
         scrollView.contentView.postsBoundsChangedNotifications = true
 
@@ -60,6 +70,9 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.workingChangesCount = workingChangesCount
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
+        coordinator.onCopyOid = onCopyOid
+        coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
+        coordinator.onCheckoutCommit = onCheckoutCommit
 
         if dataChanged {
             let selectedRow = table.selectedRow
@@ -83,11 +96,14 @@ struct CommitTableView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var rows: [CommitRow]
         var workingChangesCount: Int
         var onLoadMore: () -> Void
         var onSelectCommit: (CommitRow?) -> Void
+        var onCopyOid: (String) -> Void
+        var onCreateBranchAtCommit: (String) -> Void
+        var onCheckoutCommit: (String) -> Void
         var lastHandledScrollID: UUID?
         weak var tableView: NSTableView?
         private var boundsObserver: NSObjectProtocol?
@@ -98,12 +114,59 @@ struct CommitTableView: NSViewRepresentable {
             rows: [CommitRow],
             workingChangesCount: Int,
             onLoadMore: @escaping () -> Void,
-            onSelectCommit: @escaping (CommitRow?) -> Void
+            onSelectCommit: @escaping (CommitRow?) -> Void,
+            onCopyOid: @escaping (String) -> Void,
+            onCreateBranchAtCommit: @escaping (String) -> Void,
+            onCheckoutCommit: @escaping (String) -> Void
         ) {
             self.rows = rows
             self.workingChangesCount = workingChangesCount
             self.onLoadMore = onLoadMore
             self.onSelectCommit = onSelectCommit
+            self.onCopyOid = onCopyOid
+            self.onCreateBranchAtCommit = onCreateBranchAtCommit
+            self.onCheckoutCommit = onCheckoutCommit
+        }
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let tableView else { return }
+            let clickedRow = tableView.clickedRow
+            guard clickedRow > 0, (clickedRow - 1) < rows.count else { return }
+            let commit = rows[clickedRow - 1]
+
+            let copyItem = NSMenuItem(title: "Copy Commit SHA (\(commit.shortOid))", action: #selector(handleCopyOid(_:)), keyEquivalent: "")
+            copyItem.target = self
+            copyItem.representedObject = commit.oidHex
+            menu.addItem(copyItem)
+
+            let branchItem = NSMenuItem(title: "Create Branch Here…", action: #selector(handleCreateBranch(_:)), keyEquivalent: "")
+            branchItem.target = self
+            branchItem.representedObject = commit.oidHex
+            menu.addItem(branchItem)
+
+            let checkoutItem = NSMenuItem(title: "Checkout Commit (Detached)", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
+            checkoutItem.target = self
+            checkoutItem.representedObject = commit.oidHex
+            menu.addItem(checkoutItem)
+        }
+
+        @objc private func handleCopyOid(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String {
+                onCopyOid(oid)
+            }
+        }
+
+        @objc private func handleCreateBranch(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String {
+                onCreateBranchAtCommit(oid)
+            }
+        }
+
+        @objc private func handleCheckoutCommit(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String {
+                onCheckoutCommit(oid)
+            }
         }
 
         deinit {

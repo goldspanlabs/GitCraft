@@ -5,9 +5,13 @@ mod highlight;
 mod watcher;
 
 use std::{
+    collections::BTreeSet,
     io,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -64,7 +68,16 @@ pub struct StyleSpan {
 pub struct DiffRow {
     pub kind: String,
     pub text: String,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
     pub spans: Vec<StyleSpan>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileChange {
+    pub path: String,
+    pub status: String,
+    pub staged: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +92,19 @@ pub struct CommitRow {
     pub max_lanes: u32,
     pub edges: Vec<GraphEdge>,
     pub refs: Vec<RefBadge>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommitDetail {
+    pub oid_hex: String,
+    pub short_oid: String,
+    pub summary: String,
+    pub body: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub timestamp: i64,
+    pub parent_oids: Vec<String>,
+    pub files: Vec<FileChange>,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +128,8 @@ pub struct TagInfo {
 #[derive(Clone, Debug)]
 pub struct RepoStatus {
     pub files: Vec<String>,
+    pub staged_files: Vec<FileChange>,
+    pub unstaged_files: Vec<FileChange>,
     pub branch: String,
     pub is_clean: bool,
 }
@@ -110,6 +138,14 @@ pub struct RepoSession {
     path: PathBuf,
     sync_repo: gix::ThreadSafeRepository,
     mutation_lock: Arc<Mutex<()>>,
+    dirty: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl Drop for RepoSession {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+    }
 }
 
 impl RepoSession {
@@ -124,27 +160,79 @@ impl RepoSession {
         }
         let sync_repo = gix::ThreadSafeRepository::open(&path)
             .map_err(|e| MiniGitError::message(e.to_string()))?;
+        let dirty = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        watcher::spawn_dirty_watcher(&path, Arc::clone(&dirty), Arc::clone(&stopped));
         Ok(Self {
             path,
             sync_repo,
             mutation_lock: Arc::new(Mutex::new(())),
+            dirty,
+            stopped,
         })
     }
 
+    pub fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::AcqRel)
+    }
+
     pub fn status(&self) -> Result<RepoStatus, MiniGitError> {
-        let output = git_cli::run(&self.path, &["status", "--short", "--branch"])?;
+        let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "--branch"])?;
         let mut lines = output.lines();
         let branch = lines
             .next()
             .unwrap_or_default()
             .trim_start_matches("## ")
             .to_owned();
-        let files = lines
-            .filter_map(|line| line.get(3..).map(str::to_owned))
-            .collect::<Vec<_>>();
+
+        let mut all_paths = BTreeSet::new();
+        let mut staged_files = Vec::new();
+        let mut unstaged_files = Vec::new();
+
+        for line in lines {
+            if line.len() < 4 {
+                continue;
+            }
+            let bytes = line.as_bytes();
+            let x = bytes[0] as char;
+            let y = bytes[1] as char;
+            let raw_path = &line[3..];
+            let path = raw_path
+                .split(" -> ")
+                .last()
+                .unwrap_or(raw_path)
+                .trim_matches('"')
+                .to_owned();
+
+            all_paths.insert(path.clone());
+
+            if x != ' ' && x != '?' {
+                staged_files.push(FileChange {
+                    path: path.clone(),
+                    status: x.to_string(),
+                    staged: true,
+                });
+            }
+            if y != ' ' {
+                let status = if x == '?' && y == '?' {
+                    "?".to_owned()
+                } else {
+                    y.to_string()
+                };
+                unstaged_files.push(FileChange {
+                    path,
+                    status,
+                    staged: false,
+                });
+            }
+        }
+
+        let files: Vec<String> = all_paths.into_iter().collect();
         Ok(RepoStatus {
-            is_clean: files.is_empty(),
+            is_clean: staged_files.is_empty() && unstaged_files.is_empty(),
             files,
+            staged_files,
+            unstaged_files,
             branch,
         })
     }
@@ -156,6 +244,30 @@ impl RepoSession {
         search_query: Option<String>,
     ) -> Result<Vec<CommitRow>, MiniGitError> {
         graph::get_commit_graph(&self.sync_repo, offset, limit, search_query)
+    }
+
+    pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, MiniGitError> {
+        graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
+    }
+
+    pub fn get_commit_diff(
+        &self,
+        oid_hex: String,
+        path: Option<String>,
+    ) -> Result<Vec<DiffRow>, MiniGitError> {
+        Ok(diff::commit_diff(&self.path, &oid_hex, path.as_deref())?)
+    }
+
+    pub fn get_working_diff(
+        &self,
+        path: Option<String>,
+        staged: bool,
+    ) -> Result<Vec<DiffRow>, MiniGitError> {
+        Ok(diff::working_tree_file(
+            &self.path,
+            path.as_deref(),
+            staged,
+        )?)
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, MiniGitError> {
@@ -172,6 +284,47 @@ impl RepoSession {
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["checkout", &branch_name])?;
+        Ok(())
+    }
+
+    pub fn create_branch(
+        &self,
+        branch_name: String,
+        start_point: Option<String>,
+        checkout: bool,
+    ) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let mut args = if checkout {
+            vec!["checkout", "-b", &branch_name]
+        } else {
+            vec!["branch", &branch_name]
+        };
+        if let Some(ref sp) = start_point {
+            args.push(sp.as_str());
+        }
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
+    }
+
+    pub fn delete_branch(&self, branch_name: String, force: bool) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let flag = if force { "-D" } else { "-d" };
+        git_cli::mutate(&self.path, &["branch", flag, &branch_name])?;
+        Ok(())
+    }
+
+    pub fn merge_branch(&self, branch_name: String) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["merge", &branch_name])?;
         Ok(())
     }
 
@@ -194,6 +347,36 @@ impl RepoSession {
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path])?;
+        Ok(())
+    }
+
+    pub fn stage_all(&self) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["add", "-A"])?;
+        Ok(())
+    }
+
+    pub fn unstage_all(&self) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["reset", "HEAD"])?;
+        Ok(())
+    }
+
+    pub fn discard_file(&self, path: String) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        // Try checkout -- first; if untracked, fall back to git clean -fd --.
+        if git_cli::mutate(&self.path, &["checkout", "--", &path]).is_err() {
+            git_cli::mutate(&self.path, &["clean", "-fd", "--", &path])?;
+        }
         Ok(())
     }
 

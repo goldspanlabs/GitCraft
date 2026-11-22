@@ -1,29 +1,29 @@
 import SwiftUI
 
 struct SidebarView: View {
-    @EnvironmentObject private var state: AppState
+    @ObservedObject var tab: RepoTab
 
     private var localBranches: [BranchInfo] {
-        state.branches.filter { !$0.isRemote }
+        tab.branches.filter { !$0.isRemote }
     }
 
     private var remoteBranches: [BranchInfo] {
-        state.branches.filter { $0.isRemote }
+        tab.branches.filter { $0.isRemote }
     }
 
     var body: some View {
         List {
             Section("WORKING TREE") {
                 Button {
-                    state.scrollToWorkingChanges()
+                    tab.scrollToWorkingChanges()
                 } label: {
                     HStack {
                         Image(systemName: "square.and.pencil")
                             .foregroundStyle(.secondary)
                         Text("Working Changes")
                         Spacer()
-                        if !state.changes.isEmpty {
-                            Text("\(state.changes.count)")
+                        if tab.totalChangesCount > 0 {
+                            Text("\(tab.totalChangesCount)")
                                 .font(.caption2.monospacedDigit())
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
@@ -35,7 +35,7 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
             }
 
-            Section("LOCAL BRANCHES") {
+            Section {
                 ForEach(localBranches, id: \.fullRef) { branch in
                     HStack(spacing: 6) {
                         Image(systemName: branch.isHead ? "checkmark.circle.fill" : "arrow.triangle.branch")
@@ -64,11 +64,45 @@ struct SidebarView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) {
-                        state.checkoutBranch(branch.name)
+                        tab.checkoutBranch(branch.name)
                     }
                     .onTapGesture(count: 1) {
-                        state.scrollToCommit(oidHex: branch.targetOidHex)
+                        tab.scrollToCommit(oidHex: branch.targetOidHex)
                     }
+                    .contextMenu {
+                        if !branch.isHead {
+                            Button("Checkout \(branch.name)") {
+                                tab.checkoutBranch(branch.name)
+                            }
+                            Button("Merge \(branch.name) into Current") {
+                                tab.mergeBranch(branch.name)
+                            }
+                        }
+                        Button("New Branch from \(branch.name)…") {
+                            tab.newBranchStartPoint = branch.name
+                            tab.isShowingNewBranchSheet = true
+                        }
+                        if !branch.isHead {
+                            Divider()
+                            Button("Delete \(branch.name)", role: .destructive) {
+                                tab.deleteBranch(branch.name, force: false)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("LOCAL BRANCHES")
+                    Spacer()
+                    Button {
+                        tab.newBranchStartPoint = nil
+                        tab.isShowingNewBranchSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Create new branch")
                 }
             }
 
@@ -86,15 +120,15 @@ struct SidebarView: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            state.scrollToCommit(oidHex: branch.targetOidHex)
+                            tab.scrollToCommit(oidHex: branch.targetOidHex)
                         }
                     }
                 }
             }
 
-            if !state.tags.isEmpty {
+            if !tab.tags.isEmpty {
                 Section("TAGS") {
-                    ForEach(state.tags, id: \.fullRef) { tag in
+                    ForEach(tab.tags, id: \.fullRef) { tag in
                         HStack(spacing: 6) {
                             Image(systemName: "tag")
                                 .foregroundStyle(.orange)
@@ -106,13 +140,56 @@ struct SidebarView: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            state.scrollToCommit(oidHex: tag.targetOidHex)
+                            tab.scrollToCommit(oidHex: tag.targetOidHex)
                         }
                     }
                 }
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("MiniGit")
+    }
+}
+
+struct NewBranchSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @State private var branchName = ""
+    @State private var checkout = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Create Branch")
+                .font(.headline)
+
+            if let start = tab.newBranchStartPoint {
+                Text("Starting at \(start)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            TextField("Branch name (e.g. feature/my-change)", text: $branchName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 300)
+
+            Toggle("Checkout after creating", isOn: $checkout)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Create") {
+                    tab.createBranch(
+                        name: branchName,
+                        startPoint: tab.newBranchStartPoint,
+                        checkout: checkout
+                    )
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
     }
 }

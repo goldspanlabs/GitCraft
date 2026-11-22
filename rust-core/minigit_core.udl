@@ -34,7 +34,15 @@ dictionary StyleSpan {
 dictionary DiffRow {
   string kind;
   string text;
+  u32? old_line;
+  u32? new_line;
   sequence<StyleSpan> spans;
+};
+
+dictionary FileChange {
+  string path;
+  string status;
+  boolean staged;
 };
 
 dictionary CommitRow {
@@ -48,6 +56,18 @@ dictionary CommitRow {
   u32 max_lanes;
   sequence<GraphEdge> edges;
   sequence<RefBadge> refs;
+};
+
+dictionary CommitDetail {
+  string oid_hex;
+  string short_oid;
+  string summary;
+  string body;
+  string author_name;
+  string author_email;
+  i64 timestamp;
+  sequence<string> parent_oids;
+  sequence<FileChange> files;
 };
 
 dictionary BranchInfo {
@@ -68,6 +88,8 @@ dictionary TagInfo {
 
 dictionary RepoStatus {
   sequence<string> files;
+  sequence<FileChange> staged_files;
+  sequence<FileChange> unstaged_files;
   string branch;
   boolean is_clean;
 };
@@ -83,6 +105,15 @@ interface RepoSession {
   sequence<CommitRow> get_commit_graph(u32 offset, u32 limit, string? search_query);
 
   [Throws=MiniGitError]
+  CommitDetail get_commit_detail(string oid_hex);
+
+  [Throws=MiniGitError]
+  sequence<DiffRow> get_commit_diff(string oid_hex, string? path);
+
+  [Throws=MiniGitError]
+  sequence<DiffRow> get_working_diff(string? path, boolean staged);
+
+  [Throws=MiniGitError]
   sequence<BranchInfo> list_branches();
 
   [Throws=MiniGitError]
@@ -92,6 +123,15 @@ interface RepoSession {
   void checkout_branch(string branch_name);
 
   [Throws=MiniGitError]
+  void create_branch(string branch_name, string? start_point, boolean checkout);
+
+  [Throws=MiniGitError]
+  void delete_branch(string branch_name, boolean force);
+
+  [Throws=MiniGitError]
+  void merge_branch(string branch_name);
+
+  [Throws=MiniGitError]
   sequence<DiffRow> diff();
 
   [Throws=MiniGitError]
@@ -99,6 +139,15 @@ interface RepoSession {
 
   [Throws=MiniGitError]
   void unstage(string path);
+
+  [Throws=MiniGitError]
+  void stage_all();
+
+  [Throws=MiniGitError]
+  void unstage_all();
+
+  [Throws=MiniGitError]
+  void discard_file(string path);
 
   [Throws=MiniGitError]
   void commit(string message);
@@ -111,4 +160,6 @@ interface RepoSession {
 
   [Throws=MiniGitError]
   void push();
+
+  boolean take_dirty();
 };
