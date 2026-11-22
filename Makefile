@@ -12,8 +12,7 @@ rust:
 	cargo build --release --manifest-path $(RUST_DIR)/Cargo.toml
 
 bindings: rust
-	@test -x "$(UNIFFI)" || cargo install uniffi_bindgen --version 0.28.3 --root "$(RUST_DIR)/target"
-	"$(UNIFFI)" generate "$(RUST_DIR)/minigit_core.udl" --language swift --out-dir "$(APP_DIR)/Sources/Generated"
+	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/minigit_core.udl" --language swift --out-dir "$(APP_DIR)/Sources/Generated"
 
 swift: rust bindings
 	cd $(APP_DIR) && swift build -c release -Xlinker -L$(CURDIR)/$(RUST_DIR)/target/release
