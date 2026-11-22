@@ -7,7 +7,11 @@ pub fn working_tree(repo: &Path) -> io::Result<Vec<DiffRow>> {
     parse_with_ext(&raw, None)
 }
 
-pub fn working_tree_file(repo: &Path, path: Option<&str>, staged: bool) -> io::Result<Vec<DiffRow>> {
+pub fn working_tree_file(
+    repo: &Path,
+    path: Option<&str>,
+    staged: bool,
+) -> io::Result<Vec<DiffRow>> {
     let mut args = vec!["diff", "--no-ext-diff", "--unified=3"];
     if staged {
         args.push("--cached");

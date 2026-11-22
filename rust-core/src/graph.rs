@@ -254,13 +254,15 @@ fn nearest_free_lane(active_lanes: &[Option<gix::ObjectId>], origin: usize) -> O
         .map(|(idx, _)| idx)
 }
 
-fn collect_refs_and_tips(
-    repo: &gix::Repository,
-) -> Result<(HashMap<gix::ObjectId, Vec<RefBadge>>, Vec<gix::ObjectId>), MiniGitError> {
+type RefsAndTips = (HashMap<gix::ObjectId, Vec<RefBadge>>, Vec<gix::ObjectId>);
+
+fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitError> {
     let mut refs_by_oid: HashMap<gix::ObjectId, Vec<RefBadge>> = HashMap::new();
     let mut tip_set: HashSet<gix::ObjectId> = HashSet::new();
 
-    let head = repo.head().map_err(|e| MiniGitError::message(e.to_string()))?;
+    let head = repo
+        .head()
+        .map_err(|e| MiniGitError::message(e.to_string()))?;
     let head_referent = head
         .referent_name()
         .map(|name| name.as_bstr().to_str_lossy().into_owned());
@@ -339,9 +341,13 @@ fn ref_kind_rank(kind: RefKind) -> u8 {
     }
 }
 
-pub fn list_branches(sync_repo: &gix::ThreadSafeRepository) -> Result<Vec<BranchInfo>, MiniGitError> {
+pub fn list_branches(
+    sync_repo: &gix::ThreadSafeRepository,
+) -> Result<Vec<BranchInfo>, MiniGitError> {
     let repo = sync_repo.to_thread_local();
-    let head = repo.head().map_err(|e| MiniGitError::message(e.to_string()))?;
+    let head = repo
+        .head()
+        .map_err(|e| MiniGitError::message(e.to_string()))?;
     let head_referent = head
         .referent_name()
         .map(|name| name.as_bstr().to_str_lossy().into_owned());
@@ -598,9 +604,27 @@ mod tests {
         let mut lane_colors = Vec::new();
         let mut next_color = 0;
 
-        let c3 = assign_commit_lane(&raw(3, &[2], "c3"), vec![], &mut active_lanes, &mut lane_colors, &mut next_color);
-        let c2 = assign_commit_lane(&raw(2, &[1], "c2"), vec![], &mut active_lanes, &mut lane_colors, &mut next_color);
-        let c1 = assign_commit_lane(&raw(1, &[], "c1"), vec![], &mut active_lanes, &mut lane_colors, &mut next_color);
+        let c3 = assign_commit_lane(
+            &raw(3, &[2], "c3"),
+            vec![],
+            &mut active_lanes,
+            &mut lane_colors,
+            &mut next_color,
+        );
+        let c2 = assign_commit_lane(
+            &raw(2, &[1], "c2"),
+            vec![],
+            &mut active_lanes,
+            &mut lane_colors,
+            &mut next_color,
+        );
+        let c1 = assign_commit_lane(
+            &raw(1, &[], "c1"),
+            vec![],
+            &mut active_lanes,
+            &mut lane_colors,
+            &mut next_color,
+        );
 
         assert_eq!(c3.lane, 0);
         assert_eq!(c3.max_lanes, 1);
@@ -633,7 +657,10 @@ mod tests {
         assert_eq!(c4.lane, 0);
         assert_eq!(c4.max_lanes, 2);
         // Outgoing merge edge from lane 0 -> lane 1
-        assert!(c4.edges.iter().any(|e| e.from_lane == 0 && e.to_lane == 1 && e.is_merge));
+        assert!(c4
+            .edges
+            .iter()
+            .any(|e| e.from_lane == 0 && e.to_lane == 1 && e.is_merge));
 
         let c3 = assign_commit_lane(
             &raw(3, &[1], "Main work"),
@@ -645,7 +672,10 @@ mod tests {
         assert_eq!(c3.lane, 0);
         assert_eq!(c3.max_lanes, 2);
         // Lane 1 should pass straight through while lane 0 is at c3
-        assert!(c3.edges.iter().any(|e| e.from_lane == 1 && e.to_lane == 1 && !e.is_merge));
+        assert!(c3
+            .edges
+            .iter()
+            .any(|e| e.from_lane == 1 && e.to_lane == 1 && !e.is_merge));
 
         let c2 = assign_commit_lane(
             &raw(2, &[1], "Feature work"),
@@ -667,7 +697,10 @@ mod tests {
         );
         assert_eq!(c1.lane, 0);
         assert_eq!(c1.max_lanes, 2);
-        assert!(c1.edges.iter().any(|e| e.from_lane == 1 && e.to_lane == 0 && e.is_merge));
+        assert!(c1
+            .edges
+            .iter()
+            .any(|e| e.from_lane == 1 && e.to_lane == 0 && e.is_merge));
         assert!(active_lanes.is_empty());
     }
 
@@ -708,7 +741,10 @@ mod tests {
         run_git(&["commit", "-m", "Add UI feature"], 1_700_000_002);
 
         run_git(&["checkout", "main"], 1_700_000_002);
-        run_git(&["merge", "--no-ff", "feature/ui", "-m", "Merge UI"], 1_700_000_003);
+        run_git(
+            &["merge", "--no-ff", "feature/ui", "-m", "Merge UI"],
+            1_700_000_003,
+        );
         run_git(&["tag", "v0.1.0"], 1_700_000_003);
 
         let sync_repo = gix::ThreadSafeRepository::open(p).unwrap();
@@ -716,8 +752,14 @@ mod tests {
         let all_rows = get_commit_graph(&sync_repo, 0, 50, None).unwrap();
         assert_eq!(all_rows.len(), 3);
         assert_eq!(all_rows[0].summary, "Merge UI");
-        assert!(all_rows[0].refs.iter().any(|r| r.name == "main" && r.is_current));
-        assert!(all_rows[0].refs.iter().any(|r| r.name == "v0.1.0" && matches!(r.kind, RefKind::Tag)));
+        assert!(all_rows[0]
+            .refs
+            .iter()
+            .any(|r| r.name == "main" && r.is_current));
+        assert!(all_rows[0]
+            .refs
+            .iter()
+            .any(|r| r.name == "v0.1.0" && matches!(r.kind, RefKind::Tag)));
 
         let page2 = get_commit_graph(&sync_repo, 1, 1, None).unwrap();
         assert_eq!(page2.len(), 1);
@@ -730,7 +772,9 @@ mod tests {
         let branches = list_branches(&sync_repo).unwrap();
         assert_eq!(branches.len(), 2);
         assert!(branches.iter().any(|b| b.name == "main" && b.is_head));
-        assert!(branches.iter().any(|b| b.name == "feature/ui" && !b.is_head));
+        assert!(branches
+            .iter()
+            .any(|b| b.name == "feature/ui" && !b.is_head));
 
         let tags = list_tags(&sync_repo).unwrap();
         assert_eq!(tags.len(), 1);

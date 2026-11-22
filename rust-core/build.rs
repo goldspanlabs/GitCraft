@@ -8,6 +8,9 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let rs_path = format!("{out_dir}/minigit_core.uniffi.rs");
     let content = std::fs::read_to_string(&rs_path).unwrap();
-    let fixed = content.replace("uniffi_rust_core_checksum_", "uniffi_minigit_core_checksum_");
+    let fixed = content.replace(
+        "uniffi_rust_core_checksum_",
+        "uniffi_minigit_core_checksum_",
+    );
     std::fs::write(&rs_path, fixed).unwrap();
 }
