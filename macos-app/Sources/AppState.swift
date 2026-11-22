@@ -123,6 +123,7 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var commits: [CommitRow] = []
     @Published private(set) var branches: [BranchInfo] = []
     @Published private(set) var tags: [TagInfo] = []
+    @Published private(set) var stashes: [StashInfo] = []
     @Published private(set) var selectedCommit: CommitRow?
     @Published private(set) var commitDetail: CommitDetail?
     @Published private(set) var diffRows: [DiffRow] = []
@@ -136,6 +137,7 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var commitBody = ""
     @Published var isShowingNewBranchSheet = false
     @Published var newBranchStartPoint: String?
+    @Published var isShowingStashSheet = false
 
     var totalChangesCount: Int {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count
@@ -184,14 +186,16 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let statusTask = Task.detached { try session.status() }.value
                 async let branchesTask = Task.detached { try session.listBranches() }.value
                 async let tagsTask = Task.detached { try session.listTags() }.value
+                async let stashesTask = Task.detached { try session.listStashes() }.value
                 async let graphTask = Task.detached {
                     try session.getCommitGraph(offset: 0, limit: limit, searchQuery: query)
                 }.value
 
-                let (status, branchList, tagList, graphRows) = try await (
+                let (status, branchList, tagList, stashList, graphRows) = try await (
                     statusTask,
                     branchesTask,
                     tagsTask,
+                    stashesTask,
                     graphTask
                 )
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
@@ -199,6 +203,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 unstagedFiles = status.unstagedFiles
                 branches = branchList
                 tags = tagList
+                stashes = stashList
                 commits = graphRows
                 hasMoreCommits = graphRows.count >= Int(limit)
 
@@ -430,6 +435,32 @@ final class RepoTab: ObservableObject, Identifiable {
     func mergeBranch(_ branchName: String) {
         performMutation { session in
             try session.mergeBranch(branchName: branchName)
+        }
+    }
+
+    func stashPush(message: String?, includeUntracked: Bool) {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let msg = (trimmed?.isEmpty == false) ? trimmed : nil
+        performMutation { session in
+            try session.stashPush(message: msg, includeUntracked: includeUntracked)
+        }
+    }
+
+    func stashApply(_ index: UInt32) {
+        performMutation { session in
+            try session.stashApply(index: index)
+        }
+    }
+
+    func stashPop(_ index: UInt32) {
+        performMutation { session in
+            try session.stashPop(index: index)
+        }
+    }
+
+    func stashDrop(_ index: UInt32) {
+        performMutation { session in
+            try session.stashDrop(index: index)
         }
     }
 

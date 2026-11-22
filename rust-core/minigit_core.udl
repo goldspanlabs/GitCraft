@@ -86,6 +86,12 @@ dictionary TagInfo {
   string target_oid_hex;
 };
 
+dictionary StashInfo {
+  u32 index;
+  string name;
+  string message;
+};
+
 dictionary RepoStatus {
   sequence<string> files;
   sequence<FileChange> staged_files;
@@ -118,6 +124,21 @@ interface RepoSession {
 
   [Throws=MiniGitError]
   sequence<TagInfo> list_tags();
+
+  [Throws=MiniGitError]
+  sequence<StashInfo> list_stashes();
+
+  [Throws=MiniGitError]
+  void stash_push(string? message, boolean include_untracked);
+
+  [Throws=MiniGitError]
+  void stash_apply(u32 index);
+
+  [Throws=MiniGitError]
+  void stash_pop(u32 index);
+
+  [Throws=MiniGitError]
+  void stash_drop(u32 index);
 
   [Throws=MiniGitError]
   void checkout_branch(string branch_name);

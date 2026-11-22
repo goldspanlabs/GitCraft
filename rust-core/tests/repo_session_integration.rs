@@ -280,3 +280,55 @@ fn file_watcher_sets_dirty_flag_on_worktree_change() {
         "expected watcher to mark session dirty on file write"
     );
 }
+
+#[test]
+fn stash_push_list_apply_pop_and_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+
+    fs::write(root.join("base.txt"), "v1\n").unwrap();
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "Base commit"]);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+    assert!(session.list_stashes().unwrap().is_empty());
+
+    // Modify tracked file + add untracked file, then stash with message
+    fs::write(root.join("base.txt"), "v2\n").unwrap();
+    fs::write(root.join("wip.txt"), "untracked wip\n").unwrap();
+
+    session
+        .stash_push(Some("WIP: work in progress".into()), true)
+        .unwrap();
+    assert!(session.status().unwrap().is_clean);
+    assert!(!root.join("wip.txt").exists());
+
+    let stashes = session.list_stashes().unwrap();
+    assert_eq!(stashes.len(), 1);
+    assert_eq!(stashes[0].index, 0);
+    assert_eq!(stashes[0].name, "stash@{0}");
+    assert!(stashes[0].message.contains("WIP: work in progress"));
+
+    // Apply keeps stash in list
+    session.stash_apply(0).unwrap();
+    assert!(!session.status().unwrap().is_clean);
+    assert!(root.join("wip.txt").exists());
+    assert_eq!(session.list_stashes().unwrap().len(), 1);
+
+    // Clean working tree and pop stash -> restores changes and removes stash
+    session.discard_file("base.txt".into()).unwrap();
+    session.discard_file("wip.txt".into()).unwrap();
+    assert!(session.status().unwrap().is_clean);
+
+    session.stash_pop(0).unwrap();
+    assert!(!session.status().unwrap().is_clean);
+    assert!(session.list_stashes().unwrap().is_empty());
+
+    // Stash again and drop
+    session.stash_push(None, true).unwrap();
+    assert_eq!(session.list_stashes().unwrap().len(), 1);
+    session.stash_drop(0).unwrap();
+    assert!(session.list_stashes().unwrap().is_empty());
+}

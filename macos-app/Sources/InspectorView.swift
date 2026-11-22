@@ -136,6 +136,11 @@ private struct WorkingChangesInspectorView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
+                        Button("Stash…") {
+                            tab.isShowingStashSheet = true
+                        }
+                        .disabled(tab.totalChangesCount == 0 || tab.isBusy)
+
                         Button("Commit") {
                             tab.commitChanges()
                         }

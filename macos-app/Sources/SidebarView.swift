@@ -154,8 +154,95 @@ struct SidebarView: View {
                     }
                 }
             }
+
+            Section {
+                if tab.stashes.isEmpty {
+                    Text("No stashes")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(tab.stashes, id: \.index) { stash in
+                        HStack(spacing: 6) {
+                            Image(systemName: "tray.and.arrow.down")
+                                .foregroundStyle(.purple)
+                                .font(.caption)
+                                .frame(width: 16, alignment: .center)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(stash.message)
+                                    .font(.system(size: 12))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Text(stash.name)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Pop \(stash.name)") {
+                                tab.stashPop(stash.index)
+                            }
+                            Button("Apply \(stash.name)") {
+                                tab.stashApply(stash.index)
+                            }
+                            Divider()
+                            Button("Drop \(stash.name)", role: .destructive) {
+                                tab.stashDrop(stash.index)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("STASHES")
+                    Spacer()
+                    Button {
+                        tab.isShowingStashSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(tab.totalChangesCount == 0 || tab.isBusy)
+                    .help("Stash working changes")
+                }
+            }
         }
         .listStyle(.sidebar)
+    }
+}
+
+struct NewStashSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @State private var message = ""
+    @State private var includeUntracked = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Stash Changes")
+                .font(.headline)
+
+            TextField("Optional stash message…", text: $message)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 300)
+
+            Toggle("Include untracked files", isOn: $includeUntracked)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Stash") {
+                    tab.stashPush(message: message, includeUntracked: includeUntracked)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
     }
 }
 

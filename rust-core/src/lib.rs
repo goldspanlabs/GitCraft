@@ -128,6 +128,13 @@ pub struct TagInfo {
 }
 
 #[derive(Clone, Debug)]
+pub struct StashInfo {
+    pub index: u32,
+    pub name: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct RepoStatus {
     pub files: Vec<String>,
     pub staged_files: Vec<FileChange>,
@@ -278,6 +285,84 @@ impl RepoSession {
 
     pub fn list_tags(&self) -> Result<Vec<TagInfo>, MiniGitError> {
         graph::list_tags(&self.sync_repo)
+    }
+
+    pub fn list_stashes(&self) -> Result<Vec<StashInfo>, MiniGitError> {
+        let output = git_cli::run(&self.path, &["stash", "list", "--format=%gd\x1f%gs"])?;
+        let stashes = output
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, '\x1f');
+                let name = parts.next()?.trim();
+                let message = parts.next().unwrap_or_default().trim();
+                let index = name
+                    .strip_prefix("stash@{")
+                    .and_then(|s| s.strip_suffix('}'))
+                    .and_then(|s| s.parse::<u32>().ok())?;
+                Some(StashInfo {
+                    index,
+                    name: name.to_owned(),
+                    message: message.to_owned(),
+                })
+            })
+            .collect();
+        Ok(stashes)
+    }
+
+    pub fn stash_push(
+        &self,
+        message: Option<String>,
+        include_untracked: bool,
+    ) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let mut args = vec!["stash", "push"];
+        if include_untracked {
+            args.push("-u");
+        }
+        let trimmed = message
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        if let Some(ref msg) = trimmed {
+            args.push("-m");
+            args.push(msg.as_str());
+        }
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
+    }
+
+    pub fn stash_apply(&self, index: u32) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let target = format!("stash@{{{index}}}");
+        git_cli::mutate(&self.path, &["stash", "apply", &target])?;
+        Ok(())
+    }
+
+    pub fn stash_pop(&self, index: u32) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let target = format!("stash@{{{index}}}");
+        git_cli::mutate(&self.path, &["stash", "pop", &target])?;
+        Ok(())
+    }
+
+    pub fn stash_drop(&self, index: u32) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let target = format!("stash@{{{index}}}");
+        git_cli::mutate(&self.path, &["stash", "drop", &target])?;
+        Ok(())
     }
 
     pub fn checkout_branch(&self, branch_name: String) -> Result<(), MiniGitError> {

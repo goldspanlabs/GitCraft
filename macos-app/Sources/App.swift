@@ -208,6 +208,9 @@ struct RepoWorkspaceView: View {
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
         }
+        .sheet(isPresented: $tab.isShowingStashSheet) {
+            NewStashSheet(tab: tab)
+        }
         .onAppear {
             searchText = tab.searchQuery
         }
