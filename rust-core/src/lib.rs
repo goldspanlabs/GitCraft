@@ -324,8 +324,9 @@ impl RepoSession {
         git_cli::mutate(&self.path, &args)?;
 
         if push_to_remote {
+            let remote = resolve_default_remote(&self.path);
             let refspec = format!("refs/tags/{trimmed_name}");
-            git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+            git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
         }
         Ok(())
     }
@@ -337,8 +338,9 @@ impl RepoSession {
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
         if delete_remote {
+            let remote = resolve_default_remote(&self.path);
             let refspec = format!(":refs/tags/{tag_name}");
-            git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+            git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
         }
         Ok(())
     }
@@ -348,8 +350,9 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let remote = resolve_default_remote(&self.path);
         let refspec = format!("refs/tags/{tag_name}");
-        git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+        git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
         Ok(())
     }
 
@@ -583,3 +586,20 @@ impl RepoSession {
 }
 
 uniffi::include_scaffolding!("minigit_core");
+
+fn resolve_default_remote(repo: &std::path::Path) -> String {
+    if let Ok(output) = git_cli::run(repo, &["remote"]) {
+        let remotes: Vec<&str> = output
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if remotes.contains(&"origin") {
+            return "origin".to_owned();
+        }
+        if let Some(&first) = remotes.first() {
+            return first.to_owned();
+        }
+    }
+    "origin".to_owned()
+}

@@ -179,6 +179,7 @@ struct RepoWorkspaceView: View {
                 VSplitView {
                     CommitTableView(
                         rows: tab.commits,
+                        graphRevision: tab.graphRevision,
                         workingChangesCount: tab.totalChangesCount,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },

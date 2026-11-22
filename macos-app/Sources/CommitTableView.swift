@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
+    let graphRevision: UUID
     let workingChangesCount: Int
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
@@ -63,11 +64,10 @@ struct CommitTableView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
         let coordinator = context.coordinator
-        let dataChanged = coordinator.rows.count != rows.count
-            || coordinator.rows.first?.oidHex != rows.first?.oidHex
-            || coordinator.rows.last?.oidHex != rows.last?.oidHex
+        let dataChanged = coordinator.lastGraphRevision != graphRevision
             || coordinator.workingChangesCount != workingChangesCount
 
+        coordinator.lastGraphRevision = graphRevision
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
         coordinator.onLoadMore = onLoadMore
@@ -102,6 +102,7 @@ struct CommitTableView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var rows: [CommitRow]
         var workingChangesCount: Int
+        var lastGraphRevision: UUID?
         var onLoadMore: () -> Void
         var onSelectCommit: (CommitRow?) -> Void
         var onCopyOid: (String) -> Void

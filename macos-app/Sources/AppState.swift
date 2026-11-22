@@ -121,6 +121,7 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var stagedFiles: [FileChange] = []
     @Published private(set) var unstagedFiles: [FileChange] = []
     @Published private(set) var commits: [CommitRow] = []
+    @Published private(set) var graphRevision = UUID()
     @Published private(set) var branches: [BranchInfo] = []
     @Published private(set) var tags: [TagInfo] = []
     @Published private(set) var stashes: [StashInfo] = []
@@ -207,6 +208,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 commits = graphRows
+                graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
 
                 if selectedCommit == nil {
@@ -238,6 +240,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     hasMoreCommits = false
                 }
                 commits.append(contentsOf: nextPage)
+                graphRevision = UUID()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -257,6 +260,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     try session.getCommitGraph(offset: 0, limit: limit, searchQuery: q)
                 }.value
                 commits = graphRows
+                graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
                 errorMessage = error.localizedDescription

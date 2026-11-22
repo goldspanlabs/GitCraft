@@ -36,6 +36,13 @@ struct DiffTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
+        let prev = context.coordinator.rows
+        let changed = prev.count != rows.count
+            || prev.first?.text != rows.first?.text
+            || prev.last?.text != rows.last?.text
+            || prev.first?.newLine != rows.first?.newLine
+            || prev.last?.newLine != rows.last?.newLine
+        guard changed else { return }
         context.coordinator.rows = rows
         table.reloadData()
     }
