@@ -1,24 +1,114 @@
-namespace minigit_core {
-  record GraphEdge { u32 from_lane; u32 to_lane; boolean is_merge; u32 color_idx; };
-  record StyleSpan { u32 start_utf16; u32 len_utf16; string foreground; };
-  record DiffRow { string kind; string text; sequence<StyleSpan> spans; };
-  record CommitRow {
-    string hash; string author; i64 timestamp; string summary;
-    u32 lane; u32 max_lanes; sequence<GraphEdge> edges;
-  };
-  record RepoStatus { sequence<string> files; string branch; boolean is_clean; };
-  [Throws]
-  interface RepoSession {
-    constructor(string path);
-    RepoStatus status();
-    sequence<CommitRow> history(u32 limit);
-    sequence<DiffRow> diff();
-    void stage(string path);
-    void unstage(string path);
-    void commit(string message);
-    void checkout(string branch);
-    void fetch();
-    void pull();
-    void push();
-  };
+namespace minigit_core {};
+
+[Error]
+interface MiniGitError {
+  Message(string msg);
+};
+
+enum RefKind {
+  "LocalBranch",
+  "RemoteBranch",
+  "Tag",
+  "Head"
+};
+
+dictionary RefBadge {
+  string name;
+  RefKind kind;
+  boolean is_current;
+};
+
+dictionary GraphEdge {
+  u32 from_lane;
+  u32 to_lane;
+  boolean is_merge;
+  u8 color_idx;
+};
+
+dictionary StyleSpan {
+  u32 start_utf16;
+  u32 len_utf16;
+  string foreground;
+};
+
+dictionary DiffRow {
+  string kind;
+  string text;
+  sequence<StyleSpan> spans;
+};
+
+dictionary CommitRow {
+  string oid_hex;
+  string short_oid;
+  string summary;
+  string author_name;
+  i64 timestamp;
+  u32 lane;
+  u8 color_idx;
+  u32 max_lanes;
+  sequence<GraphEdge> edges;
+  sequence<RefBadge> refs;
+};
+
+dictionary BranchInfo {
+  string name;
+  string full_ref;
+  boolean is_remote;
+  boolean is_head;
+  string target_oid_hex;
+  u32 ahead;
+  u32 behind;
+};
+
+dictionary TagInfo {
+  string name;
+  string full_ref;
+  string target_oid_hex;
+};
+
+dictionary RepoStatus {
+  sequence<string> files;
+  string branch;
+  boolean is_clean;
+};
+
+interface RepoSession {
+  [Throws=MiniGitError]
+  constructor(string path);
+
+  [Throws=MiniGitError]
+  RepoStatus status();
+
+  [Throws=MiniGitError]
+  sequence<CommitRow> get_commit_graph(u32 offset, u32 limit, string? search_query);
+
+  [Throws=MiniGitError]
+  sequence<BranchInfo> list_branches();
+
+  [Throws=MiniGitError]
+  sequence<TagInfo> list_tags();
+
+  [Throws=MiniGitError]
+  void checkout_branch(string branch_name);
+
+  [Throws=MiniGitError]
+  sequence<DiffRow> diff();
+
+  [Throws=MiniGitError]
+  void stage(string path);
+
+  [Throws=MiniGitError]
+  void unstage(string path);
+
+  [Throws=MiniGitError]
+  void commit(string message);
+
+  [Throws=MiniGitError]
+  void fetch();
+
+  [Throws=MiniGitError]
+  void pull();
+
+  [Throws=MiniGitError]
+  void push();
 };
