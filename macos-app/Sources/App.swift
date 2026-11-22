@@ -75,17 +75,18 @@ struct RepoWorkspaceView: View {
                         Image(systemName: "sidebar.left")
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                     .help("Toggle Sidebar (Cmd+Shift+S)")
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(tab.name)
                             .font(.headline)
+                            .lineLimit(1)
                         if !tab.currentBranch.isEmpty {
                             Text(tab.currentBranch)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
 
@@ -94,48 +95,76 @@ struct RepoWorkspaceView: View {
                     if tab.isBusy {
                         ProgressView()
                             .controlSize(.small)
-                            .padding(.trailing, 4)
+                            .padding(.trailing, 2)
                     }
 
-                    TextField("Filter commits…", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 210)
-                        .focused($isSearchFocused)
-                        .onChange(of: searchText) { newValue in
-                            tab.updateSearch(newValue)
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("Filter commits…", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12.5))
+                            .focused($isSearchFocused)
+                            .onChange(of: searchText) { newValue in
+                                tab.updateSearch(newValue)
+                            }
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
                         }
-
-                    Button {
-                        tab.runRemote(.fetch)
-                    } label: {
-                        Label("Fetch", systemImage: "arrow.down.circle")
                     }
-                    .disabled(tab.isBusy)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(width: 220)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
 
-                    Button {
-                        tab.runRemote(.pull)
-                    } label: {
-                        Label("Pull", systemImage: "arrow.down.to.line")
-                    }
-                    .disabled(tab.isBusy)
+                    ControlGroup {
+                        Button {
+                            tab.runRemote(.fetch)
+                        } label: {
+                            Label("Fetch", systemImage: "arrow.down.circle")
+                        }
+                        .disabled(tab.isBusy)
 
-                    Button {
-                        tab.runRemote(.push)
-                    } label: {
-                        Label("Push", systemImage: "arrow.up.to.line")
+                        Button {
+                            tab.runRemote(.pull)
+                        } label: {
+                            Label("Pull", systemImage: "arrow.down.to.line")
+                        }
+                        .disabled(tab.isBusy)
+
+                        Button {
+                            tab.runRemote(.push)
+                        } label: {
+                            Label("Push", systemImage: "arrow.up.to.line")
+                        }
+                        .disabled(tab.isBusy)
                     }
-                    .disabled(tab.isBusy)
 
                     Button {
                         tab.refresh()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .buttonStyle(.bordered)
                     .keyboardShortcut("r", modifiers: .command)
                     .help("Refresh (Cmd+R)")
                 }
+                .controlSize(.regular)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .frame(height: 44)
                 .background(Color(nsColor: .windowBackgroundColor))
 
                 if let error = tab.errorMessage {

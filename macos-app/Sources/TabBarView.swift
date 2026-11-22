@@ -77,6 +77,7 @@ private struct RepoTabItem: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+        .frame(maxWidth: 210)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(

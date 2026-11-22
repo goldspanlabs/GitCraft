@@ -17,9 +17,11 @@ struct SidebarView: View {
                 Button {
                     tab.scrollToWorkingChanges()
                 } label: {
-                    HStack {
+                    HStack(spacing: 6) {
                         Image(systemName: "square.and.pencil")
                             .foregroundStyle(.secondary)
+                            .font(.caption)
+                            .frame(width: 16, alignment: .center)
                         Text("Working Changes")
                         Spacer()
                         if tab.totalChangesCount > 0 {
@@ -41,6 +43,7 @@ struct SidebarView: View {
                         Image(systemName: branch.isHead ? "checkmark.circle.fill" : "arrow.triangle.branch")
                             .foregroundStyle(branch.isHead ? Color.accentColor : Color.secondary)
                             .font(.caption)
+                            .frame(width: 16, alignment: .center)
 
                         Text(branch.name)
                             .fontWeight(branch.isHead ? .semibold : .regular)
@@ -60,6 +63,10 @@ struct SidebarView: View {
                             }
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
                         }
                     }
                     .contentShape(Rectangle())
@@ -113,6 +120,7 @@ struct SidebarView: View {
                             Image(systemName: "icloud")
                                 .foregroundStyle(.secondary)
                                 .font(.caption)
+                                .frame(width: 16, alignment: .center)
                             Text(branch.name)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -133,6 +141,7 @@ struct SidebarView: View {
                             Image(systemName: "tag")
                                 .foregroundStyle(.orange)
                                 .font(.caption)
+                                .frame(width: 16, alignment: .center)
                             Text(tag.name)
                                 .lineLimit(1)
                                 .truncationMode(.middle)

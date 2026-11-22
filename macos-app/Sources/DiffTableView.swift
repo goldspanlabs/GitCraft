@@ -64,6 +64,7 @@ struct DiffTableView: NSViewRepresentable {
 final class DiffRowCellView: NSTableCellView {
     private let oldLineLabel = NSTextField(labelWithString: "")
     private let newLineLabel = NSTextField(labelWithString: "")
+    private let gutterDivider = NSBox()
     private let codeLabel = NSTextField(labelWithString: "")
 
     private static let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -84,6 +85,7 @@ final class DiffRowCellView: NSTableCellView {
     private func setupViews() {
         oldLineLabel.translatesAutoresizingMaskIntoConstraints = false
         newLineLabel.translatesAutoresizingMaskIntoConstraints = false
+        gutterDivider.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
 
         for gutter in [oldLineLabel, newLineLabel] {
@@ -92,6 +94,8 @@ final class DiffRowCellView: NSTableCellView {
             gutter.alignment = .right
         }
 
+        gutterDivider.boxType = .separator
+
         codeLabel.font = Self.monoFont
         codeLabel.lineBreakMode = .byTruncatingTail
         codeLabel.allowsEditingTextAttributes = false
@@ -99,6 +103,7 @@ final class DiffRowCellView: NSTableCellView {
 
         addSubview(oldLineLabel)
         addSubview(newLineLabel)
+        addSubview(gutterDivider)
         addSubview(codeLabel)
 
         NSLayoutConstraint.activate([
@@ -110,7 +115,12 @@ final class DiffRowCellView: NSTableCellView {
             newLineLabel.widthAnchor.constraint(equalToConstant: 36),
             newLineLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            codeLabel.leadingAnchor.constraint(equalTo: newLineLabel.trailingAnchor, constant: 10),
+            gutterDivider.leadingAnchor.constraint(equalTo: newLineLabel.trailingAnchor, constant: 6),
+            gutterDivider.topAnchor.constraint(equalTo: topAnchor),
+            gutterDivider.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gutterDivider.widthAnchor.constraint(equalToConstant: 1),
+
+            codeLabel.leadingAnchor.constraint(equalTo: gutterDivider.trailingAnchor, constant: 8),
             codeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             codeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])

@@ -109,16 +109,27 @@ private struct WorkingChangesInspectorView: View {
                     TextField("Commit summary…", text: $tab.commitSummary)
                         .textFieldStyle(.roundedBorder)
 
-                    TextEditor(text: $tab.commitBody)
-                        .font(.system(size: 12))
-                        .frame(height: 52)
-                        .padding(4)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                        )
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $tab.commitBody)
+                            .font(.system(size: 12))
+                            .scrollContentBackground(.hidden)
+                            .padding(4)
+                        if tab.commitBody.isEmpty {
+                            Text("Extended description (optional)…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .frame(height: 54)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
 
                     HStack {
                         Text("\(tab.stagedFiles.count) staged")
@@ -231,11 +242,13 @@ private struct CommitInspectorView: View {
                         Button("All") {
                             tab.selectCommitFile(nil)
                         }
-                        .buttonStyle(.link)
-                        .font(.caption)
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(tab.selectedFilePath == nil ? .semibold : .regular))
+                        .foregroundStyle(tab.selectedFilePath == nil ? Color.accentColor : Color.secondary)
                     }
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .frame(height: 30)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
 
                     Divider()
 
@@ -369,7 +382,7 @@ private struct DiffHeaderBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .frame(height: 30)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 }
