@@ -287,6 +287,72 @@ impl RepoSession {
         graph::list_tags(&self.sync_repo)
     }
 
+    pub fn create_tag(
+        &self,
+        tag_name: String,
+        target: Option<String>,
+        message: Option<String>,
+        push_to_remote: bool,
+    ) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let trimmed_name = tag_name.trim();
+        if trimmed_name.is_empty() {
+            return Err(MiniGitError::message("tag name cannot be empty"));
+        }
+
+        let trimmed_msg = message
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+
+        let mut args = vec!["tag"];
+        if let Some(ref msg) = trimmed_msg {
+            args.push("-a");
+            args.push(trimmed_name);
+            args.push("-m");
+            args.push(msg.as_str());
+        } else {
+            args.push(trimmed_name);
+        }
+        if let Some(ref t) = target {
+            args.push(t.as_str());
+        }
+        git_cli::mutate(&self.path, &args)?;
+
+        if push_to_remote {
+            let refspec = format!("refs/tags/{trimmed_name}");
+            git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_tag(&self, tag_name: String, delete_remote: bool) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
+        if delete_remote {
+            let refspec = format!(":refs/tags/{tag_name}");
+            git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+        }
+        Ok(())
+    }
+
+    pub fn push_tag(&self, tag_name: String) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        let refspec = format!("refs/tags/{tag_name}");
+        git_cli::mutate(&self.path, &["push", "origin", &refspec])?;
+        Ok(())
+    }
+
     pub fn list_stashes(&self) -> Result<Vec<StashInfo>, MiniGitError> {
         let output = git_cli::run(&self.path, &["stash", "list", "--format=%gd\x1f%gs"])?;
         let stashes = output

@@ -332,3 +332,56 @@ fn stash_push_list_apply_pop_and_drop() {
     session.stash_drop(0).unwrap();
     assert!(session.list_stashes().unwrap().is_empty());
 }
+
+#[test]
+fn create_push_and_delete_tags_with_remote() {
+    let base = tempfile::tempdir().unwrap();
+    let remote_dir = base.path().join("remote.git");
+    let local_dir = base.path().join("local");
+
+    fs::create_dir_all(&remote_dir).unwrap();
+    run_git(&remote_dir, &["init", "--bare", "-b", "main"]);
+
+    run_git(
+        base.path(),
+        &[
+            "clone",
+            remote_dir.to_str().unwrap(),
+            local_dir.to_str().unwrap(),
+        ],
+    );
+    configure_git_identity(&local_dir);
+    fs::write(local_dir.join("file.txt"), "hello\n").unwrap();
+    run_git(&local_dir, &["add", "."]);
+    run_git(&local_dir, &["commit", "-m", "Initial"]);
+    run_git(&local_dir, &["push", "-u", "origin", "main"]);
+
+    let session = RepoSession::new(local_dir.to_string_lossy().into_owned()).unwrap();
+
+    // Create lightweight tag locally without pushing, then push explicitly
+    session
+        .create_tag("v0.1.0".into(), None, None, false)
+        .unwrap();
+    assert_eq!(session.list_tags().unwrap().len(), 1);
+    assert!(!run_git(&remote_dir, &["tag"]).contains("v0.1.0"));
+
+    session.push_tag("v0.1.0".into()).unwrap();
+    assert!(run_git(&remote_dir, &["tag"]).contains("v0.1.0"));
+
+    // Create annotated tag and push immediately
+    session
+        .create_tag("v0.2.0".into(), None, Some("Release v0.2.0".into()), true)
+        .unwrap();
+    assert_eq!(session.list_tags().unwrap().len(), 2);
+    assert!(run_git(&remote_dir, &["tag"]).contains("v0.2.0"));
+
+    // Delete v0.1.0 locally only (remains on remote)
+    session.delete_tag("v0.1.0".into(), false).unwrap();
+    assert_eq!(session.list_tags().unwrap().len(), 1);
+    assert!(run_git(&remote_dir, &["tag"]).contains("v0.1.0"));
+
+    // Delete v0.2.0 both locally and remotely
+    session.delete_tag("v0.2.0".into(), true).unwrap();
+    assert!(session.list_tags().unwrap().is_empty());
+    assert!(!run_git(&remote_dir, &["tag"]).contains("v0.2.0"));
+}

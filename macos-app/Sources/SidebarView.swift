@@ -134,8 +134,12 @@ struct SidebarView: View {
                 }
             }
 
-            if !tab.tags.isEmpty {
-                Section("TAGS") {
+            Section {
+                if tab.tags.isEmpty {
+                    Text("No tags")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
                     ForEach(tab.tags, id: \.fullRef) { tag in
                         HStack(spacing: 6) {
                             Image(systemName: "tag")
@@ -151,7 +155,33 @@ struct SidebarView: View {
                         .onTapGesture {
                             tab.scrollToCommit(oidHex: tag.targetOidHex)
                         }
+                        .contextMenu {
+                            Button("Push \(tag.name) to origin") {
+                                tab.pushTag(tag.name)
+                            }
+                            Divider()
+                            Button("Delete \(tag.name) (Local)", role: .destructive) {
+                                tab.deleteTag(tag.name, deleteRemote: false)
+                            }
+                            Button("Delete \(tag.name) (Local & Remote)", role: .destructive) {
+                                tab.deleteTag(tag.name, deleteRemote: true)
+                            }
+                        }
                     }
+                }
+            } header: {
+                HStack {
+                    Text("TAGS")
+                    Spacer()
+                    Button {
+                        tab.newTagTarget = nil
+                        tab.isShowingNewTagSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Create new tag")
                 }
             }
 
@@ -284,6 +314,60 @@ struct NewBranchSheet: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
+    }
+}
+
+struct NewTagSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @State private var tagName = ""
+    @State private var message = ""
+    @State private var pushToRemote = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Create Tag")
+                .font(.headline)
+
+            if let target = tab.newTagTarget {
+                Text("Target commit: \(String(target.prefix(7)))")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Target: HEAD")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            TextField("Tag name (e.g. v1.0.0)", text: $tagName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 300)
+
+            TextField("Optional annotation message…", text: $message)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 300)
+
+            Toggle("Push tag to origin", isOn: $pushToRemote)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Create Tag") {
+                    tab.createTag(
+                        name: tagName,
+                        target: tab.newTagTarget,
+                        message: message,
+                        pushToRemote: pushToRemote
+                    )
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(tagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(18)

@@ -137,6 +137,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var commitBody = ""
     @Published var isShowingNewBranchSheet = false
     @Published var newBranchStartPoint: String?
+    @Published var isShowingNewTagSheet = false
+    @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
 
     var totalChangesCount: Int {
@@ -435,6 +437,33 @@ final class RepoTab: ObservableObject, Identifiable {
     func mergeBranch(_ branchName: String) {
         performMutation { session in
             try session.mergeBranch(branchName: branchName)
+        }
+    }
+
+    func createTag(name: String, target: String?, message: String?, pushToRemote: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let msg = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalMsg = (msg?.isEmpty == false) ? msg : nil
+        performMutation { session in
+            try session.createTag(
+                tagName: trimmed,
+                target: target,
+                message: finalMsg,
+                pushToRemote: pushToRemote
+            )
+        }
+    }
+
+    func deleteTag(_ tagName: String, deleteRemote: Bool) {
+        performMutation { session in
+            try session.deleteTag(tagName: tagName, deleteRemote: deleteRemote)
+        }
+    }
+
+    func pushTag(_ tagName: String) {
+        performMutation { session in
+            try session.pushTag(tagName: tagName)
         }
     }
 

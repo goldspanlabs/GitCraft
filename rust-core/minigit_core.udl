@@ -126,6 +126,15 @@ interface RepoSession {
   sequence<TagInfo> list_tags();
 
   [Throws=MiniGitError]
+  void create_tag(string tag_name, string? target, string? message, boolean push_to_remote);
+
+  [Throws=MiniGitError]
+  void delete_tag(string tag_name, boolean delete_remote);
+
+  [Throws=MiniGitError]
+  void push_tag(string tag_name);
+
+  [Throws=MiniGitError]
   sequence<StashInfo> list_stashes();
 
   [Throws=MiniGitError]

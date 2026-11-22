@@ -9,6 +9,7 @@ struct CommitTableView: NSViewRepresentable {
     let onSelectCommit: (CommitRow?) -> Void
     let onCopyOid: (String) -> Void
     let onCreateBranchAtCommit: (String) -> Void
+    let onCreateTagAtCommit: (String) -> Void
     let onCheckoutCommit: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -19,6 +20,7 @@ struct CommitTableView: NSViewRepresentable {
             onSelectCommit: onSelectCommit,
             onCopyOid: onCopyOid,
             onCreateBranchAtCommit: onCreateBranchAtCommit,
+            onCreateTagAtCommit: onCreateTagAtCommit,
             onCheckoutCommit: onCheckoutCommit
         )
     }
@@ -72,6 +74,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onSelectCommit = onSelectCommit
         coordinator.onCopyOid = onCopyOid
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
+        coordinator.onCreateTagAtCommit = onCreateTagAtCommit
         coordinator.onCheckoutCommit = onCheckoutCommit
 
         if dataChanged {
@@ -103,6 +106,7 @@ struct CommitTableView: NSViewRepresentable {
         var onSelectCommit: (CommitRow?) -> Void
         var onCopyOid: (String) -> Void
         var onCreateBranchAtCommit: (String) -> Void
+        var onCreateTagAtCommit: (String) -> Void
         var onCheckoutCommit: (String) -> Void
         var lastHandledScrollID: UUID?
         weak var tableView: NSTableView?
@@ -117,6 +121,7 @@ struct CommitTableView: NSViewRepresentable {
             onSelectCommit: @escaping (CommitRow?) -> Void,
             onCopyOid: @escaping (String) -> Void,
             onCreateBranchAtCommit: @escaping (String) -> Void,
+            onCreateTagAtCommit: @escaping (String) -> Void,
             onCheckoutCommit: @escaping (String) -> Void
         ) {
             self.rows = rows
@@ -125,6 +130,7 @@ struct CommitTableView: NSViewRepresentable {
             self.onSelectCommit = onSelectCommit
             self.onCopyOid = onCopyOid
             self.onCreateBranchAtCommit = onCreateBranchAtCommit
+            self.onCreateTagAtCommit = onCreateTagAtCommit
             self.onCheckoutCommit = onCheckoutCommit
         }
 
@@ -145,6 +151,11 @@ struct CommitTableView: NSViewRepresentable {
             branchItem.representedObject = commit.oidHex
             menu.addItem(branchItem)
 
+            let tagItem = NSMenuItem(title: "Create Tag Here…", action: #selector(handleCreateTag(_:)), keyEquivalent: "")
+            tagItem.target = self
+            tagItem.representedObject = commit.oidHex
+            menu.addItem(tagItem)
+
             let checkoutItem = NSMenuItem(title: "Checkout Commit (Detached)", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
             checkoutItem.target = self
             checkoutItem.representedObject = commit.oidHex
@@ -160,6 +171,12 @@ struct CommitTableView: NSViewRepresentable {
         @objc private func handleCreateBranch(_ sender: NSMenuItem) {
             if let oid = sender.representedObject as? String {
                 onCreateBranchAtCommit(oid)
+            }
+        }
+
+        @objc private func handleCreateTag(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String {
+                onCreateTagAtCommit(oid)
             }
         }
 

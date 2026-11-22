@@ -188,6 +188,10 @@ struct RepoWorkspaceView: View {
                             tab.newBranchStartPoint = oid
                             tab.isShowingNewBranchSheet = true
                         },
+                        onCreateTagAtCommit: { oid in
+                            tab.newTagTarget = oid
+                            tab.isShowingNewTagSheet = true
+                        },
                         onCheckoutCommit: { oid in
                             tab.checkoutBranch(oid)
                         }
@@ -207,6 +211,9 @@ struct RepoWorkspaceView: View {
         }
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
+        }
+        .sheet(isPresented: $tab.isShowingNewTagSheet) {
+            NewTagSheet(tab: tab)
         }
         .sheet(isPresented: $tab.isShowingStashSheet) {
             NewStashSheet(tab: tab)
