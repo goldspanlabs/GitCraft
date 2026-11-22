@@ -1,0 +1,4 @@
+rust-core/target/
+macos-app/.build/
+build/
+DerivedData/

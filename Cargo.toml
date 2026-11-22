@@ -1,0 +1,11 @@
+[package]
+name = "rust-core"
+version = "0.1.0"
+edition = "2021"
+description = "Small, dependency-free core primitives for a local Git client"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
