@@ -4,7 +4,11 @@ mod graph;
 mod highlight;
 mod watcher;
 
-use std::{io, path::PathBuf};
+use std::{
+    io,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone, Debug)]
 pub struct GraphEdge {
@@ -44,6 +48,7 @@ pub struct RepoStatus {
 
 pub struct RepoSession {
     path: PathBuf,
+    mutation_lock: Arc<Mutex<()>>,
 }
 impl RepoSession {
     pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
@@ -51,7 +56,10 @@ impl RepoSession {
         if !path.join(".git").exists() {
             return Err(io::Error::other("not a Git repository"));
         }
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            mutation_lock: Arc::new(Mutex::new(())),
+        })
     }
     pub fn status(&self) -> io::Result<RepoStatus> {
         let output = git_cli::run(&self.path, &["status", "--short", "--branch"])?;
@@ -77,24 +85,52 @@ impl RepoSession {
         diff::working_tree(&self.path)
     }
     pub fn stage(&self, path: &str) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["add", "--", path])
     }
     pub fn unstage(&self, path: &str) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["reset", "HEAD", "--", path])
     }
     pub fn commit(&self, message: &str) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["commit", "-m", message])
     }
     pub fn checkout(&self, branch: &str) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["checkout", branch])
     }
     pub fn fetch(&self) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["fetch"])
     }
     pub fn pull(&self) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["pull"])
     }
     pub fn push(&self) -> io::Result<()> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| io::Error::other("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["push"])
     }
     pub fn highlight(&self, text: &str, extension: &str) -> Vec<StyleSpan> {
