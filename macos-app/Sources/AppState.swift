@@ -60,26 +60,3 @@ final class AppState: ObservableObject {
         }
     }
 }
-
-// These records mirror the generated UniFFI bindings. Keeping the app surface
-// narrow makes replacing this declaration with generated bindings mechanical.
-struct CommitRow: Identifiable {
-    let id = UUID()
-    let hash: String
-    let summary: String
-    let author: String
-    let timestamp: Int64
-    let lane: Int
-    let maxLanes: Int
-}
-
-struct RepoStatus { let files: [String] }
-
-protocol RepoSession {
-    init(path: String) throws
-    func status() async throws -> RepoStatus
-    func history(limit: Int) async throws -> [CommitRow]
-    func fetch() async throws
-    func pull() async throws
-    func push() async throws
-}

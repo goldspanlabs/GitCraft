@@ -1,0 +1,24 @@
+namespace minigit_core {
+  record GraphEdge { u32 from_lane; u32 to_lane; boolean is_merge; u32 color_idx; };
+  record StyleSpan { u32 start_utf16; u32 len_utf16; string foreground; };
+  record DiffRow { string kind; string text; sequence<StyleSpan> spans; };
+  record CommitRow {
+    string hash; string author; i64 timestamp; string summary;
+    u32 lane; u32 max_lanes; sequence<GraphEdge> edges;
+  };
+  record RepoStatus { sequence<string> files; string branch; boolean is_clean; };
+  [Throws]
+  interface RepoSession {
+    constructor(string path);
+    RepoStatus status();
+    sequence<CommitRow> history(u32 limit);
+    sequence<DiffRow> diff();
+    void stage(string path);
+    void unstage(string path);
+    void commit(string message);
+    void checkout(string branch);
+    void fetch();
+    void pull();
+    void push();
+  };
+};
