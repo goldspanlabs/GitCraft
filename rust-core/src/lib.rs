@@ -348,7 +348,9 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path])?;
+        if git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path]).is_err() {
+            git_cli::mutate(&self.path, &["rm", "--cached", "--", &path])?;
+        }
         Ok(())
     }
 
@@ -366,7 +368,9 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["reset", "HEAD"])?;
+        if git_cli::mutate(&self.path, &["reset", "HEAD"]).is_err() {
+            git_cli::mutate(&self.path, &["rm", "--cached", "-r", "--", "."])?;
+        }
         Ok(())
     }
 
