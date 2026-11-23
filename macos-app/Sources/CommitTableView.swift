@@ -410,46 +410,17 @@ final class CommitRowCellView: NSTableCellView {
 
 final class RefPillView: NSView {
     private let label = NSTextField(labelWithString: "")
+    private let badge: RefBadge
 
     init(badge: RefBadge) {
+        self.badge = badge
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 4
-        layer?.borderWidth = badge.isCurrent ? 1 : 0
-
-        let (bgColor, fgColor, borderColor): (NSColor, NSColor, NSColor) = switch badge.kind {
-        case .localBranch:
-            (
-                NSColor.systemBlue.withAlphaComponent(badge.isCurrent ? 0.22 : 0.12),
-                NSColor.systemBlue,
-                NSColor.systemBlue.withAlphaComponent(0.6)
-            )
-        case .remoteBranch:
-            (
-                NSColor.systemPurple.withAlphaComponent(0.14),
-                NSColor.systemPurple,
-                NSColor.clear
-            )
-        case .tag:
-            (
-                NSColor.systemOrange.withAlphaComponent(0.16),
-                NSColor.systemOrange,
-                NSColor.clear
-            )
-        case .head:
-            (
-                NSColor.systemGreen.withAlphaComponent(0.2),
-                NSColor.systemGreen,
-                NSColor.systemGreen.withAlphaComponent(0.6)
-            )
-        }
-
-        layer?.backgroundColor = bgColor.cgColor
-        layer?.borderColor = borderColor.cgColor
+        layer?.borderWidth = 1
 
         label.stringValue = badge.name
         label.font = .systemFont(ofSize: 10.5, weight: badge.isCurrent ? .semibold : .medium)
-        label.textColor = fgColor
         label.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(label)
@@ -459,6 +430,51 @@ final class RefPillView: NSView {
             label.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
         ])
+
+        applyColors()
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        applyColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    private func applyColors() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+
+        let baseColor: NSColor = switch badge.kind {
+        case .localBranch: .systemBlue
+        case .remoteBranch: .systemPurple
+        case .tag: .systemOrange
+        case .head: .systemGreen
+        }
+
+        // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
+        // highlighted with the strong blue selection color.
+        let bgColor: NSColor
+        let fgColor: NSColor
+        let borderColor: NSColor
+
+        if isDark {
+            let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
+            bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
+            fgColor = baseColor.blended(withFraction: 0.45, of: .white) ?? baseColor
+            borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
+        } else {
+            bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
+            fgColor = baseColor.blended(withFraction: 0.45, of: .black) ?? baseColor
+            borderColor = baseColor.withAlphaComponent(badge.isCurrent ? 0.85 : 0.55)
+        }
+
+        layer?.backgroundColor = bgColor.cgColor
+        layer?.borderColor = borderColor.cgColor
+        label.textColor = fgColor
     }
 
     @available(*, unavailable)
