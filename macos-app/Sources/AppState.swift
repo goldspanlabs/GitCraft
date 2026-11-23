@@ -203,6 +203,14 @@ final class RepoTab: ObservableObject, Identifiable {
     private var hasMoreCommits = true
     private let pageSize: UInt32 = 500
     private var watcherTask: Task<Void, Never>?
+    private var revealTask: Task<Void, Never>?
+    /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
+    /// page fetches that started against the old list can detect they are stale.
+    private var graphGeneration = 0
+    /// Search replacements still fetching their first page. While > 0, `commits` and
+    /// `searchQuery` describe different lists, so paging must wait.
+    private var pendingSearchReplacements = 0
+    private var loadedDetailOid: String?
 
     init(url: URL) throws {
         self.url = url
@@ -261,6 +269,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 branches = branchList
                 tags = tagList
                 stashes = stashList
+                graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
@@ -283,6 +292,7 @@ final class RepoTab: ObservableObject, Identifiable {
         let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? nil
             : searchQuery
+        let generation = graphGeneration
 
         Task {
             defer { isLoadingMore = false }
@@ -290,6 +300,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 let nextPage = try await Task.detached {
                     try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
                 }.value
+                // The list was replaced while we fetched; this page belongs to the old one.
+                guard generation == graphGeneration else { return }
                 if nextPage.count < Int(limit) {
                     hasMoreCommits = false
                 }
@@ -303,16 +315,20 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func updateSearch(_ query: String) {
         searchQuery = query
+        graphGeneration += 1  // in-flight page fetches used the old query
+        pendingSearchReplacements += 1
         let session = self.session
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let q: String? = trimmed.isEmpty ? nil : trimmed
         let limit = pageSize
 
         Task {
+            defer { pendingSearchReplacements -= 1 }
             do {
                 let graphRows = try await Task.detached {
                     try session.getCommitGraph(offset: 0, limit: limit, searchQuery: q)
                 }.value
+                graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
@@ -323,19 +339,105 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func scrollToCommit(oidHex: String) {
-        scrollRequest = ScrollRequest(oidHex: oidHex)
+        revealTask?.cancel()
+        revealTask = nil
+        if let commit = commits.first(where: { $0.oidHex == oidHex }) {
+            scrollRequest = ScrollRequest(oidHex: oidHex)
+            // Update the detail/diff panes directly rather than relying on the table
+            // selection callback, which fires from inside a SwiftUI view update.
+            selectCommit(commit)
+            return
+        }
+        // Tip is beyond the loaded page(s): page in more history until it shows up.
+        revealTask = Task { await revealCommit(oidHex: oidHex) }
+    }
+
+    private func revealCommit(oidHex: String) async {
+        while isLoadingMore {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            if Task.isCancelled { return }
+        }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        let session = self.session
+        // Each graph call re-walks history from the tips (cost ~ offset + limit), so
+        // grow the page geometrically: O(log n) calls instead of n / pageSize.
+        var limit = pageSize
+
+        while !Task.isCancelled {
+            // The new query's first page isn't installed yet: the old list's offset and
+            // pagination state don't apply to it, so wait and re-evaluate.
+            if pendingSearchReplacements > 0 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                continue
+            }
+            if let commit = commits.first(where: { $0.oidHex == oidHex }) {
+                scrollRequest = ScrollRequest(oidHex: oidHex)
+                selectCommit(commit)
+                return
+            }
+            guard hasMoreCommits else { break }
+            // Re-read offset/query each round: refresh or search may have replaced the list.
+            let offset = UInt32(commits.count)
+            let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : searchQuery
+            let generation = graphGeneration
+            do {
+                let nextPage = try await Task.detached {
+                    try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
+                }.value
+                if Task.isCancelled { return }
+                // Stale page (list replaced mid-fetch): drop it and look again.
+                if generation != graphGeneration { continue }
+                if nextPage.count < Int(limit) { hasMoreCommits = false }
+                commits.append(contentsOf: nextPage)
+                graphRevision = UUID()
+                limit = min(limit * 2, 64_000)
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+        }
+        if Task.isCancelled { return }
+        // Not reachable in the current graph (e.g. hidden by the search filter): don't
+        // leave the panes showing an unrelated commit.
+        errorMessage = "That commit isn't in the current commit list."
+        // Go through the same path as the sidebar's Working Changes so the table
+        // highlight moves with the detail pane.
+        scrollToWorkingChanges()
     }
 
     func scrollToWorkingChanges() {
+        revealTask?.cancel()
+        revealTask = nil
         scrollRequest = ScrollRequest(oidHex: nil)
         selectCommit(nil)
     }
 
+    /// Selection coming from the commit table (user click/arrow keys, or the table
+    /// echoing a programmatic selection). Either way it supersedes a pending reveal:
+    /// programmatic table selections only happen after a reveal has finished.
+    func selectCommitFromTable(_ commit: CommitRow?) {
+        revealTask?.cancel()
+        revealTask = nil
+        selectCommit(commit)
+    }
+
     func selectCommit(_ commit: CommitRow?) {
-        selectedCommit = commit
         if let commit {
+            // Always keep the freshest row (refs/lanes may have changed), but only
+            // reload when this oid's detail is already loaded or in flight; a failed
+            // load clears the marker so re-clicking the commit retries.
+            selectedCommit = commit
+            if loadedDetailOid == commit.oidHex { return }
+            loadedDetailOid = commit.oidHex
             loadCommitDetails(commit)
         } else {
+            guard selectedCommit != nil else { return }
+            selectedCommit = nil
+            loadedDetailOid = nil
             commitDetail = nil
             loadWorkingDiffSelection()
         }
@@ -405,6 +507,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 selectedFilePath = firstPath
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
+                if loadedDetailOid == oid { loadedDetailOid = nil }
                 errorMessage = error.localizedDescription
             }
         }
@@ -421,6 +524,15 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = rows
                 }
             } catch {
+                // Only react if this request is still the current one (same commit and file);
+                // a late failure for a file the user already moved off must not wipe the
+                // newer file's diff.
+                if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                    // Don't leave the previous diff showing, and let re-selecting
+                    // this commit retry the load.
+                    diffRows = []
+                    loadedDetailOid = nil
+                }
                 errorMessage = error.localizedDescription
             }
         }
