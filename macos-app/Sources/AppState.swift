@@ -324,6 +324,11 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func scrollToCommit(oidHex: String) {
         scrollRequest = ScrollRequest(oidHex: oidHex)
+        // Update the detail/diff panes directly rather than relying on the table
+        // selection callback, which fires from inside a SwiftUI view update.
+        if let commit = commits.first(where: { $0.oidHex == oidHex }) {
+            selectCommit(commit)
+        }
     }
 
     func scrollToWorkingChanges() {
@@ -332,6 +337,7 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func selectCommit(_ commit: CommitRow?) {
+        if let commit, selectedCommit?.oidHex == commit.oidHex { return }
         selectedCommit = commit
         if let commit {
             loadCommitDetails(commit)

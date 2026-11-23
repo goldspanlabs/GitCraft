@@ -70,12 +70,16 @@ struct SidebarView: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        tab.checkoutBranch(branch.name)
-                    }
-                    .onTapGesture(count: 1) {
+                    // Single tap must fire immediately; a count:1 gesture declared next to a
+                    // count:2 one makes SwiftUI wait out the double-click interval first.
+                    .onTapGesture {
                         tab.scrollToCommit(oidHex: branch.targetOidHex)
                     }
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            tab.checkoutBranch(branch.name)
+                        }
+                    )
                     .contextMenu {
                         if !branch.isHead {
                             Button("Checkout \(branch.name)") {

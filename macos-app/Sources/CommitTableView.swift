@@ -93,8 +93,13 @@ struct CommitTableView: NSViewRepresentable {
                 0
             }
             if let targetRow, targetRow < coordinator.numberOfRows(in: table) {
-                table.scrollRowToVisible(targetRow)
-                table.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+                // Defer: selecting fires the delegate, which publishes state, and that
+                // must not happen during a SwiftUI view update (the change can be dropped).
+                DispatchQueue.main.async { [weak table] in
+                    guard let table else { return }
+                    table.scrollRowToVisible(targetRow)
+                    table.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+                }
             }
         }
     }
