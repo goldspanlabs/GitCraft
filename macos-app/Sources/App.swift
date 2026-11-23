@@ -54,7 +54,6 @@ struct RepoWorkspaceView: View {
     @ObservedObject var tab: RepoTab
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchText = ""
-    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -128,62 +127,29 @@ struct RepoWorkspaceView: View {
                         .frame(minHeight: 210, idealHeight: 290)
                 }
             }
-            // Hidden shortcuts for Cmd+F search focus and Cmd+Shift+S sidebar toggle
+            // Hidden shortcut for Cmd+Shift+S sidebar toggle
             .background(
-                Group {
-                    Button("") { isSearchFocused = true }
-                        .keyboardShortcut("f", modifiers: .command)
-                        .opacity(0)
-                    Button("") {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-                        }
+                Button("") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
                     }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                    .opacity(0)
                 }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .opacity(0)
             )
         }
         .navigationTitle(tab.name)
         .navigationSubtitle(tab.currentBranch)
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Filter commits")
+        .onChange(of: searchText) { newValue in
+            tab.updateSearch(newValue)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if tab.isBusy {
                     ProgressView()
                         .controlSize(.small)
                 }
-
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextField("Filter commits…", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5))
-                        .focused($isSearchFocused)
-                        .onChange(of: searchText) { newValue in
-                            tab.updateSearch(newValue)
-                        }
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .frame(width: 210)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.75))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                )
 
                 Button {
                     tab.runRemote(.fetch)
