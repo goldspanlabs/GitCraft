@@ -23,7 +23,7 @@ bundle: swift
 	cp $(APP_DIR)/.build/release/MiniGit $(APP)/Contents/MacOS/MiniGit
 	@SDK_VER="$$(xcrun --show-sdk-version 2>/dev/null || true)"; \
 	if [ -n "$$SDK_VER" ] && xcrun --find vtool >/dev/null 2>&1; then \
-		xcrun vtool -set-build-version macos 13.0 "$$SDK_VER" -replace \
+		xcrun vtool -set-build-version macos 13.0 15.0 -replace \
 			-output $(APP)/Contents/MacOS/MiniGit $(APP)/Contents/MacOS/MiniGit; \
 	fi
 	cp $(APP_DIR)/Info.plist $(APP)/Contents/Info.plist

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -22,6 +23,10 @@ struct MiniGitApp: App {
                 Button("Close Tab", action: workspace.closeActiveTab)
                     .keyboardShortcut("w", modifiers: .command)
                     .disabled(workspace.selectedTabID == nil)
+                Divider()
+                Button("Refresh", action: { workspace.activeTab?.refresh() })
+                    .keyboardShortcut("r", modifiers: .command)
+                    .disabled(workspace.activeTab == nil)
             }
         }
     }
@@ -146,41 +151,56 @@ struct RepoWorkspaceView: View {
             tab.updateSearch(newValue)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .principal) {
-                HStack(spacing: 6) {
-                    ToolbarActionButton(
-                        title: "Fetch",
-                        systemImage: "arrow.down.circle",
-                        disabled: tab.isBusy
-                    ) {
-                        tab.runRemote(.fetch)
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 10) {
+                    Button(action: workspace.chooseRepository) {
+                        TopBarIconLabel(title: "Quick Launch") {
+                            ToolbarIconView(icon: .quickLaunch)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Repository (Cmd+O)")
+
+                    HStack(spacing: 0) {
+                        Button {
+                            tab.runRemote(.fetch)
+                        } label: {
+                            TopBarIconLabel(title: "Fetch") {
+                                ToolbarIconView(icon: .fetch)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(tab.isBusy)
+                        .help("Fetch from remote")
+
+                        TopBarSeparator()
+
+                        Button {
+                            tab.runRemote(.pull)
+                        } label: {
+                            TopBarIconLabel(title: "Pull", badgeCount: tab.currentBranchBehindCount) {
+                                ToolbarIconView(icon: .pull)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(tab.isBusy)
+                        .help("Pull from remote")
+
+                        TopBarSeparator()
+
+                        Button {
+                            tab.runRemote(.push)
+                        } label: {
+                            TopBarIconLabel(title: "Push", badgeCount: tab.currentBranchAheadCount) {
+                                ToolbarIconView(icon: .push)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(tab.isBusy)
+                        .help("Push to remote")
                     }
 
-                    ToolbarActionButton(
-                        title: "Pull",
-                        systemImage: "arrow.down.to.line",
-                        disabled: tab.isBusy
-                    ) {
-                        tab.runRemote(.pull)
-                    }
-
-                    ToolbarActionButton(
-                        title: "Push",
-                        systemImage: "arrow.up.to.line",
-                        disabled: tab.isBusy
-                    ) {
-                        tab.runRemote(.push)
-                    }
-
-                    ToolbarActionButton(
-                        title: "Refresh",
-                        systemImage: "arrow.clockwise",
-                        disabled: false
-                    ) {
-                        tab.refresh()
-                    }
-                    .keyboardShortcut("r", modifiers: .command)
-                    .help("Refresh (Cmd+R)")
+                    TopBarStashItem(tab: tab)
 
                     if tab.isBusy {
                         ProgressView()
@@ -188,6 +208,8 @@ struct RepoWorkspaceView: View {
                             .padding(.leading, 4)
                     }
                 }
+                .fixedSize()
+                .background(ToolbarPillRemovalView())
             }
         }
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
@@ -272,24 +294,210 @@ private struct ErrorBanner: View {
     }
 }
 
-private struct ToolbarActionButton: View {
+private struct ToolbarPillRemovalView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = PillRemovalProbeView()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? PillRemovalProbeView)?.stripToolbarBezel()
+    }
+
+    private final class PillRemovalProbeView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stripToolbarBezel()
+            DispatchQueue.main.async { [weak self] in
+                self?.stripToolbarBezel()
+            }
+        }
+
+        override func layout() {
+            super.layout()
+            stripToolbarBezel()
+        }
+
+        func stripToolbarBezel() {
+            if let items = window?.toolbar?.items {
+                for item in items {
+                    item.isBordered = false
+                }
+            }
+            // Walk up to the enclosing NSToolbarItemViewer and hide any background platter/glass subviews.
+            var cursor: NSView? = superview
+            while let current = cursor {
+                let className = String(describing: type(of: current))
+                if className.contains("ToolbarItemViewer") || className.contains("ToolbarItemGroup") {
+                    for sub in current.subviews {
+                        let subName = String(describing: type(of: sub))
+                        if subName.contains("Bezel") || subName.contains("Glass") || subName.contains("Platter") || subName.contains("Background") || subName.contains("VisualEffect") {
+                            sub.isHidden = true
+                            sub.alphaValue = 0
+                        }
+                    }
+                }
+                cursor = current.superview
+            }
+        }
+    }
+}
+
+private struct TopBarSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.22))
+            .frame(width: 1, height: 18)
+            .padding(.bottom, 12)
+    }
+}
+
+private struct TopBarIconLabel<Icon: View>: View {
     let title: String
-    let systemImage: String
-    let disabled: Bool
-    let action: () -> Void
+    var badgeCount: Int = 0
+    @ViewBuilder var icon: () -> Icon
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13.5, weight: .medium))
-                Text(title)
-                    .font(.system(size: 10, weight: .regular))
+        VStack(spacing: 2) {
+            ZStack(alignment: .topTrailing) {
+                icon()
+                    .frame(height: 20)
+
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
+                        .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(Color(nsColor: .secondaryLabelColor))
+                        )
+                        .offset(x: 12, y: -4)
+                }
             }
-            .frame(minWidth: 50, minHeight: 34)
-            .contentShape(Rectangle())
+            .frame(minWidth: 34, minHeight: 20)
+
+            Text(title)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .buttonStyle(.borderless)
-        .disabled(disabled)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct TopBarStashItem: View {
+    @ObservedObject var tab: RepoTab
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 4) {
+                Button {
+                    tab.isShowingStashSheet = true
+                } label: {
+                    ToolbarIconView(icon: .stash)
+                        .frame(height: 20)
+                }
+                .buttonStyle(.plain)
+                .disabled(tab.totalChangesCount == 0 || tab.isBusy)
+                .help("Stash working changes")
+
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.28))
+                    .frame(width: 1, height: 15)
+
+                StashMenuTriggerButton(tab: tab)
+            }
+            .frame(height: 20)
+
+            Text("Stash")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+    }
+}
+
+private struct StashMenuTriggerButton: View {
+    @ObservedObject var tab: RepoTab
+
+    var body: some View {
+        Button {
+            showMenu()
+        } label: {
+            ToolbarIconView(icon: .chevronDown)
+                .frame(width: 14, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func showMenu() {
+        let menu = NSMenu()
+        let handler = StashMenuHandler(tab: tab)
+
+        let saveItem = NSMenuItem(
+            title: "Save Stash…",
+            action: #selector(StashMenuHandler.saveStash),
+            keyEquivalent: ""
+        )
+        saveItem.target = handler
+        saveItem.representedObject = handler
+        saveItem.isEnabled = tab.totalChangesCount > 0 && !tab.isBusy
+        menu.addItem(saveItem)
+
+        if !tab.stashes.isEmpty {
+            menu.addItem(.separator())
+
+            let popItem = NSMenuItem(
+                title: "Pop Latest Stash (\(tab.stashes[0].name))",
+                action: #selector(StashMenuHandler.popLatest),
+                keyEquivalent: ""
+            )
+            popItem.target = handler
+            popItem.representedObject = handler
+            menu.addItem(popItem)
+
+            let applyItem = NSMenuItem(
+                title: "Apply Latest Stash (\(tab.stashes[0].name))",
+                action: #selector(StashMenuHandler.applyLatest),
+                keyEquivalent: ""
+            )
+            applyItem.target = handler
+            applyItem.representedObject = handler
+            menu.addItem(applyItem)
+        }
+
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
+@MainActor
+private final class StashMenuHandler: NSObject {
+    let tab: RepoTab
+
+    init(tab: RepoTab) {
+        self.tab = tab
+    }
+
+    @objc func saveStash() {
+        tab.isShowingStashSheet = true
+    }
+
+    @objc func popLatest() {
+        guard let first = tab.stashes.first else { return }
+        tab.stashPop(first.index)
+    }
+
+    @objc func applyLatest() {
+        guard let first = tab.stashes.first else { return }
+        tab.stashApply(first.index)
     }
 }
