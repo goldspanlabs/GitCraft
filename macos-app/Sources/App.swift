@@ -140,6 +140,7 @@ struct RepoWorkspaceView: View {
         }
         .navigationTitle(tab.name)
         .navigationSubtitle(tab.currentBranch)
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .searchable(text: $searchText, placement: .toolbar, prompt: "Filter commits")
         .onChange(of: searchText) { newValue in
             tab.updateSearch(newValue)
