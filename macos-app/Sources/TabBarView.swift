@@ -34,9 +34,8 @@ struct TabBarView: View {
             .padding(.horizontal, 6)
             .help("Open Repository in New Tab (Cmd+T)")
         }
-        .padding(.leading, 76)
-        .frame(height: 38)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(height: 32)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
     }
 }
 

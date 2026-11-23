@@ -13,7 +13,6 @@ struct MiniGitApp: App {
                     workspace.restoreTabs()
                 }
         }
-        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Open Repository…", action: workspace.chooseRepository)
@@ -32,29 +31,26 @@ struct RootView: View {
     @EnvironmentObject private var workspace: WorkspaceState
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !workspace.tabs.isEmpty {
-                TabBarView(workspace: workspace)
-                Divider()
-            }
-
-            if let error = workspace.openError {
-                ErrorBanner(message: error) {
-                    workspace.openError = nil
-                }
-            }
-
+        Group {
             if let activeTab = workspace.activeTab {
-                RepoWorkspaceView(tab: activeTab)
+                RepoWorkspaceView(workspace: workspace, tab: activeTab)
                     .id(activeTab.id)
             } else {
-                WelcomeView(workspace: workspace)
+                VStack(spacing: 0) {
+                    if let error = workspace.openError {
+                        ErrorBanner(message: error) {
+                            workspace.openError = nil
+                        }
+                    }
+                    WelcomeView(workspace: workspace)
+                }
             }
         }
     }
 }
 
 struct RepoWorkspaceView: View {
+    @ObservedObject var workspace: WorkspaceState
     @ObservedObject var tab: RepoTab
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchText = ""
@@ -63,110 +59,17 @@ struct RepoWorkspaceView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(tab: tab)
-                .navigationSplitViewColumnWidth(min: 190, ideal: 240, max: 340)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
             VStack(spacing: 0) {
-                // Top Action Header
-                HStack(spacing: 10) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-                        }
-                    } label: {
-                        Image(systemName: "sidebar.left")
+                TabBarView(workspace: workspace)
+                Divider()
+
+                if let error = workspace.openError {
+                    ErrorBanner(message: error) {
+                        workspace.openError = nil
                     }
-                    .buttonStyle(.bordered)
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                    .help("Toggle Sidebar (Cmd+Shift+S)")
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(tab.name)
-                            .font(.headline)
-                            .lineLimit(1)
-                        if !tab.currentBranch.isEmpty {
-                            Text(tab.currentBranch)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-
-                    if tab.isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(.trailing, 2)
-                    }
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("Filter commits…", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12.5))
-                            .focused($isSearchFocused)
-                            .onChange(of: searchText) { newValue in
-                                tab.updateSearch(newValue)
-                            }
-                        if !searchText.isEmpty {
-                            Button {
-                                searchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .frame(width: 220)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                    )
-
-                    ControlGroup {
-                        Button {
-                            tab.runRemote(.fetch)
-                        } label: {
-                            Label("Fetch", systemImage: "arrow.down.circle")
-                        }
-                        .disabled(tab.isBusy)
-
-                        Button {
-                            tab.runRemote(.pull)
-                        } label: {
-                            Label("Pull", systemImage: "arrow.down.to.line")
-                        }
-                        .disabled(tab.isBusy)
-
-                        Button {
-                            tab.runRemote(.push)
-                        } label: {
-                            Label("Push", systemImage: "arrow.up.to.line")
-                        }
-                        .disabled(tab.isBusy)
-                    }
-
-                    Button {
-                        tab.refresh()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .help("Refresh (Cmd+R)")
                 }
-                .controlSize(.regular)
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(Color(nsColor: .windowBackgroundColor))
 
                 if let error = tab.errorMessage {
                     ErrorBanner(message: error) {
@@ -179,8 +82,6 @@ struct RepoWorkspaceView: View {
                         tab.pendingConfirmation = .abortMerge
                     }
                 }
-
-                Divider()
 
                 // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
                 VSplitView {
@@ -227,12 +128,92 @@ struct RepoWorkspaceView: View {
                         .frame(minHeight: 210, idealHeight: 290)
                 }
             }
-            // Hidden shortcut button for Cmd+F search focus
+            // Hidden shortcuts for Cmd+F search focus and Cmd+Shift+S sidebar toggle
             .background(
-                Button("") { isSearchFocused = true }
-                    .keyboardShortcut("f", modifiers: .command)
+                Group {
+                    Button("") { isSearchFocused = true }
+                        .keyboardShortcut("f", modifiers: .command)
+                        .opacity(0)
+                    Button("") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+                        }
+                    }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
                     .opacity(0)
+                }
             )
+        }
+        .navigationTitle(tab.name)
+        .navigationSubtitle(tab.currentBranch)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if tab.isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Filter commits…", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12.5))
+                        .focused($isSearchFocused)
+                        .onChange(of: searchText) { newValue in
+                            tab.updateSearch(newValue)
+                        }
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .frame(width: 210)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.75))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+
+                Button {
+                    tab.runRemote(.fetch)
+                } label: {
+                    Label("Fetch", systemImage: "arrow.down.circle")
+                }
+                .disabled(tab.isBusy)
+
+                Button {
+                    tab.runRemote(.pull)
+                } label: {
+                    Label("Pull", systemImage: "arrow.down.to.line")
+                }
+                .disabled(tab.isBusy)
+
+                Button {
+                    tab.runRemote(.push)
+                } label: {
+                    Label("Push", systemImage: "arrow.up.to.line")
+                }
+                .disabled(tab.isBusy)
+
+                Button {
+                    tab.refresh()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Refresh (Cmd+R)")
+            }
         }
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
