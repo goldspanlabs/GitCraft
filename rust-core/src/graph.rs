@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use gix::bstr::ByteSlice;
 
-use crate::{BranchInfo, CommitRow, GraphEdge, GitCraftError, RefBadge, RefKind, TagInfo};
+use crate::{BranchInfo, CommitRow, GitCraftError, GraphEdge, RefBadge, RefKind, TagInfo};
 
 #[derive(Clone, Debug)]
 pub(crate) struct RawCommit {
