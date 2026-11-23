@@ -29,9 +29,12 @@ struct DiffTableView: NSViewRepresentable {
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("diff"))
         column.minWidth = 400
+        column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
 
         scrollView.documentView = table
+        scrollView.contentView.postsFrameChangedNotifications = true
+        context.coordinator.observeResize(scrollView: scrollView, table: table)
         return scrollView
     }
 
@@ -43,20 +46,48 @@ struct DiffTableView: NSViewRepresentable {
             || prev.last?.text != rows.last?.text
             || prev.first?.newLine != rows.first?.newLine
             || prev.last?.newLine != rows.last?.newLine
-        guard changed else { return }
+
         context.coordinator.rows = rows
-        let maxChars = rows.reduce(0) { max($0, $1.text.count) }
-        let targetWidth = max(scrollView.contentSize.width, CGFloat(maxChars) * 7.4 + 120)
-        table.tableColumns.first?.width = targetWidth
+        context.coordinator.updateColumnWidth(scrollView: scrollView, table: table)
+
+        guard changed else { return }
         table.reloadData()
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var rows: [DiffRow]
+        private var frameObserver: NSObjectProtocol?
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("DiffRowCell")
 
         init(rows: [DiffRow]) {
             self.rows = rows
+        }
+
+        deinit {
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+            }
+        }
+
+        func observeResize(scrollView: NSScrollView, table: NSTableView) {
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self, weak scrollView, weak table] _ in
+                guard let self, let scrollView, let table else { return }
+                self.updateColumnWidth(scrollView: scrollView, table: table)
+            }
+        }
+
+        func updateColumnWidth(scrollView: NSScrollView, table: NSTableView) {
+            let maxChars = rows.reduce(0) { max($0, $1.text.count) }
+            let contentWidth = CGFloat(maxChars) * 7.6 + 130
+            let visibleWidth = scrollView.contentView.bounds.width
+            let targetWidth = max(visibleWidth, contentWidth, 400)
+            if let col = table.tableColumns.first, abs(col.width - targetWidth) > 0.5 {
+                col.width = targetWidth
+            }
         }
 
         func numberOfRows(in _: NSTableView) -> Int {
@@ -193,9 +224,20 @@ private extension NSColor {
             cleaned.removeFirst()
         }
         guard cleaned.count == 6, let rgb = UInt64(cleaned, radix: 16) else { return nil }
-        let r = CGFloat((rgb >> 16) & 0xFF) / 255.0
-        let g = CGFloat((rgb >> 8) & 0xFF) / 255.0
-        let b = CGFloat(rgb & 0xFF) / 255.0
+        var r = CGFloat((rgb >> 16) & 0xFF) / 255.0
+        var g = CGFloat((rgb >> 8) & 0xFF) / 255.0
+        var b = CGFloat(rgb & 0xFF) / 255.0
+
+        // base16-ocean.dark tokens are light pastels; darken them in Light Mode for crisp contrast.
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if !isDark {
+            let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if luminance > 0.55 {
+                r *= 0.48
+                g *= 0.48
+                b *= 0.48
+            }
+        }
         self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
     }
 }
