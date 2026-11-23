@@ -2,11 +2,11 @@ import AppKit
 import SwiftUI
 
 @main
-struct MiniGitApp: App {
+struct GitCraftApp: App {
     @StateObject private var workspace = WorkspaceState()
 
     var body: some Scene {
-        WindowGroup("MiniGit") {
+        WindowGroup("GitCraft") {
             RootView()
                 .environmentObject(workspace)
                 .frame(minWidth: 1040, minHeight: 680)

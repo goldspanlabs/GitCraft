@@ -1,7 +1,7 @@
-namespace minigit_core {};
+namespace gitcraft_core {};
 
 [Error]
-interface MiniGitError {
+interface GitCraftError {
   Message(string msg);
 };
 
@@ -104,97 +104,97 @@ dictionary RepoStatus {
 };
 
 interface RepoSession {
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   constructor(string path);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   RepoStatus status();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<CommitRow> get_commit_graph(u32 offset, u32 limit, string? search_query);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   CommitDetail get_commit_detail(string oid_hex);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<DiffRow> get_commit_diff(string oid_hex, string? path);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<DiffRow> get_working_diff(string? path, boolean staged);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<BranchInfo> list_branches();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<TagInfo> list_tags();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void create_tag(string tag_name, string? target, string? message, boolean push_to_remote);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void delete_tag(string tag_name, boolean delete_remote);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void push_tag(string tag_name);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<StashInfo> list_stashes();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stash_push(string? message, boolean include_untracked);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stash_apply(u32 index);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stash_pop(u32 index);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stash_drop(u32 index);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void checkout_branch(string branch_name);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void create_branch(string branch_name, string? start_point, boolean checkout);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void delete_branch(string branch_name, boolean force);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void merge_branch(string branch_name);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void abort_merge();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   sequence<DiffRow> diff();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stage(string path);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void unstage(string path);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void stage_all();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void unstage_all();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void discard_file(string path);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void commit(string message);
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void fetch();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void pull();
 
-  [Throws=MiniGitError]
+  [Throws=GitCraftError]
   void push();
 
   boolean take_dirty();

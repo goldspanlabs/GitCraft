@@ -2,17 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "MiniGit",
+    name: "GitCraft",
     platforms: [.macOS(.v13)],
-    products: [.executable(name: "MiniGit", targets: ["MiniGit"])],
+    products: [.executable(name: "GitCraft", targets: ["GitCraft"])],
     targets: [
         .executableTarget(
-            name: "MiniGit",
+            name: "GitCraft",
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
-                .linkedLibrary("minigit_core", .when(platforms: [.macOS])),
+                .linkedLibrary("gitcraft_core", .when(platforms: [.macOS])),
             ]
         )
     ]

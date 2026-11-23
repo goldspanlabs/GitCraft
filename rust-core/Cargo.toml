@@ -1,10 +1,10 @@
 [package]
-name = "minigit-core"
+name = "gitcraft-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "minigit_core"
+name = "gitcraft_core"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]

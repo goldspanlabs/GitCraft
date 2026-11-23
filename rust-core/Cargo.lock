@@ -527,6 +527,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitcraft-core"
+version = "0.1.0"
+dependencies = [
+ "gix",
+ "notify",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uniffi",
+]
+
+[[package]]
 name = "gix"
 version = "0.90.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1589,18 +1601,6 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
-]
-
-[[package]]
-name = "minigit-core"
-version = "0.1.0"
-dependencies = [
- "gix",
- "notify",
- "syntect",
- "tempfile",
- "thiserror 2.0.21",
- "uniffi",
 ]
 
 [[package]]

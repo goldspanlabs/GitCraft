@@ -113,7 +113,7 @@ struct WelcomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18))
 
             VStack(spacing: 6) {
-                Text("Welcome to MiniGit")
+                Text("Welcome to GitCraft")
                     .font(.title2.weight(.semibold))
                 Text("Fast, native Git client powered by Rust & AppKit")
                     .font(.callout)

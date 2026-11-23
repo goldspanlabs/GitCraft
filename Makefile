@@ -1,7 +1,7 @@
 RUST_DIR := rust-core
 APP_DIR := macos-app
 BUILD_DIR := build
-APP := $(BUILD_DIR)/MiniGit.app
+APP := $(BUILD_DIR)/GitCraft.app
 UNIFFI := $(RUST_DIR)/target/release/uniffi-bindgen
 
 .PHONY: all rust bindings swift bundle clean
@@ -12,19 +12,19 @@ rust:
 	cargo build --release --manifest-path $(RUST_DIR)/Cargo.toml
 
 bindings: rust
-	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/minigit_core.udl" --language swift --crate minigit_core --out-dir "$(APP_DIR)/Sources/Generated"
+	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$(APP_DIR)/Sources/Generated"
 
 swift: rust bindings
-	cd "$(APP_DIR)" && swift build -c release -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/minigit_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
+	cd "$(APP_DIR)" && swift build -c release -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/gitcraft_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
 
 bundle: swift
 	rm -rf $(APP) $(BUILD_DIR)/AppIcon.iconset
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp $(APP_DIR)/.build/release/MiniGit $(APP)/Contents/MacOS/MiniGit
+	cp $(APP_DIR)/.build/release/GitCraft $(APP)/Contents/MacOS/GitCraft
 	@SDK_VER="$$(xcrun --show-sdk-version 2>/dev/null || true)"; \
 	if [ -n "$$SDK_VER" ] && xcrun --find vtool >/dev/null 2>&1; then \
 		xcrun vtool -set-build-version macos 13.0 15.0 -replace \
-			-output $(APP)/Contents/MacOS/MiniGit $(APP)/Contents/MacOS/MiniGit; \
+			-output $(APP)/Contents/MacOS/GitCraft $(APP)/Contents/MacOS/GitCraft; \
 	fi
 	cp $(APP_DIR)/Info.plist $(APP)/Contents/Info.plist
 	@if xcrun --find actool >/dev/null 2>&1; then \
