@@ -7,6 +7,7 @@ struct SidebarView: View {
     @State private var isRemotesExpanded = false
     @State private var isTagsExpanded = false
     @State private var isStashesExpanded = false
+    @State private var collapsedFolderIDs: Set<String> = []
 
     private var localBranches: [BranchInfo] {
         tab.branches.filter { !$0.isRemote }
@@ -14,6 +15,32 @@ struct SidebarView: View {
 
     private var remoteBranches: [BranchInfo] {
         tab.branches.filter { $0.isRemote }
+    }
+
+    private var localBranchRows: [FlatBranchRow] {
+        BranchTreeNode.buildFlattenedRows(
+            from: localBranches,
+            scope: "local",
+            collapsedFolderIDs: collapsedFolderIDs
+        )
+    }
+
+    private var remoteBranchRows: [FlatBranchRow] {
+        BranchTreeNode.buildFlattenedRows(
+            from: remoteBranches,
+            scope: "remote",
+            collapsedFolderIDs: collapsedFolderIDs
+        )
+    }
+
+    private func toggleFolder(_ folderID: String) {
+        withAnimation(.easeInOut(duration: 0.14)) {
+            if collapsedFolderIDs.contains(folderID) {
+                collapsedFolderIDs.remove(folderID)
+            } else {
+                collapsedFolderIDs.insert(folderID)
+            }
+        }
     }
 
     var body: some View {
@@ -48,67 +75,24 @@ struct SidebarView: View {
 
             Section {
                 if isLocalBranchesExpanded {
-                    ForEach(localBranches, id: \.fullRef) { branch in
-                        HStack(spacing: 6) {
-                            Image(systemName: branch.isHead ? "checkmark.circle.fill" : "arrow.triangle.branch")
-                                .foregroundStyle(branch.isHead ? Color.accentColor : Color.secondary)
-                                .font(.caption)
-                                .frame(width: 16, alignment: .center)
-
-                            Text(branch.name)
-                                .fontWeight(branch.isHead ? .semibold : .regular)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-
-                            Spacer()
-
-                            if branch.ahead > 0 || branch.behind > 0 {
-                                HStack(spacing: 4) {
-                                    if branch.ahead > 0 {
-                                        Text("↑\(branch.ahead)")
-                                    }
-                                    if branch.behind > 0 {
-                                        Text("↓\(branch.behind)")
-                                    }
-                                }
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.12))
-                                .clipShape(Capsule())
+                    ForEach(localBranchRows) { row in
+                        switch row.kind {
+                        case let .folder(name, folderID, isExpanded):
+                            BranchFolderRowView(
+                                name: name,
+                                depth: row.depth,
+                                isExpanded: isExpanded,
+                                isTopLevelRemote: false
+                            ) {
+                                toggleFolder(folderID)
                             }
-                        }
-                        .contentShape(Rectangle())
-                        // Single tap must fire immediately; a count:1 gesture declared next to a
-                        // count:2 one makes SwiftUI wait out the double-click interval first.
-                        .onTapGesture {
-                            tab.scrollToCommit(oidHex: branch.targetOidHex)
-                        }
-                        .simultaneousGesture(
-                            TapGesture(count: 2).onEnded {
-                                tab.checkoutBranch(branch.name)
-                            }
-                        )
-                        .contextMenu {
-                            if !branch.isHead {
-                                Button("Checkout \(branch.name)") {
-                                    tab.checkoutBranch(branch.name)
-                                }
-                                Button("Merge \(branch.name) into Current") {
-                                    tab.mergeBranch(branch.name)
-                                }
-                            }
-                            Button("New Branch from \(branch.name)…") {
-                                tab.newBranchStartPoint = branch.name
-                                tab.isShowingNewBranchSheet = true
-                            }
-                            if !branch.isHead {
-                                Divider()
-                                Button("Delete \(branch.name)…", role: .destructive) {
-                                    tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
-                                }
-                            }
+                        case let .branch(branch, leafName):
+                            LocalBranchRowView(
+                                tab: tab,
+                                branch: branch,
+                                displayName: leafName,
+                                depth: row.depth
+                            )
                         }
                     }
                 }
@@ -133,20 +117,24 @@ struct SidebarView: View {
             if !remoteBranches.isEmpty {
                 Section {
                     if isRemotesExpanded {
-                        ForEach(remoteBranches, id: \.fullRef) { branch in
-                            HStack(spacing: 6) {
-                                Image(systemName: "icloud")
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption)
-                                    .frame(width: 16, alignment: .center)
-                                Text(branch.name)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                tab.scrollToCommit(oidHex: branch.targetOidHex)
+                        ForEach(remoteBranchRows) { row in
+                            switch row.kind {
+                            case let .folder(name, folderID, isExpanded):
+                                BranchFolderRowView(
+                                    name: name,
+                                    depth: row.depth,
+                                    isExpanded: isExpanded,
+                                    isTopLevelRemote: row.depth == 0
+                                ) {
+                                    toggleFolder(folderID)
+                                }
+                            case let .branch(branch, leafName):
+                                RemoteBranchRowView(
+                                    tab: tab,
+                                    branch: branch,
+                                    displayName: leafName,
+                                    depth: row.depth
+                                )
                             }
                         }
                     }
@@ -269,6 +257,242 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+    }
+}
+
+private struct FlatBranchRow: Identifiable {
+    enum Kind {
+        case folder(name: String, folderID: String, isExpanded: Bool)
+        case branch(branch: BranchInfo, leafName: String)
+    }
+
+    let id: String
+    let depth: Int
+    let kind: Kind
+}
+
+private final class BranchTreeNode {
+    let name: String
+    let pathID: String
+    var branch: BranchInfo?
+    var children: [BranchTreeNode] = []
+
+    init(name: String, pathID: String, branch: BranchInfo? = nil) {
+        self.name = name
+        self.pathID = pathID
+        self.branch = branch
+    }
+
+    var isFolder: Bool {
+        !children.isEmpty
+    }
+
+    func insert(parts: ArraySlice<String>, branch: BranchInfo, scope: String, currentPath: String) {
+        guard let first = parts.first else { return }
+        let nextPath = currentPath.isEmpty ? "\(scope):\(first)" : "\(currentPath)/\(first)"
+        let remaining = parts.dropFirst()
+
+        if remaining.isEmpty {
+            let leaf = BranchTreeNode(name: first, pathID: "leaf:\(branch.fullRef)", branch: branch)
+            children.append(leaf)
+        } else {
+            if let existingFolder = children.first(where: { $0.isFolder && $0.name == first }) {
+                existingFolder.insert(parts: remaining, branch: branch, scope: scope, currentPath: nextPath)
+            } else {
+                let folder = BranchTreeNode(name: first, pathID: "folder:\(nextPath)")
+                folder.insert(parts: remaining, branch: branch, scope: scope, currentPath: nextPath)
+                children.append(folder)
+            }
+        }
+    }
+
+    func sortTree() {
+        for child in children where child.isFolder {
+            child.sortTree()
+        }
+        // Keep root-level direct branches (e.g. main) above folders, or sort alphabetically within each group.
+        children.sort { a, b in
+            if a.isFolder != b.isFolder {
+                return !a.isFolder
+            }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    static func buildFlattenedRows(
+        from branches: [BranchInfo],
+        scope: String,
+        collapsedFolderIDs: Set<String>
+    ) -> [FlatBranchRow] {
+        let root = BranchTreeNode(name: "", pathID: scope)
+        for branch in branches {
+            let parts = branch.name.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+            guard !parts.isEmpty else { continue }
+            root.insert(parts: ArraySlice(parts), branch: branch, scope: scope, currentPath: "")
+        }
+        root.sortTree()
+
+        var rows: [FlatBranchRow] = []
+        func flatten(nodes: [BranchTreeNode], depth: Int) {
+            for node in nodes {
+                if node.isFolder {
+                    let isExpanded = !collapsedFolderIDs.contains(node.pathID)
+                    rows.append(
+                        FlatBranchRow(
+                            id: node.pathID,
+                            depth: depth,
+                            kind: .folder(name: node.name, folderID: node.pathID, isExpanded: isExpanded)
+                        )
+                    )
+                    if isExpanded {
+                        flatten(nodes: node.children, depth: depth + 1)
+                    }
+                } else if let branch = node.branch {
+                    rows.append(
+                        FlatBranchRow(
+                            id: node.pathID,
+                            depth: depth,
+                            kind: .branch(branch: branch, leafName: node.name)
+                        )
+                    )
+                }
+            }
+        }
+        flatten(nodes: root.children, depth: 0)
+        return rows
+    }
+}
+
+private struct BranchFolderRowView: View {
+    let name: String
+    let depth: Int
+    let isExpanded: Bool
+    let isTopLevelRemote: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 10, alignment: .center)
+
+            Image(systemName: isTopLevelRemote ? "icloud" : "folder")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .frame(width: 16, alignment: .center)
+
+            Text(name)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer()
+        }
+        .padding(.leading, CGFloat(depth) * 14)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggle()
+        }
+    }
+}
+
+private struct LocalBranchRowView: View {
+    @ObservedObject var tab: RepoTab
+    let branch: BranchInfo
+    let displayName: String
+    let depth: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Align leaf branch icon under folder icon when nested, or flush when top-level
+            Image(systemName: branch.isHead ? "checkmark" : "arrow.triangle.branch")
+                .foregroundStyle(branch.isHead ? Color.primary : Color.secondary)
+                .font(.system(size: 11, weight: branch.isHead ? .bold : .regular))
+                .frame(width: 16, alignment: .center)
+
+            Text(displayName)
+                .fontWeight(branch.isHead ? .semibold : .regular)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer()
+
+            if branch.ahead > 0 || branch.behind > 0 {
+                HStack(spacing: 4) {
+                    if branch.ahead > 0 {
+                        Text("↑\(branch.ahead)")
+                    }
+                    if branch.behind > 0 {
+                        Text("↓\(branch.behind)")
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(Capsule())
+            }
+        }
+        .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
+        .contentShape(Rectangle())
+        // Single tap must fire immediately; a count:1 gesture declared next to a
+        // count:2 one makes SwiftUI wait out the double-click interval first.
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: branch.targetOidHex)
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                tab.checkoutBranch(branch.name)
+            }
+        )
+        .contextMenu {
+            if !branch.isHead {
+                Button("Checkout \(branch.name)") {
+                    tab.checkoutBranch(branch.name)
+                }
+                Button("Merge \(branch.name) into Current") {
+                    tab.mergeBranch(branch.name)
+                }
+            }
+            Button("New Branch from \(branch.name)…") {
+                tab.newBranchStartPoint = branch.name
+                tab.isShowingNewBranchSheet = true
+            }
+            if !branch.isHead {
+                Divider()
+                Button("Delete \(branch.name)…", role: .destructive) {
+                    tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
+                }
+            }
+        }
+    }
+}
+
+private struct RemoteBranchRowView: View {
+    @ObservedObject var tab: RepoTab
+    let branch: BranchInfo
+    let displayName: String
+    let depth: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+                .frame(width: 16, alignment: .center)
+
+            Text(displayName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer()
+        }
+        .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: branch.targetOidHex)
+        }
     }
 }
 
