@@ -436,38 +436,157 @@ fn merge_conflict_detection_and_abort_merge() {
     assert!(after.is_clean);
 }
 
+fn commit_as(dir: &Path, name: &str, email: &str, file: &str, msg: &str) {
+    fs::write(dir.join(file), format!("{msg}\n")).unwrap();
+    run_git(dir, &["add", file]);
+    let out = Command::new("git")
+        .args(["commit", "-m", msg])
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", name)
+        .env("GIT_AUTHOR_EMAIL", email)
+        .env("GIT_COMMITTER_NAME", name)
+        .env("GIT_COMMITTER_EMAIL", email)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn mine_map(dir: &Path) -> std::collections::HashMap<String, bool> {
+    RepoSession::new(dir.to_string_lossy().into_owned())
+        .unwrap()
+        .list_branches()
+        .unwrap()
+        .into_iter()
+        .map(|b| (b.name, b.is_mine))
+        .collect()
+}
+
+const ME: (&str, &str) = ("GitCraft Tester", "tester@gitcraft.local");
+const OTHER: (&str, &str) = ("Someone Else", "other@example.com");
+
 #[test]
-fn list_branches_flags_branches_authored_by_configured_user() {
+fn is_mine_is_stable_when_others_commit_on_my_branch_and_vice_versa() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     run_git(root, &["init", "-b", "main"]);
     configure_git_identity(root);
+    commit_as(root, OTHER.0, OTHER.1, "base.txt", "base by other");
 
-    // Commit on main as the configured user.
-    fs::write(root.join("a.txt"), "a\n").unwrap();
-    run_git(root, &["add", "a.txt"]);
-    run_git(root, &["commit", "-m", "mine"]);
-
-    // A branch whose tip is authored by someone else.
-    run_git(root, &["checkout", "-b", "theirs"]);
-    fs::write(root.join("b.txt"), "b\n").unwrap();
-    run_git(root, &["add", "b.txt"]);
-    let out = Command::new("git")
-        .args(["commit", "-m", "theirs"])
-        .current_dir(root)
-        .env("GIT_AUTHOR_NAME", "Someone Else")
-        .env("GIT_AUTHOR_EMAIL", "other@example.com")
-        .env("GIT_COMMITTER_NAME", "Someone Else")
-        .env("GIT_COMMITTER_EMAIL", "other@example.com")
-        .output()
-        .unwrap();
-    assert!(out.status.success());
+    // Mine: I author the only unique commit.
+    run_git(root, &["checkout", "-b", "mine-only"]);
+    commit_as(root, ME.0, ME.1, "m1.txt", "m1");
     run_git(root, &["checkout", "main"]);
 
-    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
-    let branches = session.list_branches().unwrap();
-    let mine = branches.iter().find(|b| b.name == "main").unwrap();
-    let theirs = branches.iter().find(|b| b.name == "theirs").unwrap();
-    assert!(mine.is_mine);
-    assert!(!theirs.is_mine);
+    // Mine, then a teammate pushes on top: tip is theirs, branch must stay mine.
+    run_git(root, &["checkout", "-b", "mine-then-other"]);
+    commit_as(root, ME.0, ME.1, "m2.txt", "m2");
+    commit_as(root, OTHER.0, OTHER.1, "o2.txt", "o2");
+    run_git(root, &["checkout", "main"]);
+
+    // Theirs only.
+    run_git(root, &["checkout", "-b", "other-only"]);
+    commit_as(root, OTHER.0, OTHER.1, "o1.txt", "o1");
+    run_git(root, &["checkout", "main"]);
+
+    // Theirs, then I add a commit: I contributed, so it shows as mine.
+    run_git(root, &["checkout", "-b", "other-then-mine"]);
+    commit_as(root, OTHER.0, OTHER.1, "o3.txt", "o3");
+    commit_as(root, ME.0, ME.1, "m3.txt", "m3");
+    run_git(root, &["checkout", "main"]);
+
+    // Branch cut from my branch with no commits of its own inherits nothing
+    // extra: its unique set is empty relative to main only if merged; here it
+    // shares my commit, so it is mine too.
+    run_git(root, &["branch", "mine-only-copy", "mine-only"]);
+
+    let m = mine_map(root);
+    assert!(m["mine-only"]);
+    assert!(m["mine-then-other"], "teammate push must not hide my branch");
+    assert!(!m["other-only"]);
+    assert!(m["other-then-mine"]);
+    assert!(m["mine-only-copy"]);
+    // Default branch has nothing unique; falls back to tip author (other).
+    assert!(!m["main"]);
+}
+
+#[test]
+fn is_mine_default_branch_and_merged_branches_fall_back_to_tip_author() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+    commit_as(root, ME.0, ME.1, "a.txt", "a");
+
+    // Fully merged branch (same tip as main): nothing unique, tip is mine.
+    run_git(root, &["branch", "merged-mine"]);
+    let m = mine_map(root);
+    assert!(m["main"]);
+    assert!(m["merged-mine"]);
+
+    // Someone else lands a commit on main; a stale branch pointing at it is theirs.
+    commit_as(root, OTHER.0, OTHER.1, "b.txt", "b");
+    run_git(root, &["branch", "merged-other"]);
+    let m = mine_map(root);
+    assert!(!m["main"]);
+    assert!(!m["merged-other"]);
+    // My older branch is behind main, with nothing unique: tip author (me).
+    assert!(m["merged-mine"]);
+}
+
+#[test]
+fn is_mine_matches_email_case_insensitively_and_falls_back_to_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+    commit_as(root, OTHER.0, OTHER.1, "base.txt", "base");
+
+    run_git(root, &["checkout", "-b", "upper"]);
+    commit_as(root, ME.0, "TESTER@GitCraft.Local", "u.txt", "u");
+    run_git(root, &["checkout", "main"]);
+
+    // Same display name but different email is not me when an email is configured.
+    run_git(root, &["checkout", "-b", "impostor"]);
+    commit_as(root, ME.0, "impostor@example.com", "i.txt", "i");
+    run_git(root, &["checkout", "main"]);
+
+    let m = mine_map(root);
+    assert!(m["upper"]);
+    assert!(!m["impostor"]);
+
+    // With no configured email, fall back to matching on name.
+    run_git(root, &["config", "user.email", ""]);
+    let m = mine_map(root);
+    assert!(m["impostor"]);
+    assert!(m["upper"]);
+    assert!(!m["main"]);
+}
+
+#[test]
+fn is_mine_applies_to_remote_branches_and_uses_origin_head_baseline() {
+    let remote = tempfile::tempdir().unwrap();
+    run_git(remote.path(), &["init", "--bare", "-b", "trunk"]);
+
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path();
+    run_git(root, &["init", "-b", "trunk"]);
+    configure_git_identity(root);
+    run_git(root, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    commit_as(root, OTHER.0, OTHER.1, "base.txt", "base");
+    run_git(root, &["push", "-u", "origin", "trunk"]);
+    run_git(root, &["remote", "set-head", "origin", "trunk"]);
+
+    run_git(root, &["checkout", "-b", "feat-mine"]);
+    commit_as(root, ME.0, ME.1, "f.txt", "f");
+    commit_as(root, OTHER.0, OTHER.1, "g.txt", "g");
+    run_git(root, &["push", "origin", "feat-mine"]);
+    run_git(root, &["checkout", "-b", "feat-other", "trunk"]);
+    commit_as(root, OTHER.0, OTHER.1, "h.txt", "h");
+    run_git(root, &["push", "origin", "feat-other"]);
+
+    let m = mine_map(root);
+    assert!(m["origin/feat-mine"], "remote branch with my commit under a teammate's tip");
+    assert!(!m["origin/feat-other"]);
+    assert!(m["feat-mine"]);
+    assert!(!m["feat-other"]);
 }

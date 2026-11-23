@@ -415,18 +415,64 @@ pub fn list_branches(
         .string("user.name")
         .map(|v| v.to_str_lossy().trim().to_lowercase())
         .unwrap_or_default();
-    let is_mine = |oid: gix::ObjectId| -> bool {
-        let Ok(commit) = repo.find_commit(oid) else {
-            return false;
-        };
-        let Ok(author) = commit.author() else {
-            return false;
-        };
-        let email = author.email.to_str_lossy().trim().to_lowercase();
+    let is_user = |author: &gix::actor::SignatureRef<'_>| -> bool {
         if !user_email.is_empty() {
-            return email == user_email;
+            return author.email.to_str_lossy().trim().to_lowercase() == user_email;
         }
         !user_name.is_empty() && author.name.to_str_lossy().trim().to_lowercase() == user_name
+    };
+
+    // The default branch is the baseline: a branch is "mine" if I authored any
+    // commit that is not already on it. This keeps a branch mine even after a
+    // teammate pushes on top of it.
+    let base_oid: Option<gix::ObjectId> = {
+        let mut candidates: Vec<String> = Vec::new();
+        if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
+            if let gix::refs::TargetRef::Symbolic(name) = r.target() {
+                candidates.push(name.as_bstr().to_str_lossy().into_owned());
+            }
+        }
+        for n in ["main", "master"] {
+            candidates.push(format!("refs/heads/{n}"));
+            candidates.push(format!("refs/remotes/origin/{n}"));
+        }
+        let local_oids: HashMap<&str, gix::ObjectId> = local_entries
+            .iter()
+            .map(|(_, full, oid, _)| (full.as_str(), *oid))
+            .collect();
+        candidates.iter().find_map(|c| {
+            local_oids
+                .get(c.as_str())
+                .copied()
+                .or_else(|| remote_oids.get(c).copied())
+        })
+    };
+
+    const MAX_UNIQUE_COMMITS: usize = 1000;
+    let is_mine = |tip: gix::ObjectId| -> bool {
+        let mut inspected_any = false;
+        if let Some(base) = base_oid.filter(|b| *b != tip) {
+            if let Ok(walk) = repo.rev_walk([tip]).with_hidden([base]).all() {
+                for info in walk.take(MAX_UNIQUE_COMMITS) {
+                    let Ok(info) = info else { break };
+                    let Ok(commit) = info.object() else { continue };
+                    let Ok(author) = commit.author() else { continue };
+                    inspected_any = true;
+                    if is_user(&author) {
+                        return true;
+                    }
+                }
+            }
+        }
+        if inspected_any {
+            return false;
+        }
+        // Nothing unique to this branch (it is the default branch or fully
+        // merged into it): fall back to the tip commit's author.
+        repo.find_commit(tip)
+            .ok()
+            .and_then(|c| c.author().ok().map(|a| is_user(&a)))
+            .unwrap_or(false)
     };
     let mut branches = Vec::with_capacity(local_entries.len() + remote_entries.len());
 
