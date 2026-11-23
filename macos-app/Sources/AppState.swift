@@ -203,6 +203,8 @@ final class RepoTab: ObservableObject, Identifiable {
     private var hasMoreCommits = true
     private let pageSize: UInt32 = 500
     private var watcherTask: Task<Void, Never>?
+    private var revealTask: Task<Void, Never>?
+    private var loadedDetailOid: String?
 
     init(url: URL) throws {
         self.url = url
@@ -323,25 +325,81 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func scrollToCommit(oidHex: String) {
-        scrollRequest = ScrollRequest(oidHex: oidHex)
-        // Update the detail/diff panes directly rather than relying on the table
-        // selection callback, which fires from inside a SwiftUI view update.
+        revealTask?.cancel()
+        revealTask = nil
         if let commit = commits.first(where: { $0.oidHex == oidHex }) {
+            scrollRequest = ScrollRequest(oidHex: oidHex)
+            // Update the detail/diff panes directly rather than relying on the table
+            // selection callback, which fires from inside a SwiftUI view update.
             selectCommit(commit)
+            return
         }
+        // Tip is beyond the loaded page(s): page in more history until it shows up.
+        revealTask = Task { await revealCommit(oidHex: oidHex) }
+    }
+
+    private func revealCommit(oidHex: String) async {
+        while isLoadingMore {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            if Task.isCancelled { return }
+        }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        let session = self.session
+        let limit = pageSize
+        let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil
+            : searchQuery
+
+        while !Task.isCancelled {
+            if let commit = commits.first(where: { $0.oidHex == oidHex }) {
+                scrollRequest = ScrollRequest(oidHex: oidHex)
+                selectCommit(commit)
+                return
+            }
+            guard hasMoreCommits else { break }
+            let offset = UInt32(commits.count)
+            do {
+                let nextPage = try await Task.detached {
+                    try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
+                }.value
+                if Task.isCancelled { return }
+                if nextPage.count < Int(limit) { hasMoreCommits = false }
+                commits.append(contentsOf: nextPage)
+                graphRevision = UUID()
+            } catch {
+                errorMessage = error.localizedDescription
+                return
+            }
+        }
+        if Task.isCancelled { return }
+        // Not reachable in the current graph (e.g. hidden by the search filter): don't
+        // leave the panes showing an unrelated commit.
+        errorMessage = "That commit isn't in the current commit list."
+        selectCommit(nil)
     }
 
     func scrollToWorkingChanges() {
+        revealTask?.cancel()
+        revealTask = nil
         scrollRequest = ScrollRequest(oidHex: nil)
         selectCommit(nil)
     }
 
     func selectCommit(_ commit: CommitRow?) {
-        if let commit, selectedCommit?.oidHex == commit.oidHex { return }
-        selectedCommit = commit
         if let commit {
+            // Always keep the freshest row (refs/lanes may have changed), but only
+            // reload when this oid's detail is already loaded or in flight; a failed
+            // load clears the marker so re-clicking the commit retries.
+            selectedCommit = commit
+            if loadedDetailOid == commit.oidHex { return }
+            loadedDetailOid = commit.oidHex
             loadCommitDetails(commit)
         } else {
+            guard selectedCommit != nil else { return }
+            selectedCommit = nil
+            loadedDetailOid = nil
             commitDetail = nil
             loadWorkingDiffSelection()
         }
@@ -411,6 +469,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 selectedFilePath = firstPath
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
+                if loadedDetailOid == oid { loadedDetailOid = nil }
                 errorMessage = error.localizedDescription
             }
         }

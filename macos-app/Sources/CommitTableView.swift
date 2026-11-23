@@ -87,19 +87,23 @@ struct CommitTableView: NSViewRepresentable {
 
         if let request = scrollRequest, coordinator.lastHandledScrollID != request.id {
             coordinator.lastHandledScrollID = request.id
-            let targetRow: Int? = if let oid = request.oidHex {
-                rows.firstIndex(where: { $0.oidHex == oid }).map { $0 + 1 }
-            } else {
-                0
-            }
-            if let targetRow, targetRow < coordinator.numberOfRows(in: table) {
-                // Defer: selecting fires the delegate, which publishes state, and that
-                // must not happen during a SwiftUI view update (the change can be dropped).
-                DispatchQueue.main.async { [weak table] in
-                    guard let table else { return }
-                    table.scrollRowToVisible(targetRow)
-                    table.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+            let requestedOid = request.oidHex
+            // Defer: selecting fires the delegate, which publishes state, and that
+            // must not happen during a SwiftUI view update (the change can be dropped).
+            // Resolve the row inside the block so a graph refresh in between can't
+            // leave us with a stale index.
+            DispatchQueue.main.async { [weak table, weak coordinator] in
+                guard let table, let coordinator else { return }
+                let targetRow: Int
+                if let oid = requestedOid {
+                    guard let idx = coordinator.rows.firstIndex(where: { $0.oidHex == oid }) else { return }
+                    targetRow = idx + 1
+                } else {
+                    targetRow = 0
                 }
+                guard targetRow < coordinator.numberOfRows(in: table) else { return }
+                table.scrollRowToVisible(targetRow)
+                table.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
             }
         }
     }
