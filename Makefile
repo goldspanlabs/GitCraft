@@ -15,7 +15,7 @@ bindings: rust
 	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/minigit_core.udl" --language swift --crate minigit_core --out-dir "$(APP_DIR)/Sources/Generated"
 
 swift: rust bindings
-	cd $(APP_DIR) && swift build -c release -Xswiftc -I$(CURDIR)/$(APP_DIR)/Sources/Generated -Xcc -fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/minigit_coreFFI.modulemap -Xlinker -L$(CURDIR)/$(RUST_DIR)/target/release
+	cd "$(APP_DIR)" && swift build -c release -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/minigit_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
 
 bundle: swift
 	rm -rf $(APP) $(BUILD_DIR)/AppIcon.iconset
