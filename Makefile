@@ -1,7 +1,7 @@
 RUST_DIR := rust-core
 APP_DIR := macos-app
 BUILD_DIR := build
-APP := $(BUILD_DIR)/MiniGit.app
+APP := $(BUILD_DIR)/GitCraft.app
 UNIFFI := $(RUST_DIR)/target/release/uniffi-bindgen
 
 .PHONY: all rust bindings swift bundle clean
@@ -20,11 +20,11 @@ swift: rust bindings
 bundle: swift
 	rm -rf $(APP) $(BUILD_DIR)/AppIcon.iconset
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp $(APP_DIR)/.build/release/MiniGit $(APP)/Contents/MacOS/MiniGit
+	cp $(APP_DIR)/.build/release/GitCraft $(APP)/Contents/MacOS/GitCraft
 	@SDK_VER="$$(xcrun --show-sdk-version 2>/dev/null || true)"; \
 	if [ -n "$$SDK_VER" ] && xcrun --find vtool >/dev/null 2>&1; then \
 		xcrun vtool -set-build-version macos 13.0 15.0 -replace \
-			-output $(APP)/Contents/MacOS/MiniGit $(APP)/Contents/MacOS/MiniGit; \
+			-output $(APP)/Contents/MacOS/GitCraft $(APP)/Contents/MacOS/GitCraft; \
 	fi
 	cp $(APP_DIR)/Info.plist $(APP)/Contents/Info.plist
 	@if xcrun --find actool >/dev/null 2>&1; then \

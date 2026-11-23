@@ -1,4 +1,4 @@
-//! Core, platform-independent building blocks for Minigit.
+//! Core, platform-independent building blocks for GitCraft.
 pub mod diff;
 pub mod git_cli;
 pub mod graph;

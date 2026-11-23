@@ -1,6 +1,6 @@
-# MiniGit
+# GitCraft
 
-MiniGit is a native macOS Git client with a Rust core and a SwiftUI/AppKit
+GitCraft is a native macOS Git client with a Rust core and a SwiftUI/AppKit
 interface. It uses the system `git` configuration and SSH keys for local
 repository operations.
 

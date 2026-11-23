@@ -12,9 +12,9 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "MiniGit Tester")
+        .env("GIT_AUTHOR_NAME", "GitCraft Tester")
         .env("GIT_AUTHOR_EMAIL", "tester@minigit.local")
-        .env("GIT_COMMITTER_NAME", "MiniGit Tester")
+        .env("GIT_COMMITTER_NAME", "GitCraft Tester")
         .env("GIT_COMMITTER_EMAIL", "tester@minigit.local")
         .output()
         .expect("failed to invoke git");
@@ -30,7 +30,7 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn configure_git_identity(dir: &Path) {
-    run_git(dir, &["config", "user.name", "MiniGit Tester"]);
+    run_git(dir, &["config", "user.name", "GitCraft Tester"]);
     run_git(dir, &["config", "user.email", "tester@minigit.local"]);
 }
 
@@ -196,7 +196,7 @@ fn mock_bare_remote_fetch_pull_push_and_ahead_behind() {
         ],
     );
     configure_git_identity(&clone_a);
-    fs::write(clone_a.join("README.md"), "# MiniGit\n").unwrap();
+    fs::write(clone_a.join("README.md"), "# GitCraft\n").unwrap();
     run_git(&clone_a, &["add", "."]);
     run_git(&clone_a, &["commit", "-m", "Initial"]);
     run_git(&clone_a, &["push", "-u", "origin", "main"]);

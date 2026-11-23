@@ -173,7 +173,7 @@ fn stress_test_10k_commits_pagination_search_and_large_diff() {
     assert!(diff_rows.len() > 1_000);
 
     eprintln!(
-        "=== MiniGit 10k-Commit Stress Benchmark ===\n\
+        "=== GitCraft 10k-Commit Stress Benchmark ===\n\
          generate 10,010 commits : {:?}\n\
          RepoSession::new        : {:?}\n\
          graph page 1 (0..500)   : {:?}\n\
