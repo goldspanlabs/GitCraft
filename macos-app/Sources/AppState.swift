@@ -198,6 +198,14 @@ final class RepoTab: ObservableObject, Identifiable {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count
     }
 
+    var currentBranchBehindCount: Int {
+        Int(branches.first(where: { $0.isHead && !$0.isRemote })?.behind ?? 0)
+    }
+
+    var currentBranchAheadCount: Int {
+        Int(branches.first(where: { $0.isHead && !$0.isRemote })?.ahead ?? 0)
+    }
+
     private let session: RepoSession
     private var isLoadingMore = false
     private var hasMoreCommits = true
@@ -590,11 +598,46 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
-    func createBranch(name: String, startPoint: String?, checkout: Bool) {
+    enum LocalChangesHandling: String, CaseIterable, Identifiable {
+        case doNotChange
+        case stashAndReapply
+        case discard
+
+        var id: String { rawValue }
+    }
+
+    func createBranch(
+        name: String,
+        startPoint: String?,
+        checkout: Bool,
+        localChanges: LocalChangesHandling = .doNotChange
+    ) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let hasLocalChanges = totalChangesCount > 0
         performMutation { session in
-            try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: checkout)
+            if checkout && hasLocalChanges {
+                switch localChanges {
+                case .doNotChange:
+                    try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: true)
+                case .stashAndReapply:
+                    try session.stashPush(message: "Auto-stash before creating \(trimmed)", includeUntracked: true)
+                    do {
+                        try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: true)
+                    } catch {
+                        try? session.stashPop(index: 0)
+                        throw error
+                    }
+                    try session.stashPop(index: 0)
+                case .discard:
+                    for file in try session.status().files {
+                        try session.discardFile(path: file)
+                    }
+                    try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: true)
+                }
+            } else {
+                try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: checkout)
+            }
         }
     }
 
