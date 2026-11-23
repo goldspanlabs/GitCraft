@@ -435,3 +435,39 @@ fn merge_conflict_detection_and_abort_merge() {
     assert!(!after.has_conflicts);
     assert!(after.is_clean);
 }
+
+#[test]
+fn list_branches_flags_branches_authored_by_configured_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+
+    // Commit on main as the configured user.
+    fs::write(root.join("a.txt"), "a\n").unwrap();
+    run_git(root, &["add", "a.txt"]);
+    run_git(root, &["commit", "-m", "mine"]);
+
+    // A branch whose tip is authored by someone else.
+    run_git(root, &["checkout", "-b", "theirs"]);
+    fs::write(root.join("b.txt"), "b\n").unwrap();
+    run_git(root, &["add", "b.txt"]);
+    let out = Command::new("git")
+        .args(["commit", "-m", "theirs"])
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "Someone Else")
+        .env("GIT_AUTHOR_EMAIL", "other@example.com")
+        .env("GIT_COMMITTER_NAME", "Someone Else")
+        .env("GIT_COMMITTER_EMAIL", "other@example.com")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    run_git(root, &["checkout", "main"]);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+    let branches = session.list_branches().unwrap();
+    let mine = branches.iter().find(|b| b.name == "main").unwrap();
+    let theirs = branches.iter().find(|b| b.name == "theirs").unwrap();
+    assert!(mine.is_mine);
+    assert!(!theirs.is_mine);
+}
