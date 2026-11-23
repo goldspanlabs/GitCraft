@@ -204,6 +204,9 @@ final class RepoTab: ObservableObject, Identifiable {
     private let pageSize: UInt32 = 500
     private var watcherTask: Task<Void, Never>?
     private var revealTask: Task<Void, Never>?
+    /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
+    /// page fetches that started against the old list can detect they are stale.
+    private var graphGeneration = 0
     private var loadedDetailOid: String?
 
     init(url: URL) throws {
@@ -263,6 +266,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 branches = branchList
                 tags = tagList
                 stashes = stashList
+                graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
@@ -285,6 +289,7 @@ final class RepoTab: ObservableObject, Identifiable {
         let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? nil
             : searchQuery
+        let generation = graphGeneration
 
         Task {
             defer { isLoadingMore = false }
@@ -292,6 +297,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 let nextPage = try await Task.detached {
                     try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
                 }.value
+                // The list was replaced while we fetched; this page belongs to the old one.
+                guard generation == graphGeneration else { return }
                 if nextPage.count < Int(limit) {
                     hasMoreCommits = false
                 }
@@ -305,6 +312,7 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func updateSearch(_ query: String) {
         searchQuery = query
+        graphGeneration += 1  // in-flight page fetches used the old query
         let session = self.session
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let q: String? = trimmed.isEmpty ? nil : trimmed
@@ -315,6 +323,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 let graphRows = try await Task.detached {
                     try session.getCommitGraph(offset: 0, limit: limit, searchQuery: q)
                 }.value
+                graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
@@ -348,9 +357,6 @@ final class RepoTab: ObservableObject, Identifiable {
 
         let session = self.session
         let limit = pageSize
-        let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? nil
-            : searchQuery
 
         while !Task.isCancelled {
             if let commit = commits.first(where: { $0.oidHex == oidHex }) {
@@ -359,12 +365,19 @@ final class RepoTab: ObservableObject, Identifiable {
                 return
             }
             guard hasMoreCommits else { break }
+            // Re-read offset/query each round: refresh or search may have replaced the list.
             let offset = UInt32(commits.count)
+            let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : searchQuery
+            let generation = graphGeneration
             do {
                 let nextPage = try await Task.detached {
                     try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
                 }.value
                 if Task.isCancelled { return }
+                // Stale page (list replaced mid-fetch): drop it and look again.
+                if generation != graphGeneration { continue }
                 if nextPage.count < Int(limit) { hasMoreCommits = false }
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
@@ -385,6 +398,15 @@ final class RepoTab: ObservableObject, Identifiable {
         revealTask = nil
         scrollRequest = ScrollRequest(oidHex: nil)
         selectCommit(nil)
+    }
+
+    /// Selection coming from the commit table (user click/arrow keys, or the table
+    /// echoing a programmatic selection). Either way it supersedes a pending reveal:
+    /// programmatic table selections only happen after a reveal has finished.
+    func selectCommitFromTable(_ commit: CommitRow?) {
+        revealTask?.cancel()
+        revealTask = nil
+        selectCommit(commit)
     }
 
     func selectCommit(_ commit: CommitRow?) {
@@ -486,6 +508,12 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = rows
                 }
             } catch {
+                if selectedCommit?.oidHex == oidHex {
+                    // Don't leave the previous commit's diff showing, and let
+                    // re-selecting this commit retry the load.
+                    diffRows = []
+                    loadedDetailOid = nil
+                }
                 errorMessage = error.localizedDescription
             }
         }

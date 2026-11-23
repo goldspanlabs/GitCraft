@@ -91,7 +91,7 @@ struct RepoWorkspaceView: View {
                             workingChangesCount: tab.totalChangesCount,
                             scrollRequest: tab.scrollRequest,
                             onLoadMore: { tab.loadMoreCommits() },
-                            onSelectCommit: { tab.selectCommit($0) },
+                            onSelectCommit: { tab.selectCommitFromTable($0) },
                             onCopyOid: { tab.copyOid($0) },
                             onCreateBranchAtCommit: { oid in
                                 tab.newBranchStartPoint = oid
