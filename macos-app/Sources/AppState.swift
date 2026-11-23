@@ -356,7 +356,9 @@ final class RepoTab: ObservableObject, Identifiable {
         defer { isLoadingMore = false }
 
         let session = self.session
-        let limit = pageSize
+        // Each graph call re-walks history from the tips (cost ~ offset + limit), so
+        // grow the page geometrically: O(log n) calls instead of n / pageSize.
+        var limit = pageSize
 
         while !Task.isCancelled {
             if let commit = commits.first(where: { $0.oidHex == oidHex }) {
@@ -381,6 +383,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 if nextPage.count < Int(limit) { hasMoreCommits = false }
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
+                limit = min(limit * 2, 64_000)
             } catch {
                 errorMessage = error.localizedDescription
                 return
@@ -390,7 +393,9 @@ final class RepoTab: ObservableObject, Identifiable {
         // Not reachable in the current graph (e.g. hidden by the search filter): don't
         // leave the panes showing an unrelated commit.
         errorMessage = "That commit isn't in the current commit list."
-        selectCommit(nil)
+        // Go through the same path as the sidebar's Working Changes so the table
+        // highlight moves with the detail pane.
+        scrollToWorkingChanges()
     }
 
     func scrollToWorkingChanges() {
@@ -508,9 +513,12 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = rows
                 }
             } catch {
-                if selectedCommit?.oidHex == oidHex {
-                    // Don't leave the previous commit's diff showing, and let
-                    // re-selecting this commit retry the load.
+                // Only react if this request is still the current one (same commit and file);
+                // a late failure for a file the user already moved off must not wipe the
+                // newer file's diff.
+                if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                    // Don't leave the previous diff showing, and let re-selecting
+                    // this commit retry the load.
                     diffRows = []
                     loadedDetailOid = nil
                 }
