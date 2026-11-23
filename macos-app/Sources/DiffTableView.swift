@@ -108,6 +108,7 @@ final class DiffRowCellView: NSTableCellView {
     private let newLineLabel = NSTextField(labelWithString: "")
     private let gutterDivider = NSBox()
     private let codeLabel = NSTextField(labelWithString: "")
+    private var row: DiffRow?
 
     private static let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     private static let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
@@ -168,7 +169,18 @@ final class DiffRowCellView: NSTableCellView {
         ])
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Layer background and highlight colors are resolved to concrete CGColors
+        // in `configure`, so re-run it under the new appearance.
+        guard let row else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            self.configure(row: row)
+        }
+    }
+
     func configure(row: DiffRow) {
+        self.row = row
         oldLineLabel.stringValue = row.oldLine.map(String.init) ?? ""
         newLineLabel.stringValue = row.newLine.map(String.init) ?? ""
 

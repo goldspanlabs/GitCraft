@@ -29,11 +29,22 @@ struct GitCraftApp: App {
                     .disabled(workspace.activeTab == nil)
             }
         }
+
+        // Adds "GitCraft ▸ Settings…" (⌘,) to the macOS application menu.
+        Settings {
+            SettingsView()
+        }
     }
 }
 
 struct RootView: View {
     @EnvironmentObject private var workspace: WorkspaceState
+    @AppStorage(AppearancePreference.storageKey)
+    private var appearanceRaw = AppearancePreference.system.rawValue
+
+    private var appearance: AppearancePreference {
+        AppearancePreference(rawValue: appearanceRaw) ?? .system
+    }
 
     var body: some View {
         Group {
@@ -50,6 +61,13 @@ struct RootView: View {
                     WelcomeView(workspace: workspace)
                 }
             }
+        }
+        .preferredColorScheme(appearance.colorScheme)
+        .onAppear {
+            AppearancePreference.apply(appearance)
+        }
+        .onChange(of: appearanceRaw) { _ in
+            AppearancePreference.apply(appearance)
         }
     }
 }
