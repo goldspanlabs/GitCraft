@@ -207,6 +207,9 @@ final class RepoTab: ObservableObject, Identifiable {
     /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
     /// page fetches that started against the old list can detect they are stale.
     private var graphGeneration = 0
+    /// Search replacements still fetching their first page. While > 0, `commits` and
+    /// `searchQuery` describe different lists, so paging must wait.
+    private var pendingSearchReplacements = 0
     private var loadedDetailOid: String?
 
     init(url: URL) throws {
@@ -313,12 +316,14 @@ final class RepoTab: ObservableObject, Identifiable {
     func updateSearch(_ query: String) {
         searchQuery = query
         graphGeneration += 1  // in-flight page fetches used the old query
+        pendingSearchReplacements += 1
         let session = self.session
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let q: String? = trimmed.isEmpty ? nil : trimmed
         let limit = pageSize
 
         Task {
+            defer { pendingSearchReplacements -= 1 }
             do {
                 let graphRows = try await Task.detached {
                     try session.getCommitGraph(offset: 0, limit: limit, searchQuery: q)
@@ -361,6 +366,12 @@ final class RepoTab: ObservableObject, Identifiable {
         var limit = pageSize
 
         while !Task.isCancelled {
+            // The new query's first page isn't installed yet: the old list's offset and
+            // pagination state don't apply to it, so wait and re-evaluate.
+            if pendingSearchReplacements > 0 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                continue
+            }
             if let commit = commits.first(where: { $0.oidHex == oidHex }) {
                 scrollRequest = ScrollRequest(oidHex: oidHex)
                 selectCommit(commit)

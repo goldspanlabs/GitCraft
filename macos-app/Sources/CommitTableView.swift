@@ -67,6 +67,12 @@ struct CommitTableView: NSViewRepresentable {
         let dataChanged = coordinator.lastGraphRevision != graphRevision
             || coordinator.workingChangesCount != workingChangesCount
 
+        // Remember what is selected (by commit, not row index) before the data is swapped.
+        let selectedRowBefore = table.selectedRow
+        let selectedOidBefore: String? = (selectedRowBefore > 0 && selectedRowBefore - 1 < coordinator.rows.count)
+            ? coordinator.rows[selectedRowBefore - 1].oidHex
+            : nil
+
         coordinator.lastGraphRevision = graphRevision
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
@@ -78,11 +84,21 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCheckoutCommit = onCheckoutCommit
 
         if dataChanged {
-            let selectedRow = table.selectedRow
+            // Reload/restore is not a user selection: keep it from reaching the model, where
+            // it would cancel a pending branch reveal or deselect the current commit.
+            coordinator.isRestoringSelection = true
             table.reloadData()
-            if selectedRow >= 0 && selectedRow < coordinator.numberOfRows(in: table) {
-                table.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
+            let restoreRow: Int? = if selectedRowBefore == 0 {
+                0
+            } else if let oid = selectedOidBefore {
+                rows.firstIndex(where: { $0.oidHex == oid }).map { $0 + 1 }
+            } else {
+                nil
             }
+            if let restoreRow, restoreRow < coordinator.numberOfRows(in: table) {
+                table.selectRowIndexes(IndexSet(integer: restoreRow), byExtendingSelection: false)
+            }
+            coordinator.isRestoringSelection = false
         }
 
         if let request = scrollRequest, coordinator.lastHandledScrollID != request.id {
@@ -119,6 +135,7 @@ struct CommitTableView: NSViewRepresentable {
         var onCreateTagAtCommit: (String) -> Void
         var onCheckoutCommit: (String) -> Void
         var lastHandledScrollID: UUID?
+        var isRestoringSelection = false
         weak var tableView: NSTableView?
         private var boundsObserver: NSObjectProtocol?
 
@@ -241,7 +258,7 @@ struct CommitTableView: NSViewRepresentable {
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
-            guard let table = notification.object as? NSTableView else { return }
+            guard !isRestoringSelection, let table = notification.object as? NSTableView else { return }
             let selected = table.selectedRow
             if selected <= 0 {
                 onSelectCommit(nil)
