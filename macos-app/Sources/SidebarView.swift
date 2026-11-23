@@ -9,18 +9,12 @@ struct SidebarView: View {
     @State private var isStashesExpanded = false
     @State private var collapsedFolderIDs: Set<String> = []
 
-    private var visibleBranches: [BranchInfo] {
-        guard tab.showOnlyMyBranches else { return tab.branches }
-        // Always keep the checked-out branch visible.
-        return tab.branches.filter { $0.isMine || $0.isHead }
-    }
-
     private var localBranches: [BranchInfo] {
-        visibleBranches.filter { !$0.isRemote }
+        tab.branches.filter { !$0.isRemote }
     }
 
     private var remoteBranches: [BranchInfo] {
-        visibleBranches.filter { $0.isRemote }
+        tab.branches.filter { $0.isRemote }
     }
 
     private var localBranchRows: [FlatBranchRow] {

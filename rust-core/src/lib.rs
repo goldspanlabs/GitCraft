@@ -119,8 +119,6 @@ pub struct BranchInfo {
     pub target_oid_hex: String,
     pub ahead: u32,
     pub behind: u32,
-    /// True when the branch tip commit was authored by the configured git user.
-    pub is_mine: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -265,6 +263,15 @@ impl RepoSession {
         search_query: Option<String>,
     ) -> Result<Vec<CommitRow>, GitCraftError> {
         graph::get_commit_graph(&self.sync_repo, offset, limit, search_query)
+    }
+
+    pub fn get_branch_graph(
+        &self,
+        offset: u32,
+        limit: u32,
+        search_query: Option<String>,
+    ) -> Result<Vec<CommitRow>, GitCraftError> {
+        graph::get_branch_graph(&self.sync_repo, offset, limit, search_query)
     }
 
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {

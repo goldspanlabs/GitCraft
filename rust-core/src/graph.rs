@@ -19,15 +19,98 @@ pub fn get_commit_graph(
     limit: u32,
     search_query: Option<String>,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
+    graph_walk(sync_repo, offset, limit, search_query, false)
+}
+
+/// Like [`get_commit_graph`], but limited to the checked-out branch and the
+/// default (base) branch, starting at their fork point. Falls back to the full
+/// graph when HEAD is detached, is the default branch itself, or no base exists.
+pub fn get_branch_graph(
+    sync_repo: &gix::ThreadSafeRepository,
+    offset: u32,
+    limit: u32,
+    search_query: Option<String>,
+) -> Result<Vec<CommitRow>, GitCraftError> {
+    graph_walk(sync_repo, offset, limit, search_query, true)
+}
+
+/// Resolves the default branch: `origin/HEAD`'s target, else `main`/`master`
+/// (local branch preferred over `origin/`). Returns its full ref name and tip.
+fn default_base(repo: &gix::Repository) -> Option<(String, gix::ObjectId)> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(Some(r)) = repo.try_find_reference("refs/remotes/origin/HEAD") {
+        if let gix::refs::TargetRef::Symbolic(name) = r.target() {
+            let remote = name.as_bstr().to_str_lossy().into_owned();
+            // Prefer the local branch of the same name (it may hold unpushed work).
+            if let Some(short) = remote.strip_prefix("refs/remotes/origin/") {
+                candidates.push(format!("refs/heads/{short}"));
+            }
+            candidates.push(remote);
+        }
+    }
+    for n in ["main", "master"] {
+        candidates.push(format!("refs/heads/{n}"));
+        candidates.push(format!("refs/remotes/origin/{n}"));
+    }
+    candidates.into_iter().find_map(|name| {
+        let r = repo.try_find_reference(name.as_str()).ok().flatten()?;
+        let id = r.into_fully_peeled_id().ok()?.detach();
+        Some((name, id))
+    })
+}
+
+fn short_branch_name(full: &str) -> &str {
+    full.strip_prefix("refs/heads/")
+        .or_else(|| full.strip_prefix("refs/remotes/origin/"))
+        .unwrap_or(full)
+}
+
+/// Tips and hidden commits for the "current branch vs base" view, or `None`
+/// when the full graph should be shown.
+fn branch_scope(
+    repo: &gix::Repository,
+) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
+    let head = repo.head().ok()?;
+    let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
+    let head_id = head.id()?.detach();
+    let (base_ref, base_id) = default_base(repo)?;
+    if short_branch_name(&head_ref) == short_branch_name(&base_ref) || head_id == base_id {
+        return None;
+    }
+    // Hide everything below the fork point, but keep the fork commit itself.
+    let hidden = repo
+        .merge_base(head_id, base_id)
+        .ok()
+        .flatten()
+        .and_then(|mb| repo.find_commit(mb.detach()).ok())
+        .map(|c| c.parent_ids().map(|p| p.detach()).collect())
+        .unwrap_or_default();
+    Some((vec![head_id, base_id], hidden))
+}
+
+fn graph_walk(
+    sync_repo: &gix::ThreadSafeRepository,
+    offset: u32,
+    limit: u32,
+    search_query: Option<String>,
+    scoped: bool,
+) -> Result<Vec<CommitRow>, GitCraftError> {
     if limit == 0 {
         return Ok(Vec::new());
     }
 
     let mut repo = sync_repo.to_thread_local();
     repo.object_cache_size_if_unset(4 * 1024 * 1024);
-    let (refs_by_oid, tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
+    let (refs_by_oid, mut tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
     if tips.is_empty() {
         return Ok(Vec::new());
+    }
+    let mut hidden: Vec<gix::ObjectId> = Vec::new();
+    if scoped {
+        if let Some((scoped_tips, scoped_hidden)) = branch_scope(&repo) {
+            tips = scoped_tips;
+            hidden = scoped_hidden;
+        }
     }
     let has_local_refs = !local_reachable.is_empty();
 
@@ -39,6 +122,7 @@ pub fn get_commit_graph(
 
     let walk = repo
         .rev_walk(tips)
+        .with_hidden(hidden)
         .sorting(gix::revision::walk::Sorting::ByCommitTime(
             gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
         ))
@@ -407,73 +491,6 @@ pub fn list_branches(
     }
 
     let config = repo.config_snapshot();
-    let user_email = config
-        .string("user.email")
-        .map(|v| v.to_str_lossy().trim().to_lowercase())
-        .unwrap_or_default();
-    let user_name = config
-        .string("user.name")
-        .map(|v| v.to_str_lossy().trim().to_lowercase())
-        .unwrap_or_default();
-    let is_user = |author: &gix::actor::SignatureRef<'_>| -> bool {
-        if !user_email.is_empty() {
-            return author.email.to_str_lossy().trim().to_lowercase() == user_email;
-        }
-        !user_name.is_empty() && author.name.to_str_lossy().trim().to_lowercase() == user_name
-    };
-
-    // The default branch is the baseline: a branch is "mine" if I authored any
-    // commit that is not already on it. This keeps a branch mine even after a
-    // teammate pushes on top of it.
-    let base_oid: Option<gix::ObjectId> = {
-        let mut candidates: Vec<String> = Vec::new();
-        if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") {
-            if let gix::refs::TargetRef::Symbolic(name) = r.target() {
-                candidates.push(name.as_bstr().to_str_lossy().into_owned());
-            }
-        }
-        for n in ["main", "master"] {
-            candidates.push(format!("refs/heads/{n}"));
-            candidates.push(format!("refs/remotes/origin/{n}"));
-        }
-        let local_oids: HashMap<&str, gix::ObjectId> = local_entries
-            .iter()
-            .map(|(_, full, oid, _)| (full.as_str(), *oid))
-            .collect();
-        candidates.iter().find_map(|c| {
-            local_oids
-                .get(c.as_str())
-                .copied()
-                .or_else(|| remote_oids.get(c).copied())
-        })
-    };
-
-    const MAX_UNIQUE_COMMITS: usize = 1000;
-    let is_mine = |tip: gix::ObjectId| -> bool {
-        let mut inspected_any = false;
-        if let Some(base) = base_oid.filter(|b| *b != tip) {
-            if let Ok(walk) = repo.rev_walk([tip]).with_hidden([base]).all() {
-                for info in walk.take(MAX_UNIQUE_COMMITS) {
-                    let Ok(info) = info else { break };
-                    let Ok(commit) = info.object() else { continue };
-                    let Ok(author) = commit.author() else { continue };
-                    inspected_any = true;
-                    if is_user(&author) {
-                        return true;
-                    }
-                }
-            }
-        }
-        if inspected_any {
-            return false;
-        }
-        // Nothing unique to this branch (it is the default branch or fully
-        // merged into it): fall back to the tip commit's author.
-        repo.find_commit(tip)
-            .ok()
-            .and_then(|c| c.author().ok().map(|a| is_user(&a)))
-            .unwrap_or(false)
-    };
     let mut branches = Vec::with_capacity(local_entries.len() + remote_entries.len());
 
     for (name, full_ref, local_oid, is_head) in local_entries {
@@ -502,7 +519,6 @@ pub fn list_branches(
             target_oid_hex: local_oid.to_hex().to_string(),
             ahead,
             behind,
-            is_mine: is_mine(local_oid),
         });
     }
 
@@ -515,7 +531,6 @@ pub fn list_branches(
             target_oid_hex: oid.to_hex().to_string(),
             ahead: 0,
             behind: 0,
-            is_mine: is_mine(oid),
         });
     }
 

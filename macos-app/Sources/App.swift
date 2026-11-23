@@ -203,17 +203,17 @@ struct RepoWorkspaceView: View {
                     TopBarStashItem(tab: tab)
 
                     Button {
-                        tab.showOnlyMyBranches.toggle()
+                        tab.toggleScopeToCurrentBranch()
                     } label: {
-                        TopBarIconLabel(title: tab.showOnlyMyBranches ? "Mine" : "All") {
+                        TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
                             ToolbarIconView(icon: .filter)
-                                .opacity(tab.showOnlyMyBranches ? 1 : 0.55)
+                                .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
                         }
                     }
                     .buttonStyle(.plain)
-                    .help(tab.showOnlyMyBranches
-                        ? "Showing only your branches — click to show all branches"
-                        : "Showing all branches — click to show only your branches")
+                    .help(tab.scopeToCurrentBranch
+                        ? "Showing the current branch and its base branch — click to show all branches"
+                        : "Showing all branches — click to show only the current branch and its base branch")
 
                     if tab.isBusy {
                         ProgressView()
