@@ -145,40 +145,48 @@ struct RepoWorkspaceView: View {
             tab.updateSearch(newValue)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if tab.isBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                }
+            ToolbarItemGroup(placement: .principal) {
+                HStack(spacing: 6) {
+                    ToolbarActionButton(
+                        title: "Fetch",
+                        systemImage: "arrow.down.circle",
+                        disabled: tab.isBusy
+                    ) {
+                        tab.runRemote(.fetch)
+                    }
 
-                Button {
-                    tab.runRemote(.fetch)
-                } label: {
-                    Label("Fetch", systemImage: "arrow.down.circle")
-                }
-                .disabled(tab.isBusy)
+                    ToolbarActionButton(
+                        title: "Pull",
+                        systemImage: "arrow.down.to.line",
+                        disabled: tab.isBusy
+                    ) {
+                        tab.runRemote(.pull)
+                    }
 
-                Button {
-                    tab.runRemote(.pull)
-                } label: {
-                    Label("Pull", systemImage: "arrow.down.to.line")
-                }
-                .disabled(tab.isBusy)
+                    ToolbarActionButton(
+                        title: "Push",
+                        systemImage: "arrow.up.to.line",
+                        disabled: tab.isBusy
+                    ) {
+                        tab.runRemote(.push)
+                    }
 
-                Button {
-                    tab.runRemote(.push)
-                } label: {
-                    Label("Push", systemImage: "arrow.up.to.line")
-                }
-                .disabled(tab.isBusy)
+                    ToolbarActionButton(
+                        title: "Refresh",
+                        systemImage: "arrow.clockwise",
+                        disabled: false
+                    ) {
+                        tab.refresh()
+                    }
+                    .keyboardShortcut("r", modifiers: .command)
+                    .help("Refresh (Cmd+R)")
 
-                Button {
-                    tab.refresh()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    if tab.isBusy {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.leading, 4)
+                    }
                 }
-                .keyboardShortcut("r", modifiers: .command)
-                .help("Refresh (Cmd+R)")
             }
         }
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
@@ -260,5 +268,27 @@ private struct ErrorBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.12))
+    }
+}
+
+private struct ToolbarActionButton: View {
+    let title: String
+    let systemImage: String
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13.5, weight: .medium))
+                Text(title)
+                    .font(.system(size: 10, weight: .regular))
+            }
+            .frame(minWidth: 50, minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(disabled)
     }
 }
