@@ -119,6 +119,8 @@ pub struct BranchInfo {
     pub target_oid_hex: String,
     pub ahead: u32,
     pub behind: u32,
+    /// True when the branch tip commit was authored by the configured git user.
+    pub is_mine: bool,
 }
 
 #[derive(Clone, Debug)]

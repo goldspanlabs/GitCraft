@@ -79,6 +79,7 @@ dictionary BranchInfo {
   string target_oid_hex;
   u32 ahead;
   u32 behind;
+  boolean is_mine;
 };
 
 dictionary TagInfo {

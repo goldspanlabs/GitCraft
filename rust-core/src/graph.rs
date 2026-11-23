@@ -407,6 +407,27 @@ pub fn list_branches(
     }
 
     let config = repo.config_snapshot();
+    let user_email = config
+        .string("user.email")
+        .map(|v| v.to_str_lossy().trim().to_lowercase())
+        .unwrap_or_default();
+    let user_name = config
+        .string("user.name")
+        .map(|v| v.to_str_lossy().trim().to_lowercase())
+        .unwrap_or_default();
+    let is_mine = |oid: gix::ObjectId| -> bool {
+        let Ok(commit) = repo.find_commit(oid) else {
+            return false;
+        };
+        let Ok(author) = commit.author() else {
+            return false;
+        };
+        let email = author.email.to_str_lossy().trim().to_lowercase();
+        if !user_email.is_empty() {
+            return email == user_email;
+        }
+        !user_name.is_empty() && author.name.to_str_lossy().trim().to_lowercase() == user_name
+    };
     let mut branches = Vec::with_capacity(local_entries.len() + remote_entries.len());
 
     for (name, full_ref, local_oid, is_head) in local_entries {
@@ -435,6 +456,7 @@ pub fn list_branches(
             target_oid_hex: local_oid.to_hex().to_string(),
             ahead,
             behind,
+            is_mine: is_mine(local_oid),
         });
     }
 
@@ -447,6 +469,7 @@ pub fn list_branches(
             target_oid_hex: oid.to_hex().to_string(),
             ahead: 0,
             behind: 0,
+            is_mine: is_mine(oid),
         });
     }
 

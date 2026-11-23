@@ -193,6 +193,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
+    /// When true (default), the sidebar only lists branches whose tip was authored by the current git user.
+    @Published var showOnlyMyBranches = true
 
     var totalChangesCount: Int {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count
