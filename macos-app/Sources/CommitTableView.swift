@@ -337,6 +337,7 @@ final class CommitRowCellView: NSTableCellView {
 
     func configureWorkingChanges(fileCount: Int) {
         graphWidthConstraint.constant = 24
+        graphView.alphaValue = 1.0
         graphView.configureWorkingChanges()
         badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         badgesStack.isHidden = true
@@ -357,6 +358,7 @@ final class CommitRowCellView: NSTableCellView {
     func configure(commit: CommitRow, hasIncomingLine: Bool) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
+        graphView.alphaValue = commit.isRemoteOnly ? 0.65 : 1.0
         graphView.configure(commit: commit, hasIncomingLine: hasIncomingLine)
 
         badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -371,9 +373,10 @@ final class CommitRowCellView: NSTableCellView {
 
         summaryLabel.stringValue = commit.summary
         summaryLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
-        summaryLabel.textColor = .labelColor
+        summaryLabel.textColor = commit.isRemoteOnly ? .secondaryLabelColor : .labelColor
 
         authorLabel.stringValue = commit.authorName
+        authorLabel.textColor = commit.isRemoteOnly ? .tertiaryLabelColor : .secondaryLabelColor
         let date = Date(timeIntervalSince1970: TimeInterval(commit.timestamp))
         timeLabel.stringValue = Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }

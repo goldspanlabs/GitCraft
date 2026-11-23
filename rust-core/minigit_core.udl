@@ -56,6 +56,7 @@ dictionary CommitRow {
   u32 max_lanes;
   sequence<GraphEdge> edges;
   sequence<RefBadge> refs;
+  boolean is_remote_only;
 };
 
 dictionary CommitDetail {

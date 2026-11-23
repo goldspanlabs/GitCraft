@@ -25,10 +25,11 @@ pub fn get_commit_graph(
 
     let mut repo = sync_repo.to_thread_local();
     repo.object_cache_size_if_unset(4 * 1024 * 1024);
-    let (refs_by_oid, tips) = collect_refs_and_tips(&repo)?;
+    let (refs_by_oid, tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
     if tips.is_empty() {
         return Ok(Vec::new());
     }
+    let has_local_refs = !local_reachable.is_empty();
 
     let query = search_query
         .map(|s| s.trim().to_lowercase())
@@ -59,6 +60,14 @@ pub fn get_commit_graph(
         let oid = info.id;
         let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
 
+        let is_local = !has_local_refs || local_reachable.contains(&oid);
+        if is_local {
+            for &p in &parents {
+                local_reachable.insert(p);
+            }
+        }
+        let is_remote_only = !is_local;
+
         let summary = commit
             .message_raw_sloppy()
             .to_str_lossy()
@@ -84,13 +93,14 @@ pub fn get_commit_graph(
         };
 
         let badges = refs_by_oid.get(&oid).cloned().unwrap_or_default();
-        let row = assign_commit_lane(
+        let mut row = assign_commit_lane(
             &raw,
             badges,
             &mut active_lanes,
             &mut lane_colors,
             &mut next_color,
         );
+        row.is_remote_only = is_remote_only;
 
         let matches_query = match &query {
             None => true,
@@ -242,6 +252,7 @@ pub(crate) fn assign_commit_lane(
         max_lanes: max_lanes as u32,
         edges,
         refs,
+        is_remote_only: false,
     }
 }
 
@@ -254,11 +265,16 @@ fn nearest_free_lane(active_lanes: &[Option<gix::ObjectId>], origin: usize) -> O
         .map(|(idx, _)| idx)
 }
 
-type RefsAndTips = (HashMap<gix::ObjectId, Vec<RefBadge>>, Vec<gix::ObjectId>);
+type RefsAndTips = (
+    HashMap<gix::ObjectId, Vec<RefBadge>>,
+    Vec<gix::ObjectId>,
+    HashSet<gix::ObjectId>,
+);
 
 fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitError> {
     let mut refs_by_oid: HashMap<gix::ObjectId, Vec<RefBadge>> = HashMap::new();
     let mut tip_set: HashSet<gix::ObjectId> = HashSet::new();
+    let mut local_tips: HashSet<gix::ObjectId> = HashSet::new();
 
     let head = repo
         .head()
@@ -267,10 +283,11 @@ fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitE
         .referent_name()
         .map(|name| name.as_bstr().to_str_lossy().into_owned());
 
-    if head_referent.is_none() {
-        if let Some(head_id) = head.id() {
-            let oid = head_id.detach();
-            tip_set.insert(oid);
+    if let Some(head_id) = head.id() {
+        let oid = head_id.detach();
+        tip_set.insert(oid);
+        local_tips.insert(oid);
+        if head_referent.is_none() {
             refs_by_oid.entry(oid).or_default().push(RefBadge {
                 name: "HEAD".to_owned(),
                 kind: RefKind::Head,
@@ -310,6 +327,9 @@ fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitE
         if let Ok(peeled) = reference.into_fully_peeled_id() {
             let oid = peeled.detach();
             tip_set.insert(oid);
+            if matches!(kind, RefKind::LocalBranch) {
+                local_tips.insert(oid);
+            }
             refs_by_oid.entry(oid).or_default().push(RefBadge {
                 name: short_name,
                 kind,
@@ -329,7 +349,7 @@ fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitE
 
     let mut tips: Vec<gix::ObjectId> = tip_set.into_iter().collect();
     tips.sort();
-    Ok((refs_by_oid, tips))
+    Ok((refs_by_oid, tips, local_tips))
 }
 
 fn ref_kind_rank(kind: RefKind) -> u8 {

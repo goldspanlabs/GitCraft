@@ -94,6 +94,7 @@ pub struct CommitRow {
     pub max_lanes: u32,
     pub edges: Vec<GraphEdge>,
     pub refs: Vec<RefBadge>,
+    pub is_remote_only: bool,
 }
 
 #[derive(Clone, Debug)]

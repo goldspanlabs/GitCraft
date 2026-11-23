@@ -244,8 +244,19 @@ fn mock_bare_remote_fetch_pull_push_and_ahead_behind() {
         .unwrap();
     assert_eq!(main_b.behind, 1);
 
+    let graph_before_pull = session_b.get_commit_graph(0, 10, None).unwrap();
+    assert!(graph_before_pull
+        .iter()
+        .any(|c| c.summary == "Commit from A" && c.is_remote_only));
+    assert!(graph_before_pull
+        .iter()
+        .any(|c| c.summary == "Initial" && !c.is_remote_only));
+
     session_b.pull().unwrap();
     assert!(clone_b.join("a.txt").exists());
+    let graph_after_pull = session_b.get_commit_graph(0, 10, None).unwrap();
+    assert!(graph_after_pull.iter().all(|c| !c.is_remote_only));
+
     let branches_b_after = session_b.list_branches().unwrap();
     let main_b_after = branches_b_after
         .iter()
