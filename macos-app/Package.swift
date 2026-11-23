@@ -12,7 +12,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
-                .linkedLibrary("minigit_core", .when(platforms: [.macOS])),
+                .linkedLibrary("gitcraft_core", .when(platforms: [.macOS])),
             ]
         )
     ]

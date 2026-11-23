@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use gix::bstr::ByteSlice;
 
-use crate::{BranchInfo, CommitRow, GraphEdge, MiniGitError, RefBadge, RefKind, TagInfo};
+use crate::{BranchInfo, CommitRow, GraphEdge, GitCraftError, RefBadge, RefKind, TagInfo};
 
 #[derive(Clone, Debug)]
 pub(crate) struct RawCommit {
@@ -18,7 +18,7 @@ pub fn get_commit_graph(
     offset: u32,
     limit: u32,
     search_query: Option<String>,
-) -> Result<Vec<CommitRow>, MiniGitError> {
+) -> Result<Vec<CommitRow>, GitCraftError> {
     if limit == 0 {
         return Ok(Vec::new());
     }
@@ -43,7 +43,7 @@ pub fn get_commit_graph(
             gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
         ))
         .all()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let mut active_lanes: Vec<Option<gix::ObjectId>> = Vec::new();
     let mut lane_colors: Vec<u8> = Vec::new();
@@ -52,10 +52,10 @@ pub fn get_commit_graph(
     let mut results: Vec<CommitRow> = Vec::new();
 
     for entry in walk {
-        let info = entry.map_err(|e| MiniGitError::message(e.to_string()))?;
+        let info = entry.map_err(|e| GitCraftError::message(e.to_string()))?;
         let commit = info
             .object()
-            .map_err(|e| MiniGitError::message(e.to_string()))?;
+            .map_err(|e| GitCraftError::message(e.to_string()))?;
 
         let oid = info.id;
         let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
@@ -271,14 +271,14 @@ type RefsAndTips = (
     HashSet<gix::ObjectId>,
 );
 
-fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitError> {
+fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, GitCraftError> {
     let mut refs_by_oid: HashMap<gix::ObjectId, Vec<RefBadge>> = HashMap::new();
     let mut tip_set: HashSet<gix::ObjectId> = HashSet::new();
     let mut local_tips: HashSet<gix::ObjectId> = HashSet::new();
 
     let head = repo
         .head()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let head_referent = head
         .referent_name()
         .map(|name| name.as_bstr().to_str_lossy().into_owned());
@@ -298,10 +298,10 @@ fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTips, MiniGitE
 
     let references = repo
         .references()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let all_refs = references
         .all()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     for reference_res in all_refs {
         let reference = match reference_res {
@@ -363,21 +363,21 @@ fn ref_kind_rank(kind: RefKind) -> u8 {
 
 pub fn list_branches(
     sync_repo: &gix::ThreadSafeRepository,
-) -> Result<Vec<BranchInfo>, MiniGitError> {
+) -> Result<Vec<BranchInfo>, GitCraftError> {
     let repo = sync_repo.to_thread_local();
     let head = repo
         .head()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let head_referent = head
         .referent_name()
         .map(|name| name.as_bstr().to_str_lossy().into_owned());
 
     let references = repo
         .references()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let all_refs = references
         .all()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let mut remote_oids: HashMap<String, gix::ObjectId> = HashMap::new();
     let mut local_entries: Vec<(String, String, gix::ObjectId, bool)> = Vec::new();
@@ -460,14 +460,14 @@ pub fn list_branches(
     Ok(branches)
 }
 
-pub fn list_tags(sync_repo: &gix::ThreadSafeRepository) -> Result<Vec<TagInfo>, MiniGitError> {
+pub fn list_tags(sync_repo: &gix::ThreadSafeRepository) -> Result<Vec<TagInfo>, GitCraftError> {
     let repo = sync_repo.to_thread_local();
     let references = repo
         .references()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let all_refs = references
         .all()
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let mut tags = Vec::new();
     for reference_res in all_refs {
@@ -531,13 +531,13 @@ pub fn get_commit_detail(
     repo_path: &std::path::Path,
     sync_repo: &gix::ThreadSafeRepository,
     oid_hex: &str,
-) -> Result<crate::CommitDetail, MiniGitError> {
+) -> Result<crate::CommitDetail, GitCraftError> {
     let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
     let repo = sync_repo.to_thread_local();
     let commit = repo
         .find_commit(oid)
-        .map_err(|e| MiniGitError::message(e.to_string()))?;
+        .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let raw_msg = commit.message_raw_sloppy().to_str_lossy().into_owned();
     let mut lines = raw_msg.lines();

@@ -17,18 +17,18 @@ use std::{
 };
 
 #[derive(Debug, thiserror::Error)]
-pub enum MiniGitError {
+pub enum GitCraftError {
     #[error("{msg}")]
     Message { msg: String },
 }
 
-impl MiniGitError {
+impl GitCraftError {
     pub fn message(msg: impl Into<String>) -> Self {
         Self::Message { msg: msg.into() }
     }
 }
 
-impl From<io::Error> for MiniGitError {
+impl From<io::Error> for GitCraftError {
     fn from(err: io::Error) -> Self {
         Self::Message {
             msg: err.to_string(),
@@ -161,17 +161,17 @@ impl Drop for RepoSession {
 }
 
 impl RepoSession {
-    pub fn new(path: String) -> Result<Self, MiniGitError> {
+    pub fn new(path: String) -> Result<Self, GitCraftError> {
         Self::open(path)
     }
 
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self, MiniGitError> {
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, GitCraftError> {
         let path = path.into();
         if !path.join(".git").exists() {
-            return Err(MiniGitError::message("not a Git repository"));
+            return Err(GitCraftError::message("not a Git repository"));
         }
         let sync_repo = gix::ThreadSafeRepository::open(&path)
-            .map_err(|e| MiniGitError::message(e.to_string()))?;
+            .map_err(|e| GitCraftError::message(e.to_string()))?;
         let dirty = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         watcher::spawn_dirty_watcher(&path, Arc::clone(&dirty), Arc::clone(&stopped));
@@ -188,7 +188,7 @@ impl RepoSession {
         self.dirty.swap(false, Ordering::AcqRel)
     }
 
-    pub fn status(&self) -> Result<RepoStatus, MiniGitError> {
+    pub fn status(&self) -> Result<RepoStatus, GitCraftError> {
         let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "--branch"])?;
         let mut lines = output.lines();
         let branch = lines
@@ -261,11 +261,11 @@ impl RepoSession {
         offset: u32,
         limit: u32,
         search_query: Option<String>,
-    ) -> Result<Vec<CommitRow>, MiniGitError> {
+    ) -> Result<Vec<CommitRow>, GitCraftError> {
         graph::get_commit_graph(&self.sync_repo, offset, limit, search_query)
     }
 
-    pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, MiniGitError> {
+    pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
         graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
     }
 
@@ -273,7 +273,7 @@ impl RepoSession {
         &self,
         oid_hex: String,
         path: Option<String>,
-    ) -> Result<Vec<DiffRow>, MiniGitError> {
+    ) -> Result<Vec<DiffRow>, GitCraftError> {
         Ok(diff::commit_diff(&self.path, &oid_hex, path.as_deref())?)
     }
 
@@ -281,7 +281,7 @@ impl RepoSession {
         &self,
         path: Option<String>,
         staged: bool,
-    ) -> Result<Vec<DiffRow>, MiniGitError> {
+    ) -> Result<Vec<DiffRow>, GitCraftError> {
         Ok(diff::working_tree_file(
             &self.path,
             path.as_deref(),
@@ -289,11 +289,11 @@ impl RepoSession {
         )?)
     }
 
-    pub fn list_branches(&self) -> Result<Vec<BranchInfo>, MiniGitError> {
+    pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {
         graph::list_branches(&self.sync_repo)
     }
 
-    pub fn list_tags(&self) -> Result<Vec<TagInfo>, MiniGitError> {
+    pub fn list_tags(&self) -> Result<Vec<TagInfo>, GitCraftError> {
         graph::list_tags(&self.sync_repo)
     }
 
@@ -303,14 +303,14 @@ impl RepoSession {
         target: Option<String>,
         message: Option<String>,
         push_to_remote: bool,
-    ) -> Result<(), MiniGitError> {
+    ) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let trimmed_name = tag_name.trim();
         if trimmed_name.is_empty() {
-            return Err(MiniGitError::message("tag name cannot be empty"));
+            return Err(GitCraftError::message("tag name cannot be empty"));
         }
 
         let trimmed_msg = message
@@ -341,11 +341,11 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn delete_tag(&self, tag_name: String, delete_remote: bool) -> Result<(), MiniGitError> {
+    pub fn delete_tag(&self, tag_name: String, delete_remote: bool) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
         if delete_remote {
             let remote = resolve_default_remote(&self.path);
@@ -355,18 +355,18 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn push_tag(&self, tag_name: String) -> Result<(), MiniGitError> {
+    pub fn push_tag(&self, tag_name: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let remote = resolve_default_remote(&self.path);
         let refspec = format!("refs/tags/{tag_name}");
         git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
         Ok(())
     }
 
-    pub fn list_stashes(&self) -> Result<Vec<StashInfo>, MiniGitError> {
+    pub fn list_stashes(&self) -> Result<Vec<StashInfo>, GitCraftError> {
         let output = git_cli::run(&self.path, &["stash", "list", "--format=%gd\x1f%gs"])?;
         let stashes = output
             .lines()
@@ -392,11 +392,11 @@ impl RepoSession {
         &self,
         message: Option<String>,
         include_untracked: bool,
-    ) -> Result<(), MiniGitError> {
+    ) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let mut args = vec!["stash", "push"];
         if include_untracked {
             args.push("-u");
@@ -414,41 +414,41 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn stash_apply(&self, index: u32) -> Result<(), MiniGitError> {
+    pub fn stash_apply(&self, index: u32) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let target = format!("stash@{{{index}}}");
         git_cli::mutate(&self.path, &["stash", "apply", &target])?;
         Ok(())
     }
 
-    pub fn stash_pop(&self, index: u32) -> Result<(), MiniGitError> {
+    pub fn stash_pop(&self, index: u32) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let target = format!("stash@{{{index}}}");
         git_cli::mutate(&self.path, &["stash", "pop", &target])?;
         Ok(())
     }
 
-    pub fn stash_drop(&self, index: u32) -> Result<(), MiniGitError> {
+    pub fn stash_drop(&self, index: u32) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let target = format!("stash@{{{index}}}");
         git_cli::mutate(&self.path, &["stash", "drop", &target])?;
         Ok(())
     }
 
-    pub fn checkout_branch(&self, branch_name: String) -> Result<(), MiniGitError> {
+    pub fn checkout_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["checkout", &branch_name])?;
         Ok(())
     }
@@ -458,11 +458,11 @@ impl RepoSession {
         branch_name: String,
         start_point: Option<String>,
         checkout: bool,
-    ) -> Result<(), MiniGitError> {
+    ) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let mut args = if checkout {
             vec!["checkout", "-b", &branch_name]
         } else {
@@ -475,83 +475,83 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn delete_branch(&self, branch_name: String, force: bool) -> Result<(), MiniGitError> {
+    pub fn delete_branch(&self, branch_name: String, force: bool) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let flag = if force { "-D" } else { "-d" };
         git_cli::mutate(&self.path, &["branch", flag, &branch_name])?;
         Ok(())
     }
 
-    pub fn merge_branch(&self, branch_name: String) -> Result<(), MiniGitError> {
+    pub fn merge_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["merge", &branch_name])?;
         Ok(())
     }
 
-    pub fn abort_merge(&self) -> Result<(), MiniGitError> {
+    pub fn abort_merge(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["merge", "--abort"])?;
         Ok(())
     }
 
-    pub fn diff(&self) -> Result<Vec<DiffRow>, MiniGitError> {
+    pub fn diff(&self) -> Result<Vec<DiffRow>, GitCraftError> {
         Ok(diff::working_tree(&self.path)?)
     }
 
-    pub fn stage(&self, path: String) -> Result<(), MiniGitError> {
+    pub fn stage(&self, path: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["add", "--", &path])?;
         Ok(())
     }
 
-    pub fn unstage(&self, path: String) -> Result<(), MiniGitError> {
+    pub fn unstage(&self, path: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         if git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path]).is_err() {
             git_cli::mutate(&self.path, &["rm", "--cached", "--", &path])?;
         }
         Ok(())
     }
 
-    pub fn stage_all(&self) -> Result<(), MiniGitError> {
+    pub fn stage_all(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["add", "-A"])?;
         Ok(())
     }
 
-    pub fn unstage_all(&self) -> Result<(), MiniGitError> {
+    pub fn unstage_all(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         if git_cli::mutate(&self.path, &["reset", "HEAD"]).is_err() {
             git_cli::mutate(&self.path, &["rm", "--cached", "-r", "--", "."])?;
         }
         Ok(())
     }
 
-    pub fn discard_file(&self, path: String) -> Result<(), MiniGitError> {
+    pub fn discard_file(&self, path: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         // Try checkout -- first; if untracked, fall back to git clean -fd --.
         if git_cli::mutate(&self.path, &["checkout", "--", &path]).is_err() {
             git_cli::mutate(&self.path, &["clean", "-fd", "--", &path])?;
@@ -559,38 +559,38 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn commit(&self, message: String) -> Result<(), MiniGitError> {
+    pub fn commit(&self, message: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["commit", "-m", &message])?;
         Ok(())
     }
 
-    pub fn fetch(&self) -> Result<(), MiniGitError> {
+    pub fn fetch(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["fetch"])?;
         Ok(())
     }
 
-    pub fn pull(&self) -> Result<(), MiniGitError> {
+    pub fn pull(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["pull"])?;
         Ok(())
     }
 
-    pub fn push(&self) -> Result<(), MiniGitError> {
+    pub fn push(&self) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["push"])?;
         Ok(())
     }
@@ -604,7 +604,7 @@ impl RepoSession {
     }
 }
 
-uniffi::include_scaffolding!("minigit_core");
+uniffi::include_scaffolding!("gitcraft_core");
 
 fn resolve_default_remote(repo: &std::path::Path) -> String {
     if let Ok(output) = git_cli::run(repo, &["remote"]) {

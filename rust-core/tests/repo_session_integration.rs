@@ -6,16 +6,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use minigit_core::{RefKind, RepoSession};
+use gitcraft_core::{RefKind, RepoSession};
 
 fn run_git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "GitCraft Tester")
-        .env("GIT_AUTHOR_EMAIL", "tester@minigit.local")
+        .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
         .env("GIT_COMMITTER_NAME", "GitCraft Tester")
-        .env("GIT_COMMITTER_EMAIL", "tester@minigit.local")
+        .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
         .output()
         .expect("failed to invoke git");
     assert!(
@@ -31,7 +31,7 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
 
 fn configure_git_identity(dir: &Path) {
     run_git(dir, &["config", "user.name", "GitCraft Tester"]);
-    run_git(dir, &["config", "user.email", "tester@minigit.local"]);
+    run_git(dir, &["config", "user.email", "tester@gitcraft.local"]);
 }
 
 #[test]

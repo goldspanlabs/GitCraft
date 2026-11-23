@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use minigit_core::RepoSession;
+use gitcraft_core::RepoSession;
 
 fn run_git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -49,7 +49,7 @@ fn generate_large_repo_via_fast_import(dir: &Path, num_commits: usize) {
             writeln!(stdin, "mark :{i}").unwrap();
             writeln!(
                 stdin,
-                "committer Stress Tester <stress@minigit.local> {ts} +0000"
+                "committer Stress Tester <stress@gitcraft.local> {ts} +0000"
             )
             .unwrap();
             writeln!(stdin, "data {}", msg.len()).unwrap();
@@ -74,7 +74,7 @@ fn generate_large_repo_via_fast_import(dir: &Path, num_commits: usize) {
             writeln!(stdin, "mark :{mark}").unwrap();
             writeln!(
                 stdin,
-                "committer Stress Tester <stress@minigit.local> {ts} +0000"
+                "committer Stress Tester <stress@gitcraft.local> {ts} +0000"
             )
             .unwrap();
             writeln!(stdin, "data {}", msg.len()).unwrap();
