@@ -98,6 +98,8 @@ dictionary RepoStatus {
   sequence<FileChange> unstaged_files;
   string branch;
   boolean is_clean;
+  boolean is_merging;
+  boolean has_conflicts;
 };
 
 interface RepoSession {
@@ -160,6 +162,9 @@ interface RepoSession {
 
   [Throws=MiniGitError]
   void merge_branch(string branch_name);
+
+  [Throws=MiniGitError]
+  void abort_merge();
 
   [Throws=MiniGitError]
   sequence<DiffRow> diff();

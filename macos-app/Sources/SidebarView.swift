@@ -91,8 +91,8 @@ struct SidebarView: View {
                         }
                         if !branch.isHead {
                             Divider()
-                            Button("Delete \(branch.name)", role: .destructive) {
-                                tab.deleteBranch(branch.name, force: false)
+                            Button("Delete \(branch.name)…", role: .destructive) {
+                                tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
                             }
                         }
                     }
@@ -160,11 +160,11 @@ struct SidebarView: View {
                                 tab.pushTag(tag.name)
                             }
                             Divider()
-                            Button("Delete \(tag.name) (Local)", role: .destructive) {
-                                tab.deleteTag(tag.name, deleteRemote: false)
+                            Button("Delete \(tag.name) (Local)…", role: .destructive) {
+                                tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: false)
                             }
-                            Button("Delete \(tag.name) (Local & Remote)", role: .destructive) {
-                                tab.deleteTag(tag.name, deleteRemote: true)
+                            Button("Delete \(tag.name) (Local & Remote)…", role: .destructive) {
+                                tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: true)
                             }
                         }
                     }

@@ -23,11 +23,12 @@ struct DiffTableView: NSViewRepresentable {
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .none
         table.backgroundColor = .textBackgroundColor
+        table.columnAutoresizingStyle = .noColumnAutoresizing
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("diff"))
-        column.resizingMask = .autoresizingMask
+        column.minWidth = 400
         table.addTableColumn(column)
 
         scrollView.documentView = table
@@ -44,6 +45,9 @@ struct DiffTableView: NSViewRepresentable {
             || prev.last?.newLine != rows.last?.newLine
         guard changed else { return }
         context.coordinator.rows = rows
+        let maxChars = rows.reduce(0) { max($0, $1.text.count) }
+        let targetWidth = max(scrollView.contentSize.width, CGFloat(maxChars) * 7.4 + 120)
+        table.tableColumns.first?.width = targetWidth
         table.reloadData()
     }
 
@@ -104,9 +108,9 @@ final class DiffRowCellView: NSTableCellView {
         gutterDivider.boxType = .separator
 
         codeLabel.font = Self.monoFont
-        codeLabel.lineBreakMode = .byTruncatingTail
+        codeLabel.lineBreakMode = .byClipping
         codeLabel.allowsEditingTextAttributes = false
-        codeLabel.isSelectable = false
+        codeLabel.isSelectable = true
 
         addSubview(oldLineLabel)
         addSubview(newLineLabel)

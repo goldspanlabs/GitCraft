@@ -385,3 +385,42 @@ fn create_push_and_delete_tags_with_remote() {
     assert!(session.list_tags().unwrap().is_empty());
     assert!(!run_git(&remote_dir, &["tag"]).contains("v0.2.0"));
 }
+
+#[test]
+fn merge_conflict_detection_and_abort_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+
+    fs::write(root.join("conflict.txt"), "base\n").unwrap();
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "Base"]);
+
+    run_git(root, &["checkout", "-b", "side"]);
+    fs::write(root.join("conflict.txt"), "side change\n").unwrap();
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "Side"]);
+
+    run_git(root, &["checkout", "main"]);
+    fs::write(root.join("conflict.txt"), "main change\n").unwrap();
+    run_git(root, &["add", "."]);
+    run_git(root, &["commit", "-m", "Main"]);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+    assert!(!session.status().unwrap().is_merging);
+
+    // Merging side into main triggers a conflict
+    assert!(session.merge_branch("side".into()).is_err());
+
+    let status = session.status().unwrap();
+    assert!(status.is_merging);
+    assert!(status.has_conflicts);
+
+    // Abort merge restores clean state
+    session.abort_merge().unwrap();
+    let after = session.status().unwrap();
+    assert!(!after.is_merging);
+    assert!(!after.has_conflicts);
+    assert!(after.is_clean);
+}

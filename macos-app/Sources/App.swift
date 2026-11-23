@@ -13,6 +13,7 @@ struct MiniGitApp: App {
                     workspace.restoreTabs()
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Open Repository…", action: workspace.chooseRepository)
@@ -173,30 +174,53 @@ struct RepoWorkspaceView: View {
                     }
                 }
 
+                if tab.isMerging || tab.hasConflicts {
+                    MergeBanner(hasConflicts: tab.hasConflicts) {
+                        tab.pendingConfirmation = .abortMerge
+                    }
+                }
+
                 Divider()
 
                 // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
                 VSplitView {
-                    CommitTableView(
-                        rows: tab.commits,
-                        graphRevision: tab.graphRevision,
-                        workingChangesCount: tab.totalChangesCount,
-                        scrollRequest: tab.scrollRequest,
-                        onLoadMore: { tab.loadMoreCommits() },
-                        onSelectCommit: { tab.selectCommit($0) },
-                        onCopyOid: { tab.copyOid($0) },
-                        onCreateBranchAtCommit: { oid in
-                            tab.newBranchStartPoint = oid
-                            tab.isShowingNewBranchSheet = true
-                        },
-                        onCreateTagAtCommit: { oid in
-                            tab.newTagTarget = oid
-                            tab.isShowingNewTagSheet = true
-                        },
-                        onCheckoutCommit: { oid in
-                            tab.checkoutBranch(oid)
+                    ZStack(alignment: .bottom) {
+                        CommitTableView(
+                            rows: tab.commits,
+                            graphRevision: tab.graphRevision,
+                            workingChangesCount: tab.totalChangesCount,
+                            scrollRequest: tab.scrollRequest,
+                            onLoadMore: { tab.loadMoreCommits() },
+                            onSelectCommit: { tab.selectCommit($0) },
+                            onCopyOid: { tab.copyOid($0) },
+                            onCreateBranchAtCommit: { oid in
+                                tab.newBranchStartPoint = oid
+                                tab.isShowingNewBranchSheet = true
+                            },
+                            onCreateTagAtCommit: { oid in
+                                tab.newTagTarget = oid
+                                tab.isShowingNewTagSheet = true
+                            },
+                            onCheckoutCommit: { oid in
+                                tab.checkoutBranch(oid)
+                            }
+                        )
+
+                        if tab.commits.isEmpty && tab.searchQuery.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                    .foregroundStyle(.secondary)
+                                Text("No commits yet — stage your files below and make your first commit.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(.regularMaterial)
+                            .cornerRadius(8)
+                            .padding(.bottom, 14)
                         }
-                    )
+                    }
                     .frame(minHeight: 200)
 
                     InspectorView(tab: tab)
@@ -219,9 +243,52 @@ struct RepoWorkspaceView: View {
         .sheet(isPresented: $tab.isShowingStashSheet) {
             NewStashSheet(tab: tab)
         }
+        .confirmationDialog(
+            tab.pendingConfirmation?.title ?? "",
+            isPresented: Binding(
+                get: { tab.pendingConfirmation != nil },
+                set: { if !$0 { tab.pendingConfirmation = nil } }
+            ),
+            presenting: tab.pendingConfirmation
+        ) { action in
+            Button(action.confirmLabel, role: .destructive) {
+                tab.executeConfirmed(action)
+            }
+            Button("Cancel", role: .cancel) {
+                tab.pendingConfirmation = nil
+            }
+        } message: { action in
+            Text(action.message)
+        }
         .onAppear {
             searchText = tab.searchQuery
         }
+    }
+}
+
+private struct MergeBanner: View {
+    let hasConflicts: Bool
+    let onAbort: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.merge")
+                .foregroundStyle(.orange)
+            Text(
+                hasConflicts
+                    ? "Merge in progress with conflicts — resolve conflicts, stage files, and commit, or abort."
+                    : "Merge in progress — review staged changes and commit, or abort."
+            )
+            .font(.caption)
+            .lineLimit(2)
+            Spacer()
+            Button("Abort Merge…", action: onAbort)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.14))
     }
 }
 

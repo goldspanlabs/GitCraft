@@ -113,11 +113,62 @@ final class RepoTab: ObservableObject, Identifiable {
         let oidHex: String?
     }
 
+    enum DestructiveAction: Identifiable {
+        case discardFile(path: String)
+        case deleteBranch(name: String, force: Bool)
+        case deleteTag(name: String, deleteRemote: Bool)
+        case abortMerge
+
+        var id: String {
+            switch self {
+            case let .discardFile(path): return "discard-\(path)"
+            case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
+            case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
+            case .abortMerge: return "abort-merge"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case let .discardFile(path): return "Discard changes to \"\(path)\"?"
+            case let .deleteBranch(name, _): return "Delete branch \"\(name)\"?"
+            case let .deleteTag(name, remote):
+                return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
+            case .abortMerge: return "Abort in-progress merge?"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .discardFile:
+                return "This will permanently revert your uncommitted changes to this file."
+            case .deleteBranch:
+                return "This will delete the local branch reference."
+            case let .deleteTag(_, remote):
+                return remote
+                    ? "This will delete the tag locally and push the deletion to the remote repository."
+                    : "This will remove the tag from your local repository."
+            case .abortMerge:
+                return "This will abort the current merge and restore the repository to its pre-merge state."
+            }
+        }
+
+        var confirmLabel: String {
+            switch self {
+            case .discardFile: return "Discard"
+            case .deleteBranch, .deleteTag: return "Delete"
+            case .abortMerge: return "Abort Merge"
+            }
+        }
+    }
+
     let id = UUID()
     let url: URL
     var name: String { url.lastPathComponent }
 
     @Published private(set) var currentBranch = ""
+    @Published private(set) var isMerging = false
+    @Published private(set) var hasConflicts = false
     @Published private(set) var stagedFiles: [FileChange] = []
     @Published private(set) var unstagedFiles: [FileChange] = []
     @Published private(set) var commits: [CommitRow] = []
@@ -133,6 +184,7 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var scrollRequest: ScrollRequest?
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
+    @Published var pendingConfirmation: DestructiveAction?
     @Published var searchQuery = ""
     @Published var commitSummary = ""
     @Published var commitBody = ""
@@ -202,6 +254,8 @@ final class RepoTab: ObservableObject, Identifiable {
                     graphTask
                 )
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
+                isMerging = status.isMerging
+                hasConflicts = status.hasConflicts
                 stagedFiles = status.stagedFiles
                 unstagedFiles = status.unstagedFiles
                 branches = branchList
@@ -441,6 +495,26 @@ final class RepoTab: ObservableObject, Identifiable {
     func mergeBranch(_ branchName: String) {
         performMutation { session in
             try session.mergeBranch(branchName: branchName)
+        }
+    }
+
+    func abortMerge() {
+        performMutation { session in
+            try session.abortMerge()
+        }
+    }
+
+    func executeConfirmed(_ action: DestructiveAction) {
+        pendingConfirmation = nil
+        switch action {
+        case let .discardFile(path):
+            discardFile(path)
+        case let .deleteBranch(name, force):
+            deleteBranch(name, force: force)
+        case let .deleteTag(name, deleteRemote):
+            deleteTag(name, deleteRemote: deleteRemote)
+        case .abortMerge:
+            abortMerge()
         }
     }
 

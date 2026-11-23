@@ -91,8 +91,8 @@ private struct WorkingChangesInspectorView: View {
                                     )
                                     .contextMenu {
                                         Button("Stage File") { tab.stageFile(file.path) }
-                                        Button("Discard Changes", role: .destructive) {
-                                            tab.discardFile(file.path)
+                                        Button("Discard Changes…", role: .destructive) {
+                                            tab.pendingConfirmation = .discardFile(path: file.path)
                                         }
                                     }
                                 }

@@ -141,6 +141,8 @@ pub struct RepoStatus {
     pub unstaged_files: Vec<FileChange>,
     pub branch: String,
     pub is_clean: bool,
+    pub is_merging: bool,
+    pub has_conflicts: bool,
 }
 
 pub struct RepoSession {
@@ -197,6 +199,7 @@ impl RepoSession {
         let mut all_paths = BTreeSet::new();
         let mut staged_files = Vec::new();
         let mut unstaged_files = Vec::new();
+        let mut has_conflicts = false;
 
         for line in lines {
             if line.len() < 4 {
@@ -205,6 +208,9 @@ impl RepoSession {
             let bytes = line.as_bytes();
             let x = bytes[0] as char;
             let y = bytes[1] as char;
+            if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
+                has_conflicts = true;
+            }
             let raw_path = &line[3..];
             let path = raw_path
                 .split(" -> ")
@@ -236,6 +242,7 @@ impl RepoSession {
             }
         }
 
+        let is_merging = self.path.join(".git/MERGE_HEAD").exists();
         let files: Vec<String> = all_paths.into_iter().collect();
         Ok(RepoStatus {
             is_clean: staged_files.is_empty() && unstaged_files.is_empty(),
@@ -243,6 +250,8 @@ impl RepoSession {
             staged_files,
             unstaged_files,
             branch,
+            is_merging,
+            has_conflicts,
         })
     }
 
@@ -481,6 +490,15 @@ impl RepoSession {
             .lock()
             .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["merge", &branch_name])?;
+        Ok(())
+    }
+
+    pub fn abort_merge(&self) -> Result<(), MiniGitError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| MiniGitError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["merge", "--abort"])?;
         Ok(())
     }
 
