@@ -45,9 +45,11 @@ pub fn working_tree_file(
                         new_line: None,
                         spans: Vec::new(),
                     }];
+                    let mut hl = ext.map(highlight::LineHighlighter::new);
                     for (idx, line) in text.lines().enumerate() {
-                        let spans = ext
-                            .map(|e| highlight::highlight(line, e))
+                        let spans = hl
+                            .as_mut()
+                            .map(|h| h.highlight_line(line))
                             .unwrap_or_default();
                         rows.push(DiffRow {
                             kind: "addition".into(),
@@ -84,16 +86,14 @@ pub fn parse(input: &str) -> io::Result<Vec<DiffRow>> {
 
 fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<DiffRow>> {
     let mut rows = Vec::new();
-    let mut current_ext = default_ext.map(str::to_owned);
+    let mut highlighter = default_ext.map(highlight::LineHighlighter::new);
     let mut old_line: u32 = 0;
     let mut new_line: u32 = 0;
 
     for line in input.lines() {
         if let Some(file_path) = line.strip_prefix("+++ b/") {
-            current_ext = Path::new(file_path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_owned);
+            let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
+            highlighter = ext.map(highlight::LineHighlighter::new);
             rows.push(DiffRow {
                 kind: "header".into(),
                 text: line.to_owned(),
@@ -153,9 +153,9 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
             ("context", None, None, None)
         };
 
-        let spans = match (code_slice, current_ext.as_deref()) {
-            (Some(code), Some(ext)) if !code.is_empty() && code.len() <= 512 => {
-                shift_spans(highlight::highlight(code, ext), 1)
+        let spans = match (code_slice, highlighter.as_mut()) {
+            (Some(code), Some(hl)) if !code.is_empty() && code.len() <= 512 => {
+                shift_spans(hl.highlight_line(code), 1)
             }
             _ => Vec::new(),
         };
