@@ -131,6 +131,15 @@ private struct WorkingChangesInspectorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Commit summary…", text: $tab.commitSummary)
                         .textFieldStyle(.plain)
+                        .lineLimit(1)
+                        .onChange(of: tab.commitSummary) { _, newValue in
+                            // Pasted text can carry line breaks; a summary is one line.
+                            if newValue.contains(where: \.isNewline) {
+                                tab.commitSummary = newValue.replacingOccurrences(
+                                    of: "\r\n|\n|\r", with: " ", options: .regularExpression
+                                )
+                            }
+                        }
                         .font(.system(size: 12))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 6)
