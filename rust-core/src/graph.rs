@@ -19,15 +19,98 @@ pub fn get_commit_graph(
     limit: u32,
     search_query: Option<String>,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
+    graph_walk(sync_repo, offset, limit, search_query, false)
+}
+
+/// Like [`get_commit_graph`], but limited to the checked-out branch and the
+/// default (base) branch, starting at their fork point. Falls back to the full
+/// graph when HEAD is detached, is the default branch itself, or no base exists.
+pub fn get_branch_graph(
+    sync_repo: &gix::ThreadSafeRepository,
+    offset: u32,
+    limit: u32,
+    search_query: Option<String>,
+) -> Result<Vec<CommitRow>, GitCraftError> {
+    graph_walk(sync_repo, offset, limit, search_query, true)
+}
+
+/// Resolves the default branch: `origin/HEAD`'s target, else `main`/`master`
+/// (local branch preferred over `origin/`). Returns its full ref name and tip.
+fn default_base(repo: &gix::Repository) -> Option<(String, gix::ObjectId)> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(Some(r)) = repo.try_find_reference("refs/remotes/origin/HEAD") {
+        if let gix::refs::TargetRef::Symbolic(name) = r.target() {
+            let remote = name.as_bstr().to_str_lossy().into_owned();
+            // Prefer the local branch of the same name (it may hold unpushed work).
+            if let Some(short) = remote.strip_prefix("refs/remotes/origin/") {
+                candidates.push(format!("refs/heads/{short}"));
+            }
+            candidates.push(remote);
+        }
+    }
+    for n in ["main", "master"] {
+        candidates.push(format!("refs/heads/{n}"));
+        candidates.push(format!("refs/remotes/origin/{n}"));
+    }
+    candidates.into_iter().find_map(|name| {
+        let r = repo.try_find_reference(name.as_str()).ok().flatten()?;
+        let id = r.into_fully_peeled_id().ok()?.detach();
+        Some((name, id))
+    })
+}
+
+fn short_branch_name(full: &str) -> &str {
+    full.strip_prefix("refs/heads/")
+        .or_else(|| full.strip_prefix("refs/remotes/origin/"))
+        .unwrap_or(full)
+}
+
+/// Tips and hidden commits for the "current branch vs base" view, or `None`
+/// when the full graph should be shown.
+fn branch_scope(
+    repo: &gix::Repository,
+) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
+    let head = repo.head().ok()?;
+    let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
+    let head_id = head.id()?.detach();
+    let (base_ref, base_id) = default_base(repo)?;
+    if short_branch_name(&head_ref) == short_branch_name(&base_ref) || head_id == base_id {
+        return None;
+    }
+    // Hide everything below the fork point, but keep the fork commit itself.
+    let hidden = repo
+        .merge_base(head_id, base_id)
+        .ok()
+        .flatten()
+        .and_then(|mb| repo.find_commit(mb.detach()).ok())
+        .map(|c| c.parent_ids().map(|p| p.detach()).collect())
+        .unwrap_or_default();
+    Some((vec![head_id, base_id], hidden))
+}
+
+fn graph_walk(
+    sync_repo: &gix::ThreadSafeRepository,
+    offset: u32,
+    limit: u32,
+    search_query: Option<String>,
+    scoped: bool,
+) -> Result<Vec<CommitRow>, GitCraftError> {
     if limit == 0 {
         return Ok(Vec::new());
     }
 
     let mut repo = sync_repo.to_thread_local();
     repo.object_cache_size_if_unset(4 * 1024 * 1024);
-    let (refs_by_oid, tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
+    let (refs_by_oid, mut tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
     if tips.is_empty() {
         return Ok(Vec::new());
+    }
+    let mut hidden: Vec<gix::ObjectId> = Vec::new();
+    if scoped {
+        if let Some((scoped_tips, scoped_hidden)) = branch_scope(&repo) {
+            tips = scoped_tips;
+            hidden = scoped_hidden;
+        }
     }
     let has_local_refs = !local_reachable.is_empty();
 
@@ -39,6 +122,7 @@ pub fn get_commit_graph(
 
     let walk = repo
         .rev_walk(tips)
+        .with_hidden(hidden)
         .sorting(gix::revision::walk::Sorting::ByCommitTime(
             gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
         ))

@@ -114,6 +114,9 @@ interface RepoSession {
   sequence<CommitRow> get_commit_graph(u32 offset, u32 limit, string? search_query);
 
   [Throws=GitCraftError]
+  sequence<CommitRow> get_branch_graph(u32 offset, u32 limit, string? search_query);
+
+  [Throws=GitCraftError]
   CommitDetail get_commit_detail(string oid_hex);
 
   [Throws=GitCraftError]

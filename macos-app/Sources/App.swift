@@ -29,11 +29,22 @@ struct GitCraftApp: App {
                     .disabled(workspace.activeTab == nil)
             }
         }
+
+        // Adds "GitCraft ▸ Settings…" (⌘,) to the macOS application menu.
+        Settings {
+            SettingsView()
+        }
     }
 }
 
 struct RootView: View {
     @EnvironmentObject private var workspace: WorkspaceState
+    @AppStorage(AppearancePreference.storageKey)
+    private var appearanceRaw = AppearancePreference.system.rawValue
+
+    private var appearance: AppearancePreference {
+        AppearancePreference(rawValue: appearanceRaw) ?? .system
+    }
 
     var body: some View {
         Group {
@@ -50,6 +61,12 @@ struct RootView: View {
                     WelcomeView(workspace: workspace)
                 }
             }
+        }
+        .preferredColorScheme(appearance.colorScheme)
+        // Applies the saved appearance at launch. Changes made in Settings are applied
+        // by `SettingsView` itself, so this still works if the main window is closed.
+        .onAppear {
+            AppearancePreference.apply(appearance)
         }
     }
 }
@@ -201,6 +218,19 @@ struct RepoWorkspaceView: View {
                     }
 
                     TopBarStashItem(tab: tab)
+
+                    Button {
+                        tab.toggleScopeToCurrentBranch()
+                    } label: {
+                        TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
+                            ToolbarIconView(icon: .filter)
+                                .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(tab.scopeToCurrentBranch
+                        ? "Showing the current branch and its base branch — click to show all branches"
+                        : "Showing all branches — click to show only the current branch and its base branch")
 
                     if tab.isBusy {
                         ProgressView()
