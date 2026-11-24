@@ -73,10 +73,7 @@ impl RepoSession {
             if has_head(&self.path) {
                 git_cli::mutate(&self.path, &["reset", "--hard", "HEAD"])?;
             } else {
-                git_cli::mutate(
-                    &self.path,
-                    &["rm", "--cached", "-rf", "--ignore-unmatch", "--", "."],
-                )?;
+                git_cli::mutate(&self.path, &["rm", "-rf", "--ignore-unmatch", "--", "."])?;
             }
             git_cli::mutate(&self.path, &["clean", "-fd"])?;
             Ok(())

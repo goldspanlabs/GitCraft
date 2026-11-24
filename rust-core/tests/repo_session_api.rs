@@ -1305,6 +1305,13 @@ fn discard_all_handles_unborn_head_with_staged_and_untracked_files() {
     let dir = init_repo();
     let session = open(dir.path());
 
+    // Ignore *.log via local exclude; force-stage one and leave another unindexed.
+    session.ignore_path("ignored.log".into(), true).unwrap();
+    session.ignore_path("force_added.log".into(), true).unwrap();
+    write(dir.path(), "ignored.log", "keep me\n");
+    write(dir.path(), "force_added.log", "drop me\n");
+    run_git(dir.path(), &["add", "-f", "force_added.log"]);
+
     write(dir.path(), "staged.txt", "staged\n");
     session.stage("staged.txt".into()).unwrap();
     write(dir.path(), "untracked.txt", "untracked\n");
@@ -1313,6 +1320,11 @@ fn discard_all_handles_unborn_head_with_staged_and_untracked_files() {
     assert!(session.status().unwrap().is_clean);
     assert!(!dir.path().join("staged.txt").exists());
     assert!(!dir.path().join("untracked.txt").exists());
+    assert!(!dir.path().join("force_added.log").exists());
+    assert!(
+        dir.path().join("ignored.log").exists(),
+        "unrelated ignored files must be preserved"
+    );
 
     // Also works on unborn HEAD when only untracked files exist (empty index).
     write(dir.path(), "only_untracked.txt", "untracked\n");
