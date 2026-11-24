@@ -261,8 +261,10 @@ private struct CommitInspectorView: View {
         VStack(spacing: 0) {
             CommitPaneTabBar(selection: $pane)
             Divider()
-            header
-            Divider()
+            if pane == .changes {
+                header
+                Divider()
+            }
             switch pane {
             case .commit:
                 CommitMessagePane(tab: tab, commit: commit) { path in
