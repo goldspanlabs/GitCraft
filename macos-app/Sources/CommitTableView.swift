@@ -291,13 +291,18 @@ final class CommitRowCellView: NSTableCellView {
     private let graphView = GraphCellView()
     private let badgesStack = NSStackView()
     private let summaryLabel = NSTextField(labelWithString: "")
+    private let avatarView = AvatarImageView()
     private let authorLabel = NSTextField(labelWithString: "")
+    private let hashLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
 
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
+    /// "Yesterday at 10:57 PM" for recent days, "Nov 22, 2026 at 6:38 PM" otherwise.
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        f.doesRelativeDateFormatting = true
         return f
     }()
 
@@ -316,7 +321,9 @@ final class CommitRowCellView: NSTableCellView {
         graphView.translatesAutoresizingMaskIntoConstraints = false
         badgesStack.translatesAutoresizingMaskIntoConstraints = false
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
         authorLabel.translatesAutoresizingMaskIntoConstraints = false
+        hashLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
 
         badgesStack.orientation = .horizontal
@@ -331,17 +338,23 @@ final class CommitRowCellView: NSTableCellView {
         authorLabel.lineBreakMode = .byTruncatingTail
         authorLabel.font = .systemFont(ofSize: 11.5)
         authorLabel.textColor = .secondaryLabelColor
-        authorLabel.alignment = .right
+        authorLabel.alignment = .left
+
+        hashLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        hashLabel.textColor = .secondaryLabelColor
+        hashLabel.alignment = .left
 
         timeLabel.lineBreakMode = .byTruncatingTail
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        timeLabel.textColor = .tertiaryLabelColor
-        timeLabel.alignment = .right
+        timeLabel.font = .systemFont(ofSize: 11.5)
+        timeLabel.textColor = .secondaryLabelColor
+        timeLabel.alignment = .left
 
         addSubview(graphView)
         addSubview(badgesStack)
         addSubview(summaryLabel)
+        addSubview(avatarView)
         addSubview(authorLabel)
+        addSubview(hashLabel)
         addSubview(timeLabel)
 
         graphWidthConstraint = graphView.widthAnchor.constraint(equalToConstant: 24)
@@ -357,14 +370,23 @@ final class CommitRowCellView: NSTableCellView {
 
             summaryLabel.leadingAnchor.constraint(equalTo: badgesStack.trailingAnchor, constant: 6),
             summaryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: authorLabel.leadingAnchor, constant: -10),
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: avatarView.leadingAnchor, constant: -10),
+
+            avatarView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 18),
+            avatarView.heightAnchor.constraint(equalToConstant: 18),
+            avatarView.trailingAnchor.constraint(equalTo: authorLabel.leadingAnchor, constant: -6),
 
             authorLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            authorLabel.widthAnchor.constraint(equalToConstant: 120),
-            authorLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -10),
+            authorLabel.widthAnchor.constraint(equalToConstant: 130),
+            authorLabel.trailingAnchor.constraint(equalTo: hashLabel.leadingAnchor, constant: -12),
+
+            hashLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            hashLabel.widthAnchor.constraint(equalToConstant: 64),
+            hashLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -12),
 
             timeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            timeLabel.widthAnchor.constraint(equalToConstant: 72),
+            timeLabel.widthAnchor.constraint(equalToConstant: 158),
             timeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
         ])
     }
@@ -386,7 +408,10 @@ final class CommitRowCellView: NSTableCellView {
             summaryLabel.textColor = .secondaryLabelColor
         }
         authorLabel.stringValue = ""
+        hashLabel.stringValue = ""
         timeLabel.stringValue = ""
+        avatarView.isHidden = true
+        avatarView.clear()
     }
 
     func configure(commit: CommitRow, hasIncomingLine: Bool, connectsToWorkingChanges: Bool = false) {
@@ -413,10 +438,16 @@ final class CommitRowCellView: NSTableCellView {
         summaryLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
         summaryLabel.textColor = commit.isRemoteOnly ? .secondaryLabelColor : .labelColor
 
+        avatarView.isHidden = false
+        avatarView.configure(name: commit.authorName, email: commit.authorEmail)
         authorLabel.stringValue = commit.authorName
-        authorLabel.textColor = commit.isRemoteOnly ? .tertiaryLabelColor : .secondaryLabelColor
+        let secondary: NSColor = commit.isRemoteOnly ? .tertiaryLabelColor : .secondaryLabelColor
+        authorLabel.textColor = secondary
+        hashLabel.stringValue = commit.shortOid
+        hashLabel.textColor = secondary
+        timeLabel.textColor = secondary
         let date = Date(timeIntervalSince1970: TimeInterval(commit.timestamp))
-        timeLabel.stringValue = Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
+        timeLabel.stringValue = Self.dateFormatter.string(from: date)
     }
 }
 
@@ -663,5 +694,77 @@ final class GraphCellView: NSView {
         )
         ctx.setFillColor(color(for: commit.colorIdx).cgColor)
         ctx.fillEllipse(in: dotRect)
+    }
+}
+
+/// Small rounded-square author avatar for AppKit cells: the fetched image when there is
+/// one, otherwise the author's initials on a grey tile. Shares `AvatarLoader`'s cache.
+final class AvatarImageView: NSView {
+    private let imageView = NSImageView()
+    private let initialsLabel = NSTextField(labelWithString: "")
+    private var email = ""
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.isHidden = true
+        initialsLabel.translatesAutoresizingMaskIntoConstraints = false
+        initialsLabel.font = .systemFont(ofSize: 8.5, weight: .semibold)
+        initialsLabel.textColor = .secondaryLabelColor
+        initialsLabel.alignment = .center
+        addSubview(imageView)
+        addSubview(initialsLabel)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            initialsLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            initialsLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    func clear() {
+        email = ""
+        imageView.image = nil
+        imageView.isHidden = true
+        initialsLabel.stringValue = ""
+    }
+
+    func configure(name: String, email: String) {
+        self.email = email
+        let initials = String(name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased()
+        initialsLabel.stringValue = initials.isEmpty ? "?" : initials
+        imageView.image = nil
+        imageView.isHidden = true
+        initialsLabel.isHidden = false
+        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
+
+        let showAvatars = UserDefaults.standard.object(forKey: showAvatarsStorageKey) as? Bool ?? true
+        guard showAvatars, !email.isEmpty else { return }
+        let requested = email
+        Task { @MainActor [weak self] in
+            let image = await AvatarLoader.shared.image(for: requested)
+            // The cell may have been reused for another commit while the image loaded.
+            guard let self, self.email == requested, let image else { return }
+            self.imageView.image = image
+            self.imageView.isHidden = false
+            self.initialsLabel.isHidden = true
+        }
     }
 }

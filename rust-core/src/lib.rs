@@ -109,6 +109,7 @@ pub struct CommitRow {
     pub short_oid: String,
     pub summary: String,
     pub author_name: String,
+    pub author_email: String,
     pub timestamp: i64,
     pub lane: u32,
     pub color_idx: u8,

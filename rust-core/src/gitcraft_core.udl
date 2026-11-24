@@ -62,6 +62,7 @@ dictionary CommitRow {
   string short_oid;
   string summary;
   string author_name;
+  string author_email;
   i64 timestamp;
   u32 lane;
   u8 color_idx;

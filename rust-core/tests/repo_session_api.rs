@@ -1225,3 +1225,11 @@ fn fetch_can_include_tags() {
         "orphan-tag"
     );
 }
+
+#[test]
+fn graph_rows_carry_the_author_email() {
+    let dir = init_repo_with_commit();
+    let rows = open(dir.path()).get_commit_graph(0, 10, None).unwrap();
+    assert_eq!(rows[0].author_email, "tester@gitcraft.local");
+    assert_eq!(rows[0].author_name, "GitCraft Tester");
+}

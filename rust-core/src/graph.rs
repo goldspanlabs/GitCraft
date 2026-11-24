@@ -12,6 +12,7 @@ pub(crate) struct RawCommit {
     pub parents: Vec<gix::ObjectId>,
     pub summary: String,
     pub author_name: String,
+    pub author_email: String,
     pub timestamp: i64,
 }
 
@@ -180,9 +181,14 @@ fn graph_walk(
             .trim()
             .to_owned();
 
-        let author_name = commit
+        let (author_name, author_email) = commit
             .author()
-            .map(|a| a.name.to_str_lossy().into_owned())
+            .map(|a| {
+                (
+                    a.name.to_str_lossy().into_owned(),
+                    a.email.to_str_lossy().into_owned(),
+                )
+            })
             .unwrap_or_default();
 
         let timestamp = commit.time().map(|t| t.seconds).unwrap_or_default();
@@ -192,6 +198,7 @@ fn graph_walk(
             parents,
             summary,
             author_name,
+            author_email,
             timestamp,
         };
 
@@ -349,6 +356,7 @@ pub(crate) fn assign_commit_lane(
         short_oid,
         summary: commit.summary.clone(),
         author_name: commit.author_name.clone(),
+        author_email: commit.author_email.clone(),
         timestamp: commit.timestamp,
         lane: commit_lane as u32,
         color_idx: commit_color,
@@ -837,6 +845,7 @@ mod tests {
             parents: parents.iter().map(|&p| oid(p)).collect(),
             summary: summary.to_owned(),
             author_name: "Tester".to_owned(),
+            author_email: "tester@example.com".to_owned(),
             timestamp: 1_700_000_000 + id as i64,
         }
     }
