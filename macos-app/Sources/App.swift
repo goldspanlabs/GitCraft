@@ -406,10 +406,10 @@ private struct TopBarIconLabel<Icon: View>: View {
                             Capsule()
                                 .fill(Color(nsColor: .secondaryLabelColor))
                         )
-                        .offset(x: 12, y: -4)
+                        .offset(x: 18, y: -4)
                 }
             }
-            .frame(minWidth: 34, minHeight: 20)
+            .frame(minWidth: 40, minHeight: 20)
 
             Text(title)
                 .font(.system(size: 11, weight: .regular))
