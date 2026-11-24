@@ -53,10 +53,9 @@ private struct WorkingChangesInspectorView: View {
                                     WorkingFileRow(
                                         file: file,
                                         isSelected: tab.selectedFilePath == file.path && tab.selectedFileStaged,
-                                        actionIcon: "minus.circle",
-                                        actionHelp: "Unstage file",
+                                        isStaged: true,
                                         onSelect: { tab.selectWorkingFile(file) },
-                                        onAction: { tab.unstageFile(file.path) }
+                                        onToggleStaged: { tab.unstageFile(file.path) }
                                     )
                                 }
                             }
@@ -90,10 +89,9 @@ private struct WorkingChangesInspectorView: View {
                                     WorkingFileRow(
                                         file: file,
                                         isSelected: tab.selectedFilePath == file.path && !tab.selectedFileStaged,
-                                        actionIcon: "plus.circle",
-                                        actionHelp: "Stage file",
+                                        isStaged: false,
                                         onSelect: { tab.selectWorkingFile(file) },
-                                        onAction: { tab.stageFile(file.path) }
+                                        onToggleStaged: { tab.stageFile(file.path) }
                                     )
                                     .contextMenu {
                                         Button("Stage File") { tab.stageFile(file.path) }
@@ -475,32 +473,35 @@ private struct CommitFileList: View {
 private struct WorkingFileRow: View {
     let file: FileChange
     let isSelected: Bool
-    let actionIcon: String
-    let actionHelp: String
+    /// Checked means staged; toggling stages or unstages the file.
+    let isStaged: Bool
     let onSelect: () -> Void
-    let onAction: () -> Void
+    let onToggleStaged: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
+            Toggle(isOn: Binding(get: { isStaged }, set: { _ in onToggleStaged() })) {
+                EmptyView()
+            }
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+            .help(isStaged ? "Unstage file" : "Stage file")
+
             StatusBadge(status: file.status)
             Text(file.path)
                 .font(.system(size: 12))
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer()
-            Button(action: onAction) {
-                Image(systemName: actionIcon)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(actionHelp)
         }
-        .padding(.horizontal, 10)
+        // The highlight's edges line up with the 10pt section headers above it.
+        .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .padding(.horizontal, 10)
     }
 }
 
