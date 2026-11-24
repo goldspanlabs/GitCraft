@@ -1,3 +1,5 @@
+mod common;
+
 use std::{
     fs,
     io::Write,
@@ -6,21 +8,8 @@ use std::{
     time::Instant,
 };
 
+use common::run_git;
 use gitcraft_core::RepoSession;
-
-fn run_git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git");
-    assert!(
-        out.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
 
 fn generate_large_repo_via_fast_import(dir: &Path, num_commits: usize) {
     run_git(dir, &["init", "-b", "main"]);

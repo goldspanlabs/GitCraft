@@ -2,8 +2,13 @@ import AppKit
 import CryptoKit
 import SwiftUI
 
-/// UserDefaults key for the "show avatars" preference (Settings ▸ General).
-let showAvatarsStorageKey = "showAvatars"
+/// Extracts up to two uppercase initials from an author name, falling back to `"?"`.
+enum AvatarInitials {
+    static func from(_ name: String) -> String {
+        let text = String(name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased()
+        return text.isEmpty ? "?" : text
+    }
+}
 
 /// Resolves and caches author avatars. GitHub noreply addresses map to the GitHub
 /// avatar of that user; everything else goes through Gravatar using a SHA-256 hash
@@ -83,7 +88,7 @@ final class AvatarLoader {
     }
 }
 
-/// Rounded-square avatar with an initials fallback.
+/// Rounded-square avatar with an initials fallback for SwiftUI views.
 struct AvatarView: View {
     let name: String
     let email: String
@@ -91,12 +96,6 @@ struct AvatarView: View {
 
     @AppStorage(showAvatarsStorageKey) private var showAvatars = true
     @State private var image: NSImage?
-
-    private var initials: String {
-        let parts = name.split(separator: " ").prefix(2).compactMap(\.first)
-        let text = String(parts).uppercased()
-        return text.isEmpty ? "?" : text
-    }
 
     var body: some View {
         ZStack {
@@ -107,7 +106,7 @@ struct AvatarView: View {
             } else {
                 RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
                     .fill(Color.secondary.opacity(0.25))
-                Text(initials)
+                Text(AvatarInitials.from(name))
                     .font(.system(size: size * 0.4, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
@@ -117,6 +116,77 @@ struct AvatarView: View {
         .task(id: "\(email)|\(showAvatars)") {
             guard showAvatars, !email.isEmpty else { image = nil; return }
             image = await AvatarLoader.shared.image(for: email)
+        }
+    }
+}
+
+/// Small rounded-square author avatar for AppKit cells: the fetched image when there is
+/// one, otherwise the author's initials on a grey tile. Shares `AvatarLoader`'s cache.
+final class AvatarImageView: NSView {
+    private let imageView = NSImageView()
+    private let initialsLabel = NSTextField(labelWithString: "")
+    private var email = ""
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.isHidden = true
+        initialsLabel.translatesAutoresizingMaskIntoConstraints = false
+        initialsLabel.font = .systemFont(ofSize: 8.5, weight: .semibold)
+        initialsLabel.textColor = .secondaryLabelColor
+        initialsLabel.alignment = .center
+        addSubview(imageView)
+        addSubview(initialsLabel)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            initialsLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            initialsLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    func clear() {
+        email = ""
+        imageView.image = nil
+        imageView.isHidden = true
+        initialsLabel.stringValue = ""
+    }
+
+    func configure(name: String, email: String) {
+        self.email = email
+        initialsLabel.stringValue = AvatarInitials.from(name)
+        imageView.image = nil
+        imageView.isHidden = true
+        initialsLabel.isHidden = false
+        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
+
+        let showAvatars = UserDefaults.standard.object(forKey: showAvatarsStorageKey) as? Bool ?? true
+        guard showAvatars, !email.isEmpty else { return }
+        let requested = email
+        Task { @MainActor [weak self] in
+            let image = await AvatarLoader.shared.image(for: requested)
+            // The cell may have been reused for another commit while the image loaded.
+            guard let self, self.email == requested, let image else { return }
+            self.imageView.image = image
+            self.imageView.isHidden = false
+            self.initialsLabel.isHidden = true
         }
     }
 }

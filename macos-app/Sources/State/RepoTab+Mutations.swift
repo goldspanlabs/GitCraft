@@ -1,0 +1,358 @@
+import AppKit
+
+extension RepoTab {
+    /// Applies a `LocalChangesHandling` strategy around an operation (checkout or branch creation),
+    /// stashing and rolling back on error or discarding dirty files before running `operation`.
+    private nonisolated static func withLocalChanges(
+        _ handling: LocalChangesHandling,
+        hasChanges: Bool,
+        stashMessage: String,
+        session: RepoSession,
+        operation: () throws -> Void
+    ) throws {
+        guard hasChanges else {
+            try operation()
+            return
+        }
+        switch handling {
+        case .doNotChange:
+            try operation()
+        case .stashAndReapply:
+            try session.stashPush(message: stashMessage, includeUntracked: true)
+            do {
+                try operation()
+            } catch {
+                try? session.stashPop(index: 0)
+                throw error
+            }
+            try session.stashPop(index: 0)
+        case .discard:
+            try session.discardAll()
+            try operation()
+        }
+    }
+
+    // MARK: - Working Tree & Staging
+
+    func stageFile(_ path: String) {
+        performMutation { try $0.stage(path: path) }
+    }
+
+    func unstageFile(_ path: String) {
+        performMutation { try $0.unstage(path: path) }
+    }
+
+    func stageAll() {
+        performMutation { try $0.stageAll() }
+    }
+
+    func unstageAll() {
+        performMutation { try $0.unstageAll() }
+    }
+
+    func discardFile(_ path: String) {
+        performMutation { try $0.discardFile(path: path) }
+    }
+
+    func ignorePath(_ path: String, localOnly: Bool) {
+        performMutation { try $0.ignorePath(path: path, localOnly: localOnly) }
+    }
+
+    // MARK: - Remotes
+
+    /// Runs a remote mutation and reports success/failure to the caller (used by the
+    /// remotes sheet so it can keep the form open on error).
+    func addRemote(name: String, url: String, onSuccess: (@MainActor () -> Void)? = nil) {
+        performMutation { try $0.addRemote(name: name, url: url) } onSuccess: { onSuccess?() }
+    }
+
+    /// Applies a URL change and/or rename in one mutation so the two steps stay ordered.
+    func updateRemote(_ remote: RemoteInfo, newName: String, newURL: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        performMutation { session in
+            if url != remote.fetchUrl || url != remote.pushUrl {
+                try session.setRemoteUrl(name: remote.name, url: url)
+            }
+            if name != remote.name {
+                try session.renameRemote(oldName: remote.name, newName: name)
+            }
+        }
+    }
+
+    func removeRemote(_ name: String) {
+        performMutation { try $0.removeRemote(name: name) }
+    }
+
+    func fetchRemote(_ name: String) {
+        let includeTags = GitPreferences.fetchIncludesTags
+        performMutation { try $0.fetchRemote(name: name, includeTags: includeTags) }
+    }
+
+    // MARK: - Commit & Amend
+
+    /// Turns Amend on or off. Turning it on fills an empty message with HEAD's message.
+    func setAmend(_ on: Bool) {
+        amendCommit = on
+        guard on, commitSummary.isEmpty, commitBody.isEmpty else { return }
+        let session = self.session
+        Task {
+            guard let message = try? await Task.detached { try session.headCommitMessage() }.value,
+                  self.amendCommit, self.commitSummary.isEmpty, self.commitBody.isEmpty else { return }
+            let lines = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            self.commitSummary = String(lines.first ?? "")
+            self.commitBody = lines.count > 1
+                ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+        }
+    }
+
+    /// Commits the staged changes. The Commit menu's "Commit and Push" item passes `pushAfter: true`.
+    func commitChanges(pushAfter: Bool = false) {
+        let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else { return }
+        let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullMessage = body.isEmpty ? summary : "\(summary)\n\n\(body)"
+        // Hand-picked staging wins: auto-staging only fills in when nothing is staged.
+        let autoStage = GitPreferences.shouldStageAll(
+            autoStage: GitPreferences.autoStageOnCommit,
+            stagedCount: stagedFiles.count
+        )
+        let skip = skipHooks
+        let amend = amendCommit
+        let session = self.session
+        // Amending a commit that is already on the remote would make the push a non-fast-forward,
+        // so it is left for the person to push by hand.
+        let rewritesPushedCommit = amend && ((try? session.headIsPushed()) ?? false)
+
+        // One mutation, so staging and committing happen together and the UI sees a single step.
+        performMutation { session in
+            if autoStage {
+                try session.stageAll()
+            }
+            try session.commitWithOptions(message: fullMessage, skipHooks: skip, amend: amend)
+        } onSuccess: { [weak self] in
+            self?.commitSummary = ""
+            self?.commitBody = ""
+            self?.amendCommit = false
+            self?.skipHooks = false
+            if pushAfter {
+                if rewritesPushedCommit {
+                    self?.toast = Toast(
+                        message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
+                    )
+                } else {
+                    // Hop to the next run-loop turn so this mutation finishes (and clears
+                    // `isBusy`) before the push starts its own.
+                    DispatchQueue.main.async { self?.runRemote(.push) }
+                }
+            }
+        }
+    }
+
+    // MARK: - Branches & History
+
+    /// Detached checkout of `oid`, handling local changes the same way creating a branch does.
+    func checkoutCommit(_ oid: String, localChanges: LocalChangesHandling = .doNotChange) {
+        let hasLocalChanges = totalChangesCount > 0
+        performMutation { session in
+            try RepoTab.withLocalChanges(
+                localChanges,
+                hasChanges: hasLocalChanges,
+                stashMessage: "Auto-stash before checking out \(oid.prefix(7))",
+                session: session
+            ) {
+                try session.checkoutBranch(branchName: oid)
+            }
+        }
+    }
+
+    func checkoutBranch(_ branchName: String) {
+        performMutation { try $0.checkoutBranch(branchName: branchName) }
+    }
+
+    func createBranch(
+        name: String,
+        startPoint: String?,
+        checkout: Bool,
+        localChanges: LocalChangesHandling = .doNotChange
+    ) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let hasLocalChanges = checkout && totalChangesCount > 0
+        performMutation { session in
+            try RepoTab.withLocalChanges(
+                localChanges,
+                hasChanges: hasLocalChanges,
+                stashMessage: "Auto-stash before creating \(trimmed)",
+                session: session
+            ) {
+                try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: checkout)
+            }
+        }
+    }
+
+    func deleteBranch(_ branchName: String, force: Bool) {
+        performMutation({ session in
+            try session.deleteBranch(branchName: branchName, force: force)
+        }, onFailure: { [weak self] error in
+            // A safe delete refused because the branch has unmerged commits: ask before forcing.
+            guard !force, error.displayMessage.contains("is not fully merged") else { return false }
+            self?.pendingConfirmation = .forceDeleteBranch(name: branchName)
+            return true
+        })
+    }
+
+    func deleteRemoteBranch(_ branchName: String) {
+        performMutation { try $0.deleteRemoteBranch(branchName: branchName) }
+    }
+
+    func mergeBranch(_ branchName: String) {
+        performMutation { try $0.mergeBranch(branchName: branchName) }
+    }
+
+    /// Merges `oid` into the checked-out branch, joined as `mergeType` says.
+    func mergeCommit(_ oid: String, mergeType: MergeType) {
+        performMutation { try $0.mergeCommit(commit: oid, mergeType: mergeType) }
+    }
+
+    /// Whether merging `oid` would conflict, or nil if git couldn't say.
+    func checkMergeConflicts(_ oid: String) async -> Bool? {
+        let session = self.session
+        return try? await Task.detached { try session.mergeHasConflicts(commit: oid) }.value
+    }
+
+    func rebaseOnto(_ oid: String) {
+        performMutation { try $0.rebaseOnto(commit: oid) }
+    }
+
+    /// Hard resets go through the confirmation dialog; soft and mixed resets run directly.
+    func resetTo(_ oid: String, mode: ResetMode) {
+        if mode == .hard {
+            pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
+            return
+        }
+        performReset(oid, mode: mode)
+    }
+
+    /// Runs the reset without asking again. The confirmed hard reset calls this directly,
+    /// because `resetTo` would re-arm the dialog.
+    private func performReset(_ oid: String, mode: ResetMode) {
+        performMutation { try $0.resetTo(commit: oid, mode: mode) }
+    }
+
+    func cherryPick(_ oid: String) {
+        performMutation { try $0.cherryPick(commit: oid) }
+    }
+
+    func revertCommit(_ oid: String) {
+        performMutation { try $0.revertCommit(commit: oid) }
+    }
+
+    func abortRebase() {
+        performMutation { try $0.abortRebase() }
+    }
+
+    func continueRebase() {
+        performMutation { try $0.continueRebase() }
+    }
+
+    func abortMerge() {
+        performMutation { try $0.abortMerge() }
+    }
+
+    func executeConfirmed(_ action: DestructiveAction) {
+        pendingConfirmation = nil
+        switch action {
+        case let .discardFile(path):
+            discardFile(path)
+        case let .deleteBranch(name, force):
+            deleteBranch(name, force: force)
+        case let .forceDeleteBranch(name):
+            deleteBranch(name, force: true)
+        case let .deleteRemoteBranch(name):
+            deleteRemoteBranch(name)
+        case let .deleteTag(name, deleteRemote):
+            deleteTag(name, deleteRemote: deleteRemote)
+        case .abortMerge:
+            abortMerge()
+        case .abortRebase:
+            abortRebase()
+        case let .dropStash(index, _):
+            stashDrop(index)
+        case let .resetHard(_, commit):
+            performReset(commit, mode: .hard)
+        }
+    }
+
+    // MARK: - Tags, Stashes & Sync
+
+    func createTag(name: String, target: String?, message: String?, pushToRemote: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let msg = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalMsg = (msg?.isEmpty == false) ? msg : nil
+        performMutation {
+            try $0.createTag(
+                tagName: trimmed,
+                target: target,
+                message: finalMsg,
+                pushToRemote: pushToRemote
+            )
+        }
+    }
+
+    func deleteTag(_ tagName: String, deleteRemote: Bool) {
+        performMutation { try $0.deleteTag(tagName: tagName, deleteRemote: deleteRemote) }
+    }
+
+    func pushTag(_ tagName: String) {
+        performMutation { try $0.pushTag(tagName: tagName) }
+    }
+
+    func stashPush(message: String?, includeUntracked: Bool) {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let msg = (trimmed?.isEmpty == false) ? trimmed : nil
+        performMutation { try $0.stashPush(message: msg, includeUntracked: includeUntracked) }
+    }
+
+    func stashApply(_ index: UInt32) {
+        performMutation { try $0.stashApply(index: index) }
+    }
+
+    func stashPop(_ index: UInt32) {
+        performMutation { try $0.stashPop(index: index) }
+    }
+
+    func stashDrop(_ index: UInt32) {
+        performMutation { try $0.stashDrop(index: index) }
+    }
+
+    func runRemote(_ operation: RemoteOperation) {
+        let pullStrategy = PullStrategyPreference.current.core
+        let includeTags = GitPreferences.fetchIncludesTags
+        performMutation { session in
+            switch operation {
+            case .fetch: try session.fetch(includeTags: includeTags)
+            case .pull: try session.pull(strategy: pullStrategy)
+            case .push: try session.push()
+            }
+        }
+    }
+
+    func lockWorktree(_ path: String) {
+        performMutation { try $0.lockWorktree(path: path, reason: nil) }
+    }
+
+    func unlockWorktree(_ path: String) {
+        performMutation { try $0.unlockWorktree(path: path) }
+    }
+
+    func pruneWorktrees() {
+        performMutation { try $0.pruneWorktrees() }
+    }
+
+    func copyOid(_ oid: String) {
+        Clipboard.copy(oid)
+    }
+}

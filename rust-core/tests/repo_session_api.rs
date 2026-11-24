@@ -2,63 +2,12 @@
 //! tests reach only indirectly (or not at all): unstaging, working-tree diffs,
 //! syntax highlighting, and the error paths of mutating operations.
 
+mod common;
+
 use std::{fs, path::Path, process::Command};
 
-use gitcraft_core::{PullStrategy, RepoSession};
-
-fn run_git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "GitCraft Tester")
-        .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
-        .env("GIT_COMMITTER_NAME", "GitCraft Tester")
-        .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
-        // Fixed dates make commit hashes identical on every run.
-        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
-        .output()
-        .expect("failed to invoke git");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\nstdout: {}\nstderr: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-/// Creates a repo on `main` with a local identity configured, and no commits.
-fn init_repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    run_git(dir.path(), &["init", "-b", "main"]);
-    run_git(dir.path(), &["config", "user.name", "GitCraft Tester"]);
-    run_git(
-        dir.path(),
-        &["config", "user.email", "tester@gitcraft.local"],
-    );
-    dir
-}
-
-fn write(dir: &Path, name: &str, contents: &str) {
-    fs::write(dir.join(name), contents).unwrap();
-}
-
-/// Creates a repo with one commit containing `a.txt` and `b.txt`.
-fn init_repo_with_commit() -> tempfile::TempDir {
-    let dir = init_repo();
-    write(dir.path(), "a.txt", "alpha\n");
-    write(dir.path(), "b.txt", "bravo\n");
-    run_git(dir.path(), &["add", "-A"]);
-    run_git(dir.path(), &["commit", "-m", "initial"]);
-    dir
-}
-
-fn open(dir: &Path) -> RepoSession {
-    RepoSession::new(dir.to_string_lossy().into_owned()).unwrap()
-}
+use common::{init_repo, init_repo_with_commit, open, run_git, write};
+use gitcraft_core::PullStrategy;
 
 // ---------------------------------------------------------------- staging ---
 
@@ -1320,4 +1269,66 @@ fn nothing_is_marked_unpushed_without_remote_branches() {
     let dir = init_repo_with_commit();
     let rows = open(dir.path()).get_commit_graph(0, 10, None).unwrap();
     assert!(rows.iter().all(|r| !r.is_unpushed));
+}
+
+#[test]
+fn discard_all_clears_staged_unstaged_and_untracked_changes() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    // Staged edit, staged addition, unstaged edit, and untracked file.
+    write(dir.path(), "a.txt", "staged edit\n");
+    write(dir.path(), "added.txt", "staged add\n");
+    session.stage("a.txt".into()).unwrap();
+    session.stage("added.txt".into()).unwrap();
+    write(dir.path(), "b.txt", "unstaged edit\n");
+    write(dir.path(), "untracked.txt", "untracked\n");
+
+    session.discard_all().unwrap();
+
+    let status = session.status().unwrap();
+    assert!(status.is_clean, "expected clean repo, got {status:?}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "bravo\n"
+    );
+    assert!(!dir.path().join("added.txt").exists());
+    assert!(!dir.path().join("untracked.txt").exists());
+}
+
+#[test]
+fn discard_all_handles_unborn_head_with_staged_and_untracked_files() {
+    let dir = init_repo();
+    let session = open(dir.path());
+
+    // Ignore *.log via local exclude; force-stage one and leave another unindexed.
+    session.ignore_path("ignored.log".into(), true).unwrap();
+    session.ignore_path("force_added.log".into(), true).unwrap();
+    write(dir.path(), "ignored.log", "keep me\n");
+    write(dir.path(), "force_added.log", "drop me\n");
+    run_git(dir.path(), &["add", "-f", "force_added.log"]);
+
+    write(dir.path(), "staged.txt", "staged\n");
+    session.stage("staged.txt".into()).unwrap();
+    write(dir.path(), "untracked.txt", "untracked\n");
+
+    session.discard_all().unwrap();
+    assert!(session.status().unwrap().is_clean);
+    assert!(!dir.path().join("staged.txt").exists());
+    assert!(!dir.path().join("untracked.txt").exists());
+    assert!(!dir.path().join("force_added.log").exists());
+    assert!(
+        dir.path().join("ignored.log").exists(),
+        "unrelated ignored files must be preserved"
+    );
+
+    // Also works on unborn HEAD when only untracked files exist (empty index).
+    write(dir.path(), "only_untracked.txt", "untracked\n");
+    session.discard_all().unwrap();
+    assert!(session.status().unwrap().is_clean);
+    assert!(!dir.path().join("only_untracked.txt").exists());
 }
