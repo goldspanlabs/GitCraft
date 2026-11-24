@@ -14,6 +14,9 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
         .env("GIT_COMMITTER_NAME", "GitCraft Tester")
         .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
+        // Fixed dates make commit hashes identical on every run.
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
         .output()
         .expect("failed to invoke git");
     assert!(

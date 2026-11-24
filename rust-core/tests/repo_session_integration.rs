@@ -16,6 +16,10 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
         .env("GIT_COMMITTER_NAME", "GitCraft Tester")
         .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
+        // Fixed dates make commit hashes identical on every run, so hash-matching
+        // searches and sort ties behave the same each time.
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
         .output()
         .expect("failed to invoke git");
     assert!(
@@ -591,8 +595,9 @@ fn branch_graph_keeps_ref_badges_and_supports_search_and_paging() {
             .unwrap()
             .is_empty());
     }
+    // "c2" is also a hex string, so it can match other commits' hashes; only require the hit.
     let hits = session.get_branch_graph(0, 100, Some("c2".into())).unwrap();
-    assert_eq!(summaries(&hits), vec!["c2"]);
+    assert!(summaries(&hits).iter().any(|s| s == "c2"));
 
     let page1 = session.get_branch_graph(0, 2, None).unwrap();
     let page2 = session.get_branch_graph(2, 2, None).unwrap();

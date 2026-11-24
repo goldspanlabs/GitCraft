@@ -1,5 +1,6 @@
 #!/bin/sh
-# Mirrors the Rust half of CI before anything leaves the machine.
+# Fast Rust checks (fmt, clippy) before anything leaves the machine.
+# Tests run in CI (see .github/workflows/ci.yml), not here.
 set -e
 
 # GUI apps launch git with a minimal PATH, so make sure cargo can be found.
@@ -11,6 +12,3 @@ cargo fmt --manifest-path rust-core/Cargo.toml --check >&2
 
 echo "pre-push: cargo clippy" >&2
 cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings >&2
-
-echo "pre-push: cargo test" >&2
-cargo test --manifest-path rust-core/Cargo.toml --quiet >&2
