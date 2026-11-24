@@ -453,6 +453,22 @@ fn commit_detail_for_unknown_oid_is_an_error() {
         .is_err());
 }
 
+#[test]
+fn head_is_pushed_tracks_whether_head_reached_a_remote() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    // Nothing has been pushed yet.
+    assert!(!session.head_is_pushed().unwrap());
+
+    session.push().unwrap();
+    assert!(session.head_is_pushed().unwrap());
+
+    write(dir.path(), "c.txt", "charlie\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "local only"]);
+    assert!(!session.head_is_pushed().unwrap());
+}
+
 // --------------------------------------------------------------- discard ---
 
 #[test]

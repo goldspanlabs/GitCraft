@@ -1020,6 +1020,13 @@ impl RepoSession {
         Ok(())
     }
 
+    /// True when HEAD is contained in a remote-tracking branch. Amending such a commit
+    /// rewrites history that has already been published.
+    pub fn head_is_pushed(&self) -> Result<bool, GitCraftError> {
+        let output = git_cli::run(&self.path, &["branch", "-r", "--contains", "HEAD"])?;
+        Ok(!output.trim().is_empty())
+    }
+
     /// The full message of HEAD, used to fill the composer when amending.
     pub fn head_commit_message(&self) -> Result<String, GitCraftError> {
         let output = git_cli::run(&self.path, &["log", "-1", "--format=%B"])?;
