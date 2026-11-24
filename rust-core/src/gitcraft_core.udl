@@ -3,6 +3,7 @@ namespace gitcraft_core {};
 [Error]
 interface GitCraftError {
   Message(string msg);
+  Warning(string msg);
 };
 
 enum CommitSort {
@@ -21,6 +22,13 @@ enum ResetMode {
   "Soft",
   "Mixed",
   "Hard"
+};
+
+enum MergeType {
+  "Default",
+  "NoFastForward",
+  "FastForwardOnly",
+  "Squash"
 };
 
 enum RefKind {
@@ -204,6 +212,12 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void abort_merge();
+
+  [Throws=GitCraftError]
+  void merge_commit(string commit, MergeType merge_type);
+
+  [Throws=GitCraftError]
+  boolean merge_has_conflicts(string commit);
 
   [Throws=GitCraftError]
   void rebase_onto(string commit);

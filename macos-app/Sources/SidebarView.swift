@@ -1133,6 +1133,136 @@ struct CheckoutCommitSheet: View {
     }
 }
 
+/// Merge a commit into the checked-out branch, with the merge type and a conflict preview.
+struct MergeCommitSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var mergeType: MergeType = .default
+    /// nil until the check finishes, or when git couldn't run it.
+    @State private var hasConflicts: Bool?
+    @State private var conflictCheckFinished = false
+
+    private var commit: CommitRow? {
+        tab.commits.first { $0.oidHex == tab.mergeCommitOid }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Merge")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Merge a commit into the checked-out branch")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Merge:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .gridColumnAlignment(.trailing)
+                        HStack(spacing: 6) {
+                            Text(commit?.shortOid ?? String((tab.mergeCommitOid ?? "").prefix(7)))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text(commit?.summary ?? "")
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow {
+                        Text("Into:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                        Text(tab.currentBranch)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow(alignment: .top) {
+                        Text("Merge Type:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("", selection: $mergeType) {
+                                Text("Default (fast-forward if possible)").tag(MergeType.default)
+                                Text("No fast-forward (always create a merge commit)").tag(MergeType.noFastForward)
+                                Text("Fast-forward only").tag(MergeType.fastForwardOnly)
+                                Text("Squash (stage the changes, don't commit)").tag(MergeType.squash)
+                            }
+                            .labelsHidden()
+                            .frame(width: 330, alignment: .leading)
+
+                            if mergeType == .squash {
+                                Text("The changes are staged. Commit them yourself.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+
+                conflictStatus
+                    .font(.system(size: 12))
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.large)
+
+                    Button("Merge") {
+                        if let oid = tab.mergeCommitOid {
+                            tab.mergeCommit(oid, mergeType: mergeType)
+                        }
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+                    .disabled(tab.mergeCommitOid == nil)
+                }
+                .padding(.top, 6)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 20)
+        .task(id: tab.mergeCommitOid) {
+            guard let oid = tab.mergeCommitOid else { return }
+            hasConflicts = await tab.checkMergeConflicts(oid)
+            conflictCheckFinished = true
+        }
+    }
+
+    @ViewBuilder
+    private var conflictStatus: some View {
+        if !conflictCheckFinished {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking for conflicts…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if hasConflicts == true {
+            Label("Merge will have conflicts to resolve", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } else if hasConflicts == false {
+            Label("Merge can be done without conflicts", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
+    }
+}
+
 struct NewTagSheet: View {
     @ObservedObject var tab: RepoTab
     @Environment(\.dismiss) private var dismiss

@@ -20,11 +20,18 @@ use std::{
 pub enum GitCraftError {
     #[error("{msg}")]
     Message { msg: String },
+    /// The operation didn't fail, but there's nothing for it to do; shown as a warning.
+    #[error("{msg}")]
+    Warning { msg: String },
 }
 
 impl GitCraftError {
     pub fn message(msg: impl Into<String>) -> Self {
         Self::Message { msg: msg.into() }
+    }
+
+    pub fn warning(msg: impl Into<String>) -> Self {
+        Self::Warning { msg: msg.into() }
     }
 }
 
@@ -55,6 +62,19 @@ pub enum PullStrategy {
     Rebase,
     /// Refuse to create a merge commit or rewrite history; fail if branches diverged.
     FastForwardOnly,
+}
+
+/// How `merge_commit` joins a commit to the checked-out branch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MergeType {
+    /// Fast-forward when the history allows it, otherwise create a merge commit.
+    Default,
+    /// Always create a merge commit.
+    NoFastForward,
+    /// Refuse unless the branch can fast-forward.
+    FastForwardOnly,
+    /// Stage the combined changes without committing; the user commits them.
+    Squash,
 }
 
 /// How far `reset_to` moves the branch and what happens to the working tree.
@@ -747,6 +767,51 @@ impl RepoSession {
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["merge", "--abort"])?;
         Ok(())
+    }
+
+    /// Merges `commit` into the checked-out branch, joined as `merge_type` says.
+    pub fn merge_commit(&self, commit: String, merge_type: MergeType) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let commit = validate_ref_arg(&commit)?;
+        // `git merge` quietly does nothing (and exits 0) when the commit is already
+        // reachable from HEAD; say so instead of looking like the click was ignored.
+        if git_cli::run(&self.path, &["merge-base", "--is-ancestor", &commit, "HEAD"]).is_ok() {
+            let short: String = commit.chars().take(7).collect();
+            return Err(GitCraftError::warning(format!(
+                "{short} is already in the current branch's history, so there is nothing to merge"
+            )));
+        }
+        let mut args = vec!["merge"];
+        match merge_type {
+            MergeType::Default => {}
+            MergeType::NoFastForward => args.push("--no-ff"),
+            MergeType::FastForwardOnly => args.push("--ff-only"),
+            MergeType::Squash => args.push("--squash"),
+        }
+        args.push(commit.as_str());
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
+    }
+
+    /// Whether merging `commit` into HEAD would conflict. Works without touching the
+    /// working tree or index (`git merge-tree --write-tree`, git 2.38+).
+    pub fn merge_has_conflicts(&self, commit: String) -> Result<bool, GitCraftError> {
+        let commit = validate_ref_arg(&commit)?;
+        let out = std::process::Command::new("git")
+            .args(["merge-tree", "--write-tree", "--name-only", "HEAD", commit.as_str()])
+            .current_dir(&self.path)
+            .output()
+            .map_err(|e| GitCraftError::message(e.to_string()))?;
+        match out.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => Err(GitCraftError::message(
+                String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            )),
+        }
     }
 
     /// Rebases the checked-out branch onto `commit`.

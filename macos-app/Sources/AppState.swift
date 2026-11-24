@@ -227,6 +227,24 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var scrollRequest: ScrollRequest?
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
+
+    /// A brief note over the commit graph for a no-op result, which isn't a failure.
+    @Published var toast: Toast?
+
+    struct Toast: Identifiable {
+        let id = UUID()
+        let message: String
+    }
+
+    /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
+    func showError(_ error: Error) {
+        if error.isWarning {
+            toast = Toast(message: error.displayMessage)
+        } else {
+            errorMessage = error.displayMessage
+        }
+    }
+
     @Published var pendingConfirmation: DestructiveAction?
     @Published var searchQuery = ""
     @Published var commitSummary = ""
@@ -239,6 +257,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var newBranchStartPoint: String?
     @Published var isShowingCheckoutCommitSheet = false
     @Published var checkoutCommitOid: String?
+    @Published var isShowingMergeCommitSheet = false
+    @Published var mergeCommitOid: String?
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
@@ -411,7 +431,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -466,7 +486,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -497,7 +517,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -523,7 +543,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -587,7 +607,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 limit = min(limit * 2, 64_000)
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
                 return
             }
         }
@@ -686,7 +706,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = Self.displayRows(rows)
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -706,7 +726,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
                 if loadedDetailOid == oid { loadedDetailOid = nil }
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -731,7 +751,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = []
                     loadedDetailOid = nil
                 }
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -958,11 +978,23 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
-    /// Merges the commit `oid` into the checked-out branch.
-    func mergeCommit(_ oid: String) {
+    /// Opens the Merge sheet for `oid`.
+    func requestMergeCommit(_ oid: String) {
+        mergeCommitOid = oid
+        isShowingMergeCommitSheet = true
+    }
+
+    /// Merges `oid` into the checked-out branch, joined as `mergeType` says.
+    func mergeCommit(_ oid: String, mergeType: MergeType) {
         performMutation { session in
-            try session.mergeBranch(branchName: oid)
+            try session.mergeCommit(commit: oid, mergeType: mergeType)
         }
+    }
+
+    /// Whether merging `oid` would conflict, or nil if git couldn't say.
+    func checkMergeConflicts(_ oid: String) async -> Bool? {
+        let session = self.session
+        return try? await Task.detached { try session.mergeHasConflicts(commit: oid) }.value
     }
 
     func rebaseOnto(_ oid: String) {
@@ -1126,7 +1158,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 refresh()
             } catch {
                 if let onFailure, onFailure(error) { return }
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -1139,11 +1171,17 @@ extension Error {
     var displayMessage: String {
         if let error = self as? GitCraftError {
             switch error {
-            case let .Message(msg):
+            case let .Message(msg), let .Warning(msg):
                 return msg.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
         return localizedDescription
+    }
+
+    /// True for core errors that report a no-op rather than a failure.
+    var isWarning: Bool {
+        if let error = self as? GitCraftError, case .Warning = error { return true }
+        return false
     }
 }
 

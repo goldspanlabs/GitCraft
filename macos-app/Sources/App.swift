@@ -153,7 +153,7 @@ struct RepoDetailView: View {
                         currentBranch: tab.currentBranch,
                         onCommitAction: { action, oid in
                             switch action {
-                            case .merge: tab.mergeCommit(oid)
+                            case .merge: tab.requestMergeCommit(oid)
                             case .rebase: tab.rebaseOnto(oid)
                             case let .reset(mode): tab.resetTo(oid, mode: mode)
                             case .cherryPick: tab.cherryPick(oid)
@@ -166,6 +166,17 @@ struct RepoDetailView: View {
                         EmptyHistoryHint()
                     }
                 }
+                .overlay(alignment: .top) {
+                    if let toast = tab.toast {
+                        ToastView(message: toast.message) {
+                            tab.toast = nil
+                        }
+                        .id(toast.id)
+                        .padding(.top, 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
             } bottom: {
                 InspectorView(tab: tab)
             }
@@ -258,6 +269,9 @@ private struct RepoSheets: ViewModifier {
         .sheet(isPresented: $tab.isShowingCheckoutCommitSheet) {
             CheckoutCommitSheet(tab: tab)
         }
+        .sheet(isPresented: $tab.isShowingMergeCommitSheet) {
+            MergeCommitSheet(tab: tab)
+        }
         .sheet(isPresented: $tab.isShowingNewTagSheet) {
             NewTagSheet(tab: tab)
         }
@@ -333,6 +347,46 @@ private struct OperationBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.orange.opacity(0.14))
+    }
+}
+
+/// A brief note shown over the commit graph for a no-op result. It clears itself after a
+/// few seconds, or when the user closes it.
+struct ToastView: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: 520)
+        // Solid, like the error banner's tint, so it reads as part of the window.
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6).fill(Color.yellow.opacity(0.14)))
+        )
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .task {
+            try? await Task.sleep(for: .seconds(4))
+            onDismiss()
+        }
     }
 }
 
