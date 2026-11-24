@@ -14,7 +14,7 @@ rust:
 	cargo build --release --manifest-path $(RUST_DIR)/Cargo.toml
 
 bindings: rust
-	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$(APP_DIR)/Sources/Generated"
+	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/src/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$(APP_DIR)/Sources/Generated"
 
 swift: rust bindings
 	cd "$(APP_DIR)" && swift build -c release $(SWIFT_FLAGS)
