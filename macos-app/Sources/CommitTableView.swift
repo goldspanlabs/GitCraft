@@ -498,6 +498,8 @@ final class RefPillView: NSView {
     private let label = NSTextField(labelWithString: "")
     private let iconView = NSImageView()
     private let divider = NSView()
+    /// The untinted glyph; `applyColors` bakes the chip colour into `iconView.image`.
+    private var templateIcon: NSImage?
     private let badge: RefBadge
     private let host: RemoteHost?
 
@@ -516,7 +518,7 @@ final class RefPillView: NSView {
         addSubview(label)
         if let host, let icon = host.icon {
             // Remote chips lead with the hosting service's mark, set off by a thin divider.
-            iconView.image = icon
+            templateIcon = icon
             iconView.imageScaling = .scaleProportionallyUpOrDown
             iconView.translatesAutoresizingMaskIntoConstraints = false
             divider.translatesAutoresizingMaskIntoConstraints = false
@@ -537,7 +539,7 @@ final class RefPillView: NSView {
         } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head {
             // The checked-out branch gets a check mark in front of its name.
             let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
-            iconView.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
+            templateIcon = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
                 .withSymbolConfiguration(config)
             iconView.translatesAutoresizingMaskIntoConstraints = false
             addSubview(iconView)
@@ -571,6 +573,18 @@ final class RefPillView: NSView {
         needsDisplay = true
     }
 
+    private static func tinted(_ template: NSImage, with color: NSColor) -> NSImage {
+        let size = template.size
+        let image = NSImage(size: size, flipped: false) { rect in
+            template.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
     private func applyColors() {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
@@ -602,7 +616,9 @@ final class RefPillView: NSView {
         layer?.backgroundColor = bgColor.cgColor
         layer?.borderColor = borderColor.cgColor
         label.textColor = fgColor
-        iconView.contentTintColor = fgColor
+        // Pre-tint instead of relying on a template image: a selected row would otherwise
+        // recolour template icons, washing them out against the selection highlight.
+        iconView.image = templateIcon.map { Self.tinted($0, with: fgColor) }
         divider.layer?.backgroundColor = borderColor.withAlphaComponent(0.6).cgColor
     }
 
