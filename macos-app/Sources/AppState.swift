@@ -64,14 +64,14 @@ final class WorkspaceState: ObservableObject {
     @discardableResult
     func openRepository(at url: URL) -> Bool {
         let standardized = url.standardizedFileURL
-        if let existing = repoControllers.first(where: { $0.tab.url.standardizedFileURL == standardized }) {
+        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: standardized.path) }) {
             existing.reveal()
             return true
         }
         do {
             let tab = try RepoTab(url: standardized)
             openError = nil
-            recordRecent(path: standardized.path)
+            recordRecent(path: tab.repoPath)
             let controller = RepoWindowController(tab: tab, workspace: self)
             repoControllers.append(controller)
             saveOpenTabs()
@@ -113,8 +113,9 @@ final class WorkspaceState: ObservableObject {
         UserDefaults.standard.set(updated, forKey: Self.recentKey)
     }
 
-    private func saveOpenTabs() {
-        UserDefaults.standard.set(repoControllers.map { $0.tab.url.path }, forKey: Self.openTabsKey)
+    /// Saves the checkout each open tab shows, so relaunch returns to the same worktree.
+    func saveOpenTabs() {
+        UserDefaults.standard.set(repoControllers.map { $0.tab.activeCheckoutPath }, forKey: Self.openTabsKey)
     }
 }
 
@@ -188,7 +189,15 @@ final class RepoTab: ObservableObject, Identifiable {
 
     let id = UUID()
     let url: URL
-    var name: String { url.lastPathComponent }
+    /// The repository's primary checkout, the folder that owns `.git`. It names the tab.
+    private(set) var repoPath: String
+    /// The checkout this tab shows: `repoPath` or one of its linked worktrees.
+    @Published private(set) var activeCheckoutPath: String
+    /// Every checkout of the repository, primary first.
+    @Published private(set) var worktrees: [WorktreeInfo] = []
+    /// Called after the shown checkout changes, so the window can save it for relaunch.
+    var onCheckoutChanged: (() -> Void)?
+    var name: String { URL(fileURLWithPath: repoPath).lastPathComponent }
 
     @Published private(set) var currentBranch = ""
     @Published private(set) var isMerging = false
@@ -237,7 +246,7 @@ final class RepoTab: ObservableObject, Identifiable {
         Int(branches.first(where: { $0.isHead && !$0.isRemote })?.ahead ?? 0)
     }
 
-    private let session: RepoSession
+    private var session: RepoSession
     private var isLoadingMore = false
     private var hasMoreCommits = true
     private let pageSize: UInt32 = 500
@@ -255,8 +264,13 @@ final class RepoTab: ObservableObject, Identifiable {
     private var loadedDetailOid: String?
 
     init(url: URL) throws {
+        let session = try RepoSession(path: url.path)
         self.url = url
-        self.session = try RepoSession(path: url.path)
+        self.session = session
+        self.activeCheckoutPath = url.path
+        // Git lists the primary checkout first, so a tab opened on a linked worktree still
+        // names the repository after its main folder.
+        self.repoPath = (try? session.listWorktrees().first?.path) ?? url.path
     }
 
     /// Background fetch on the interval chosen in Settings (never when set to 0). Failures
@@ -337,6 +351,54 @@ final class RepoTab: ObservableObject, Identifiable {
         watcherTask = nil
     }
 
+    /// Whether `path` is one of this tab's checkouts.
+    func contains(checkoutPath path: String) -> Bool {
+        repoPath == path || activeCheckoutPath == path
+    }
+
+    /// Points this tab at another checkout of the same repository. Branches, tags, stashes and
+    /// the graph are shared, so only the working state, the watchers and the selection change.
+    func switchCheckout(to path: String) {
+        guard !isBusy, path != activeCheckoutPath else { return }
+        let next: RepoSession
+        do {
+            next = try RepoSession(path: path)
+        } catch {
+            errorMessage = error.displayMessage
+            return
+        }
+        watcherTask?.cancel()
+        autoFetchTask?.cancel()
+        session = next
+        activeCheckoutPath = path
+        selectedCommit = nil
+        commitDetail = nil
+        diffRows = []
+        selectedFilePath = nil
+        selectedFileStaged = false
+        startWatcher()
+        refresh()
+        onCheckoutChanged?()
+    }
+
+    func lockWorktree(_ path: String) {
+        performMutation { session in
+            try session.lockWorktree(path: path, reason: nil)
+        }
+    }
+
+    func unlockWorktree(_ path: String) {
+        performMutation { session in
+            try session.unlockWorktree(path: path)
+        }
+    }
+
+    func pruneWorktrees() {
+        performMutation { session in
+            try session.pruneWorktrees()
+        }
+    }
+
     func toggleScopeToCurrentBranch() {
         scopeToCurrentBranch.toggle()
         updateSearch(searchQuery)  // reload the graph from the top with the new scope
@@ -411,16 +473,18 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let tagsTask = Task.detached { try session.listTags() }.value
                 async let stashesTask = Task.detached { try session.listStashes() }.value
                 async let remotesTask = Task.detached { try session.listRemotes() }.value
+                async let worktreesTask = Task.detached { try session.listWorktrees() }.value
                 async let graphTask = Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
                 }.value
 
-                let (status, branchList, tagList, stashList, remoteList, graphRows) = try await (
+                let (status, branchList, tagList, stashList, remoteList, worktreeList, graphRows) = try await (
                     statusTask,
                     branchesTask,
                     tagsTask,
                     stashesTask,
                     remotesTask,
+                    worktreesTask,
                     graphTask
                 )
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
@@ -434,6 +498,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
+                worktrees = worktreeList
                 graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()

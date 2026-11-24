@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var tab: RepoTab
     // Remembered across launches (shared by every repository window).
     @AppStorage("sidebar.localBranchesExpanded") private var isLocalBranchesExpanded = true
+    @AppStorage("sidebar.worktreesExpanded") private var isWorktreesExpanded = true
     @AppStorage("sidebar.remotesExpanded") private var isRemotesExpanded = false
     @AppStorage("sidebar.tagsExpanded") private var isTagsExpanded = false
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
@@ -78,7 +80,24 @@ struct SidebarView: View {
             }
 
             do {
-                Section(isExpanded: $isRemotesExpanded) {
+                Section(isExpanded: $isWorktreesExpanded) {
+                if isWorktreesExpanded {
+                    ForEach(tab.worktrees, id: \.path) { worktree in
+                        WorktreeRowView(tab: tab, worktree: worktree)
+                    }
+                }
+            } header: {
+                SectionHeaderLabel(title: "WORKTREES") {
+                    [.item(
+                        "Prune Stale Worktrees",
+                        enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
+                    ) {
+                        tab.pruneWorktrees()
+                    }]
+                }
+            }
+
+            Section(isExpanded: $isRemotesExpanded) {
                     if isRemotesExpanded {
                         if tab.remotes.isEmpty {
                             Text("No remotes")
@@ -358,6 +377,117 @@ private struct BranchFolderRowView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             onToggle()
+        }
+    }
+}
+
+/// One checkout of the repository. A tap scrolls the graph to its HEAD and a double-tap
+/// switches the tab to it, matching branch rows. The menu holds the checkout actions.
+private struct WorktreeRowView: View {
+    @ObservedObject var tab: RepoTab
+    let worktree: WorktreeInfo
+
+    private var isActive: Bool {
+        tab.activeCheckoutPath == worktree.path
+    }
+
+    private var title: String {
+        worktree.branch ?? "detached at \(worktree.headOidHex.prefix(7))"
+    }
+
+    private var subtitle: String {
+        worktree.isMain ? "main checkout" : URL(fileURLWithPath: worktree.path).lastPathComponent
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .folder)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .center)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            if worktree.isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help(worktree.lockReason.map { "Locked: \($0)" } ?? "Locked")
+            }
+            if worktree.isPrunable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help("The folder is missing. Prune Stale Worktrees to forget it.")
+            }
+            if worktree.dirtyCount > 0 {
+                Text("\(worktree.dirtyCount)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(Capsule())
+                    .help("Changed files in this checkout")
+            }
+            if isActive {
+                Text("CURRENT")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.2))
+                    .clipShape(Capsule())
+            }
+        }
+        .contentShape(Rectangle())
+        // Single tap must fire immediately, as on branch rows (see LocalBranchRowView).
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: worktree.headOidHex)
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                tab.switchCheckout(to: worktree.path)
+            }
+        )
+        .contextMenu {
+            if !isActive {
+                Button("Switch to Worktree") {
+                    tab.switchCheckout(to: worktree.path)
+                }
+                .disabled(tab.isBusy || worktree.isPrunable)
+            }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree.path)])
+            }
+            .disabled(worktree.isPrunable)
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(worktree.path, forType: .string)
+            }
+            if !worktree.isMain {
+                Divider()
+                if worktree.isLocked {
+                    Button("Unlock Worktree") {
+                        tab.unlockWorktree(worktree.path)
+                    }
+                    .disabled(tab.isBusy)
+                } else {
+                    Button("Lock Worktree") {
+                        tab.lockWorktree(worktree.path)
+                    }
+                    .disabled(tab.isBusy || worktree.isPrunable)
+                }
+            }
         }
     }
 }
