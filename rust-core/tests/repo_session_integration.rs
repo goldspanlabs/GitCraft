@@ -303,6 +303,8 @@ fn branch_merged_into_origin_default_is_flagged() {
     fs::write(clone.join("w.txt"), "w\n").unwrap();
     run_git(&clone, &["add", "."]);
     run_git(&clone, &["commit", "-m", "wip"]);
+    // Detach HEAD so neither `wip` nor `main` is skipped by the is_head guard.
+    run_git(&clone, &["checkout", "--detach"]);
 
     let session = RepoSession::new(clone.to_string_lossy().into_owned()).unwrap();
     let branches = session.list_branches().unwrap();

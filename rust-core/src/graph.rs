@@ -533,8 +533,8 @@ pub fn list_branches(
         // The default branch itself is trivially "merged"; don't flag it.
         let is_default_branch = base_ref
             .as_deref()
-            .and_then(|r| r.rsplit_once('/'))
-            .is_some_and(|(_, base_name)| base_name == name);
+            .and_then(|r| r.strip_prefix("refs/remotes/origin/"))
+            .is_some_and(|base_name| base_name == name);
         let is_merged = !is_head
             && !is_default_branch
             && !is_untouched_new_branch(&repo, &full_ref)
