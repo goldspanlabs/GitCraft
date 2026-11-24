@@ -76,7 +76,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         super.init(window: window)
         window.delegate = self
-        window.tab.accessoryView = dot
+        window.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
 
         let toolbar = NSToolbar(identifier: "GitCraft.repoToolbar")
         toolbar.delegate = self
@@ -98,7 +98,8 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func refreshChrome() {
         window?.title = tab.name
         window?.subtitle = tab.currentBranch
-        dot.isDirty = tab.totalChangesCount > 0
+        dot.isDirty = true
+        window?.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
         window?.tab.toolTip = tab.totalChangesCount > 0
             ? "\(tab.name): \(tab.totalChangesCount) uncommitted changes"
             : "\(tab.name): clean"
@@ -209,7 +210,8 @@ private struct WelcomeWindowContent: View {
     }
 }
 
-/// Small coloured circle shown inside the tab: orange with uncommitted changes, green when clean.
+/// Small orange circle shown inside the tab while the repository has uncommitted changes.
+/// It is removed from the tab entirely when the working tree is clean.
 final class TabStatusDot: NSView {
     var isDirty = false {
         didSet { if isDirty != oldValue { needsDisplay = true } }
@@ -218,7 +220,7 @@ final class TabStatusDot: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: 10, height: 10) }
 
     override func draw(_ dirtyRect: NSRect) {
-        (isDirty ? NSColor.systemOrange : NSColor.systemGreen).setFill()
+        NSColor.systemOrange.setFill()
         NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 6, height: 6)).fill()
     }
 }
