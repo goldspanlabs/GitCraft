@@ -6,6 +6,8 @@ struct SettingsView: View {
     @AppStorage(AppearancePreference.storageKey)
     private var appearanceRaw = AppearancePreference.system.rawValue
 
+    @AppStorage(showAvatarsStorageKey) private var showAvatars = true
+
     private var appearance: AppearancePreference {
         AppearancePreference(rawValue: appearanceRaw) ?? .system
     }
@@ -35,6 +37,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Text("General")
+            }
+
+            Section {
+                Toggle("Show author avatars", isOn: $showAvatars)
+                Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address. When off, nothing is sent and initials are shown instead.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Commits")
             }
         }
         .formStyle(.grouped)

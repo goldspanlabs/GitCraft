@@ -297,7 +297,10 @@ private struct CommitInspectorView: View {
             }
 
             HStack(spacing: 12) {
-                Label(commit.authorName, systemImage: "person.circle")
+                HStack(spacing: 5) {
+                    AvatarView(name: commit.authorName, email: tab.commitDetail?.authorEmail ?? "", size: 16)
+                    Text(commit.authorName)
+                }
                 Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(commit.timestamp))))
                 if let parents = tab.commitDetail?.parentOids, !parents.isEmpty {
                     Text("Parents: \(parents.map { String($0.prefix(7)) }.joined(separator: ", "))")
@@ -372,19 +375,22 @@ private struct CommitMessagePane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AUTHOR")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(commit.authorName).font(.title3.weight(.medium))
-                        if let email = tab.commitDetail?.authorEmail, !email.isEmpty {
-                            Text(email).font(.callout).foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 12) {
+                    AvatarView(name: commit.authorName, email: tab.commitDetail?.authorEmail ?? "", size: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AUTHOR")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(commit.authorName).font(.title3.weight(.medium))
+                            if let email = tab.commitDetail?.authorEmail, !email.isEmpty {
+                                Text(email).font(.callout).foregroundStyle(.secondary)
+                            }
                         }
+                        Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(commit.timestamp))))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(commit.timestamp))))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
 
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
