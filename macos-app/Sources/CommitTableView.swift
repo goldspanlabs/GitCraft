@@ -501,7 +501,8 @@ final class CommitRowCellView: NSTableCellView {
     ) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
-        graphView.alphaValue = commit.isRemoteOnly ? 0.65 : 1.0
+        // Remote-only rows dim their text, not the graph lines.
+        graphView.alphaValue = 1.0
         graphView.configure(
             commit: commit,
             hasIncomingLine: hasIncomingLine,
