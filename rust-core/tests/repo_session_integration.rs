@@ -435,3 +435,151 @@ fn merge_conflict_detection_and_abort_merge() {
     assert!(!after.has_conflicts);
     assert!(after.is_clean);
 }
+
+fn commit_file(dir: &Path, file: &str, msg: &str) {
+    fs::write(dir.join(file), format!("{msg}\n")).unwrap();
+    run_git(dir, &["add", file]);
+    run_git(dir, &["commit", "-m", msg]);
+}
+
+fn summaries(rows: &[gitcraft_core::CommitRow]) -> Vec<String> {
+    let mut v: Vec<String> = rows.iter().map(|r| r.summary.clone()).collect();
+    v.sort();
+    v
+}
+
+/// main: c1 - c2 - c3(fork) - m1 - m2
+/// feature (from c3): f1 - f2
+/// other (from c2): x1
+fn setup_branch_scope_repo(root: &Path) {
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+    commit_file(root, "c1.txt", "c1");
+    commit_file(root, "c2.txt", "c2");
+    run_git(root, &["branch", "other"]);
+    commit_file(root, "c3.txt", "c3");
+    run_git(root, &["checkout", "-b", "feature"]);
+    commit_file(root, "f1.txt", "f1");
+    commit_file(root, "f2.txt", "f2");
+    run_git(root, &["checkout", "main"]);
+    commit_file(root, "m1.txt", "m1");
+    commit_file(root, "m2.txt", "m2");
+    run_git(root, &["checkout", "other"]);
+    commit_file(root, "x1.txt", "x1");
+    run_git(root, &["checkout", "feature"]);
+}
+
+#[test]
+fn branch_graph_shows_current_branch_base_since_fork_and_fork_commit_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    setup_branch_scope_repo(root);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+
+    let scoped = session.get_branch_graph(0, 100, None).unwrap();
+    assert_eq!(
+        summaries(&scoped),
+        vec!["c3", "f1", "f2", "m1", "m2"],
+        "feature + main since fork + fork commit; no older history or other branches"
+    );
+
+    // Full graph is unchanged and still includes everything.
+    let full = session.get_commit_graph(0, 100, None).unwrap();
+    assert_eq!(full.len(), 8);
+    assert!(full.iter().any(|r| r.summary == "x1"));
+    assert!(full.iter().any(|r| r.summary == "c1"));
+}
+
+#[test]
+fn branch_graph_keeps_ref_badges_and_supports_search_and_paging() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    setup_branch_scope_repo(root);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+
+    let scoped = session.get_branch_graph(0, 100, None).unwrap();
+    let f2 = scoped.iter().find(|r| r.summary == "f2").unwrap();
+    assert!(f2.refs.iter().any(|b| b.name == "feature" && b.is_current));
+    let m2 = scoped.iter().find(|r| r.summary == "m2").unwrap();
+    assert!(m2.refs.iter().any(|b| b.name == "main"));
+
+    let hits = session.get_branch_graph(0, 100, Some("m1".into())).unwrap();
+    assert_eq!(summaries(&hits), vec!["m1"]);
+    // Search must not reach outside the scope.
+    assert!(session
+        .get_branch_graph(0, 100, Some("x1".into()))
+        .unwrap()
+        .is_empty());
+
+    let page1 = session.get_branch_graph(0, 2, None).unwrap();
+    let page2 = session.get_branch_graph(2, 2, None).unwrap();
+    let page3 = session.get_branch_graph(4, 2, None).unwrap();
+    assert_eq!((page1.len(), page2.len(), page3.len()), (2, 2, 1));
+    let mut all: Vec<_> = page1.iter().chain(&page2).chain(&page3).collect();
+    all.dedup_by_key(|r| r.oid_hex.clone());
+    assert_eq!(all.len(), 5);
+}
+
+#[test]
+fn branch_graph_falls_back_to_full_graph_on_default_branch_detached_head_or_no_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    setup_branch_scope_repo(root);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+
+    run_git(root, &["checkout", "main"]);
+    assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
+
+    run_git(root, &["checkout", "--detach", "feature"]);
+    assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
+
+    // No default branch at all (only an unrelated name): full graph.
+    run_git(root, &["checkout", "feature"]);
+    run_git(root, &["branch", "-m", "main", "trunk"]);
+    assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
+}
+
+#[test]
+fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
+    // Branch already merged into main (fast-forward): scope is the branch tip
+    // plus whatever main has added since.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+    commit_file(root, "a.txt", "a");
+    run_git(root, &["checkout", "-b", "merged"]);
+    commit_file(root, "b.txt", "b");
+    run_git(root, &["checkout", "main"]);
+    run_git(root, &["merge", "--ff-only", "merged"]);
+    commit_file(root, "c.txt", "c");
+    run_git(root, &["checkout", "merged"]);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(
+        summaries(&session.get_branch_graph(0, 100, None).unwrap()),
+        vec!["b", "c"]
+    );
+
+    // Base resolved from origin/HEAD even though it is not named main/master,
+    // and the fork commit is a root commit (no parents to hide).
+    let remote = tempfile::tempdir().unwrap();
+    run_git(remote.path(), &["init", "--bare", "-b", "trunk"]);
+    let work = tempfile::tempdir().unwrap();
+    let w = work.path();
+    run_git(w, &["init", "-b", "trunk"]);
+    configure_git_identity(w);
+    run_git(w, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    commit_file(w, "r.txt", "root");
+    run_git(w, &["push", "-u", "origin", "trunk"]);
+    run_git(w, &["remote", "set-head", "origin", "trunk"]);
+    run_git(w, &["checkout", "-b", "topic"]);
+    commit_file(w, "t.txt", "t1");
+    run_git(w, &["checkout", "trunk"]);
+    commit_file(w, "u.txt", "u1");
+    run_git(w, &["checkout", "topic"]);
+    let session = RepoSession::new(w.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(
+        summaries(&session.get_branch_graph(0, 100, None).unwrap()),
+        vec!["root", "t1", "u1"]
+    );
+}

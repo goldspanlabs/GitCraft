@@ -193,6 +193,9 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
+    /// When true (default), the graph shows only the checked-out branch and the base branch,
+    /// from their fork point. When false, it shows every branch.
+    @Published private(set) var scopeToCurrentBranch = true
 
     var totalChangesCount: Int {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count
@@ -245,12 +248,31 @@ final class RepoTab: ObservableObject, Identifiable {
         watcherTask = nil
     }
 
+    func toggleScopeToCurrentBranch() {
+        scopeToCurrentBranch.toggle()
+        updateSearch(searchQuery)  // reload the graph from the top with the new scope
+    }
+
+    private nonisolated static func graphPage(
+        _ session: RepoSession,
+        scoped: Bool,
+        offset: UInt32,
+        limit: UInt32,
+        query: String?
+    ) throws -> [CommitRow] {
+        if scoped {
+            return try session.getBranchGraph(offset: offset, limit: limit, searchQuery: query)
+        }
+        return try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
+    }
+
     func refresh() {
         let session = self.session
         let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? nil
             : searchQuery
         let limit = pageSize
+        let scoped = scopeToCurrentBranch
 
         Task {
             do {
@@ -259,7 +281,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let tagsTask = Task.detached { try session.listTags() }.value
                 async let stashesTask = Task.detached { try session.listStashes() }.value
                 async let graphTask = Task.detached {
-                    try session.getCommitGraph(offset: 0, limit: limit, searchQuery: query)
+                    try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
                 }.value
 
                 let (status, branchList, tagList, stashList, graphRows) = try await (
@@ -301,12 +323,13 @@ final class RepoTab: ObservableObject, Identifiable {
             ? nil
             : searchQuery
         let generation = graphGeneration
+        let scoped = scopeToCurrentBranch
 
         Task {
             defer { isLoadingMore = false }
             do {
                 let nextPage = try await Task.detached {
-                    try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
+                    try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
                 }.value
                 // The list was replaced while we fetched; this page belongs to the old one.
                 guard generation == graphGeneration else { return }
@@ -329,12 +352,13 @@ final class RepoTab: ObservableObject, Identifiable {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let q: String? = trimmed.isEmpty ? nil : trimmed
         let limit = pageSize
+        let scoped = scopeToCurrentBranch
 
         Task {
             defer { pendingSearchReplacements -= 1 }
             do {
                 let graphRows = try await Task.detached {
-                    try session.getCommitGraph(offset: 0, limit: limit, searchQuery: q)
+                    try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: q)
                 }.value
                 graphGeneration += 1
                 commits = graphRows
@@ -392,9 +416,10 @@ final class RepoTab: ObservableObject, Identifiable {
                 ? nil
                 : searchQuery
             let generation = graphGeneration
+            let scoped = scopeToCurrentBranch
             do {
                 let nextPage = try await Task.detached {
-                    try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
+                    try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
                 }.value
                 if Task.isCancelled { return }
                 // Stale page (list replaced mid-fetch): drop it and look again.

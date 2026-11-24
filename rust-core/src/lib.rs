@@ -265,6 +265,15 @@ impl RepoSession {
         graph::get_commit_graph(&self.sync_repo, offset, limit, search_query)
     }
 
+    pub fn get_branch_graph(
+        &self,
+        offset: u32,
+        limit: u32,
+        search_query: Option<String>,
+    ) -> Result<Vec<CommitRow>, GitCraftError> {
+        graph::get_branch_graph(&self.sync_repo, offset, limit, search_query)
+    }
+
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
         graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
     }
