@@ -3,10 +3,12 @@ import Foundation
 /// A throwaway repository on `main` with one commit. Optionally it carries a staged change, so
 /// the commit composer has something to commit.
 struct FixtureRepository {
+    static let linkedBranch = "feature/ui"
+
     let root: URL
     let mainPath: String
 
-    static func make(stagedChange: Bool = false) throws -> FixtureRepository {
+    static func make(stagedChange: Bool = false, linkedWorktree: Bool = false) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
         let main = root.appendingPathComponent("repo", isDirectory: true)
@@ -19,6 +21,11 @@ struct FixtureRepository {
         try "hello\n".write(to: readme, atomically: true, encoding: .utf8)
         try git(["add", "README.md"], in: main)
         try git(["commit", "-m", "initial"], in: main)
+
+        if linkedWorktree {
+            let linked = root.appendingPathComponent("repo-ui", isDirectory: true)
+            try git(["worktree", "add", "-b", linkedBranch, linked.path], in: main)
+        }
 
         if stagedChange {
             try "hello, staged\n".write(to: readme, atomically: true, encoding: .utf8)
