@@ -260,7 +260,7 @@ struct SidebarView: View {
     }
 }
 
-private struct FlatBranchRow: Identifiable {
+struct FlatBranchRow: Identifiable {
     enum Kind {
         case folder(name: String, folderID: String, isExpanded: Bool)
         case branch(branch: BranchInfo, leafName: String)
@@ -271,7 +271,7 @@ private struct FlatBranchRow: Identifiable {
     let kind: Kind
 }
 
-private final class BranchTreeNode {
+final class BranchTreeNode {
     let name: String
     let pathID: String
     var branch: BranchInfo?

@@ -589,3 +589,29 @@ fn status_lists_same_file_as_staged_and_unstaged() {
     assert!(status.unstaged_files.iter().any(|f| f.path == "a.txt"));
     assert!(!status.is_clean);
 }
+
+// ---------------------------------------------------------------- watching ---
+
+#[test]
+fn watch_sends_event_when_worktree_changes() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    session.watch(tx).unwrap();
+
+    // Keep editing until the watcher has registered and reports a change, so
+    // the test does not depend on a fixed startup delay.
+    let mut received = false;
+    for i in 0..50 {
+        write(dir.path(), "a.txt", &format!("change {i}\n"));
+        if rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_ok()
+        {
+            received = true;
+            break;
+        }
+    }
+    assert!(received, "watch() never reported a worktree change");
+}

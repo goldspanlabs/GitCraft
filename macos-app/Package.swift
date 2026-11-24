@@ -14,6 +14,11 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedLibrary("gitcraft_core", .when(platforms: [.macOS])),
             ]
-        )
+        ),
+        .testTarget(
+            name: "GitCraftTests",
+            dependencies: ["GitCraft"],
+            path: "Tests/GitCraftTests"
+        ),
     ]
 )
