@@ -174,13 +174,21 @@ final class DiffRowCellView: NSTableCellView {
         // Layer background and highlight colors are resolved to concrete CGColors
         // in `configure`, so re-run it under the new appearance.
         guard let row else { return }
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.configure(row: row)
+        configure(row: row)
+    }
+
+    /// Resolves all dynamic colors under this cell's own effective appearance, so the
+    /// result is correct whether called from cell reuse or an appearance change.
+    func configure(row: DiffRow) {
+        self.row = row
+        let appearance = effectiveAppearance
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        appearance.performAsCurrentDrawingAppearance {
+            self.applyConfiguration(row: row, isDark: isDark)
         }
     }
 
-    func configure(row: DiffRow) {
-        self.row = row
+    private func applyConfiguration(row: DiffRow, isDark: Bool) {
         oldLineLabel.stringValue = row.oldLine.map(String.init) ?? ""
         newLineLabel.stringValue = row.newLine.map(String.init) ?? ""
 
@@ -220,7 +228,7 @@ final class DiffRowCellView: NSTableCellView {
             for span in row.spans {
                 let start = Int(span.startUtf16)
                 let len = Int(span.lenUtf16)
-                if start >= 0 && start + len <= utf16Len, let color = NSColor(hex: span.foreground) {
+                if start >= 0 && start + len <= utf16Len, let color = NSColor(hex: span.foreground, isDark: isDark) {
                     attr.addAttribute(.foregroundColor, value: color, range: NSRange(location: start, length: len))
                 }
             }
@@ -230,7 +238,7 @@ final class DiffRowCellView: NSTableCellView {
 }
 
 private extension NSColor {
-    convenience init?(hex: String) {
+    convenience init?(hex: String, isDark: Bool) {
         var cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.hasPrefix("#") {
             cleaned.removeFirst()
@@ -241,7 +249,6 @@ private extension NSColor {
         var b = CGFloat(rgb & 0xFF) / 255.0
 
         // base16-ocean.dark tokens are light pastels; darken them in Light Mode for crisp contrast.
-        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         if !isDark {
             let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
             if luminance > 0.55 {

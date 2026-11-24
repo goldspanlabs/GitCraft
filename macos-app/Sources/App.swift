@@ -63,10 +63,9 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(appearance.colorScheme)
+        // Applies the saved appearance at launch. Changes made in Settings are applied
+        // by `SettingsView` itself, so this still works if the main window is closed.
         .onAppear {
-            AppearancePreference.apply(appearance)
-        }
-        .onChange(of: appearanceRaw) { _ in
             AppearancePreference.apply(appearance)
         }
     }

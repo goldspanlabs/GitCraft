@@ -39,11 +39,6 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
         }
     }
 
-    static var stored: AppearancePreference {
-        let raw = UserDefaults.standard.string(forKey: storageKey) ?? ""
-        return AppearancePreference(rawValue: raw) ?? .system
-    }
-
     @MainActor
     static func apply(_ preference: AppearancePreference) {
         NSApp.appearance = preference.nsAppearance
