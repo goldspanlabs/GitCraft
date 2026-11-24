@@ -839,3 +839,54 @@ fn commit_detail_and_diff_handle_non_ascii_paths() {
         .unwrap();
     assert!(diff.iter().any(|r| r.text.contains("hello")));
 }
+
+#[test]
+fn option_like_names_are_rejected() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    assert!(session
+        .create_branch("--force".into(), None, false)
+        .is_err());
+    assert!(session
+        .create_branch("ok".into(), Some("-x".into()), false)
+        .is_err());
+    assert!(session.create_tag("-d".into(), None, None, false).is_err());
+    assert!(session.checkout_branch("--detach".into()).is_err());
+    assert!(session.merge_branch("--abort".into()).is_err());
+    assert!(session.delete_branch("-D".into(), true).is_err());
+    assert!(session.delete_tag("-a".into(), false).is_err());
+}
+
+#[test]
+fn checkout_prefers_the_branch_over_a_same_named_file() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["branch", "a.txt"]);
+    write(dir.path(), "a.txt", "dirty\n");
+    let session = open(dir.path());
+    session.checkout_branch("a.txt".into()).unwrap();
+    // The branch was checked out; the file's local edit was carried over, not reverted.
+    assert_eq!(
+        run_git(dir.path(), &["branch", "--show-current"]).trim(),
+        "a.txt"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "dirty\n"
+    );
+}
+
+#[test]
+fn unstage_does_not_stage_a_deletion_when_reset_fails() {
+    let dir = init_repo_with_commit();
+    write(dir.path(), "a.txt", "changed\n");
+    run_git(dir.path(), &["add", "a.txt"]);
+    let session = open(dir.path());
+    // Make the index unwritable so `git reset` fails.
+    fs::write(dir.path().join(".git/index.lock"), "").unwrap();
+    assert!(session.unstage("a.txt".into()).is_err());
+    fs::remove_file(dir.path().join(".git/index.lock")).unwrap();
+    // The file must still be tracked and merely modified, not staged for deletion.
+    let status = session.status().unwrap();
+    assert!(status.staged_files.iter().all(|f| f.status != "D"));
+    assert_eq!(status.staged_files.len(), 1);
+}

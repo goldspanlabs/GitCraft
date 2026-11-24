@@ -344,6 +344,8 @@ impl RepoSession {
         if trimmed_name.is_empty() {
             return Err(GitCraftError::message("tag name cannot be empty"));
         }
+        validate_ref_arg(trimmed_name)?;
+        let target = target.as_deref().map(validate_ref_arg).transpose()?;
 
         let trimmed_msg = message
             .as_deref()
@@ -378,6 +380,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let tag_name = validate_ref_arg(&tag_name)?;
         git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
         if delete_remote {
             let remote = resolve_default_remote(&self.path);
@@ -392,6 +395,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let tag_name = validate_ref_arg(&tag_name)?;
         let remote = resolve_default_remote(&self.path);
         let refspec = format!("refs/tags/{tag_name}");
         git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
@@ -566,7 +570,8 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["checkout", &branch_name])?;
+        let branch_name = validate_ref_arg(&branch_name)?;
+        git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])?;
         Ok(())
     }
 
@@ -580,6 +585,8 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let branch_name = validate_ref_arg(&branch_name)?;
+        let start_point = start_point.as_deref().map(validate_ref_arg).transpose()?;
         let mut args = if checkout {
             vec!["checkout", "-b", &branch_name]
         } else {
@@ -597,6 +604,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let branch_name = validate_ref_arg(&branch_name)?;
         let flag = if force { "-D" } else { "-d" };
         git_cli::mutate(&self.path, &["branch", flag, &branch_name])?;
         Ok(())
@@ -607,6 +615,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let branch_name = validate_ref_arg(&branch_name)?;
         git_cli::mutate(&self.path, &["merge", &branch_name])?;
         Ok(())
     }
@@ -638,7 +647,10 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        if git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path]).is_err() {
+        if has_head(&self.path) {
+            git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path])?;
+        } else {
+            // No commits yet: there is no HEAD to reset to, so drop the entry from the index.
             git_cli::mutate(&self.path, &["rm", "--cached", "--", &path])?;
         }
         Ok(())
@@ -658,7 +670,9 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        if git_cli::mutate(&self.path, &["reset", "HEAD"]).is_err() {
+        if has_head(&self.path) {
+            git_cli::mutate(&self.path, &["reset", "HEAD"])?;
+        } else {
             git_cli::mutate(&self.path, &["rm", "--cached", "-r", "--", "."])?;
         }
         Ok(())
@@ -794,6 +808,26 @@ fn ignore_rule(path: &str) -> String {
         rule.push_str("\\ ");
     }
     rule
+}
+
+/// True when HEAD resolves to a commit (false in a repository with no commits yet).
+fn has_head(repo: &std::path::Path) -> bool {
+    git_cli::run(repo, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok()
+}
+
+/// Trims a branch/tag/revision argument and rejects empty values or ones git would
+/// parse as command-line options (e.g. a branch named `--force`).
+fn validate_ref_arg(value: &str) -> Result<String, GitCraftError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(GitCraftError::message("name must not be empty"));
+    }
+    if value.starts_with('-') {
+        return Err(GitCraftError::message(format!(
+            "invalid name \"{value}\": it must not start with \"-\""
+        )));
+    }
+    Ok(value.to_owned())
 }
 
 /// Trims a remote name/URL and rejects empty values or ones git would parse as options.
