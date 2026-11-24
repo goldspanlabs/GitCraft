@@ -778,7 +778,12 @@ impl RepoSession {
         let commit = validate_ref_arg(&commit)?;
         // `git merge` quietly does nothing (and exits 0) when the commit is already
         // reachable from HEAD; say so instead of looking like the click was ignored.
-        if git_cli::run(&self.path, &["merge-base", "--is-ancestor", &commit, "HEAD"]).is_ok() {
+        if git_cli::run(
+            &self.path,
+            &["merge-base", "--is-ancestor", &commit, "HEAD"],
+        )
+        .is_ok()
+        {
             let short: String = commit.chars().take(7).collect();
             return Err(GitCraftError::warning(format!(
                 "{short} is already in the current branch's history, so there is nothing to merge"
@@ -801,7 +806,13 @@ impl RepoSession {
     pub fn merge_has_conflicts(&self, commit: String) -> Result<bool, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
         let out = std::process::Command::new("git")
-            .args(["merge-tree", "--write-tree", "--name-only", "HEAD", commit.as_str()])
+            .args([
+                "merge-tree",
+                "--write-tree",
+                "--name-only",
+                "HEAD",
+                commit.as_str(),
+            ])
             .current_dir(&self.path)
             .output()
             .map_err(|e| GitCraftError::message(e.to_string()))?;

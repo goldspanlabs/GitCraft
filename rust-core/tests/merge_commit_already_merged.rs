@@ -59,7 +59,8 @@ fn merging_a_commit_already_in_head_reports_an_error() {
             .merge_commit(f1.clone(), merge_type)
             .expect_err("already-merged commit must be an error");
         assert!(
-            err.to_string().contains("nothing to merge") || format!("{err:?}").contains("nothing to merge"),
+            err.to_string().contains("nothing to merge")
+                || format!("{err:?}").contains("nothing to merge"),
             "unexpected error: {err:?}"
         );
     }

@@ -98,12 +98,6 @@ struct RepoDetailView: View {
                 }
             }
 
-            if let error = tab.errorMessage {
-                ErrorBannerView(message: error) {
-                    tab.errorMessage = nil
-                }
-            }
-
             if tab.isRebasing {
                 OperationBanner(
                     title: tab.hasConflicts
@@ -167,16 +161,26 @@ struct RepoDetailView: View {
                     }
                 }
                 .overlay(alignment: .top) {
-                    if let toast = tab.toast {
-                        ToastView(message: toast.message) {
-                            tab.toast = nil
+                    VStack(spacing: 6) {
+                        if let error = tab.errorMessage {
+                            ToastView(message: error, tint: .red) {
+                                tab.errorMessage = nil
+                            }
+                            .id(error)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
-                        .id(toast.id)
-                        .padding(.top, 10)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        if let toast = tab.toast {
+                            ToastView(message: toast.message, autoDismissAfter: 4) {
+                                tab.toast = nil
+                            }
+                            .id(toast.id)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                     }
+                    .padding(.top, 10)
                 }
                 .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
+                .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
             } bottom: {
                 InspectorView(tab: tab)
             }
@@ -354,17 +358,30 @@ private struct OperationBanner: View {
 /// few seconds, or when the user closes it.
 struct ToastView: View {
     let message: String
+    var tint: Color = .yellow
+    /// Clears the toast by itself after this many seconds; nil keeps it until closed.
+    var autoDismissAfter: Double?
     let onDismiss: () -> Void
+    @State private var showingDetails = false
+
+    private var parts: ErrorSummary { ErrorSummary(message) }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-            Text(message)
+                .foregroundStyle(tint)
+            Text(parts.summary)
                 .font(.caption)
                 .foregroundStyle(.primary)
+                .lineLimit(2)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if parts.hasDetails {
+                Button("Show Details…") { showingDetails = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.caption2.bold())
@@ -374,17 +391,21 @@ struct ToastView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .frame(maxWidth: 520)
-        // Solid, like the error banner's tint, so it reads as part of the window.
+        .frame(maxWidth: 560)
+        // Solid window colour with a light tint, so the toast reads as part of the window.
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color(nsColor: .windowBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 6).fill(Color.yellow.opacity(0.14)))
+                .overlay(RoundedRectangle(cornerRadius: 6).fill(tint.opacity(0.14)))
         )
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1)))
         .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-        .task {
-            try? await Task.sleep(for: .seconds(4))
+        .sheet(isPresented: $showingDetails) {
+            ErrorDetailsSheet(text: parts.full)
+        }
+        .task(id: autoDismissAfter) {
+            guard let autoDismissAfter else { return }
+            try? await Task.sleep(for: .seconds(autoDismissAfter))
             onDismiss()
         }
     }
