@@ -569,6 +569,46 @@ impl RepoSession {
         Ok(())
     }
 
+    /// Adds `path` to `.gitignore` (shared) or `.git/info/exclude` (local only).
+    /// The rule is anchored to the repo root; duplicates are not re-added.
+    pub fn ignore_path(&self, path: String, local_only: bool) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let target = if local_only {
+            let out = git_cli::run(&self.path, &["rev-parse", "--git-path", "info/exclude"])?;
+            let p = PathBuf::from(out.trim());
+            if p.is_absolute() {
+                p
+            } else {
+                self.path.join(p)
+            }
+        } else {
+            self.path.join(".gitignore")
+        };
+        let rule = ignore_rule(&path);
+        let existing = match std::fs::read_to_string(&target) {
+            Ok(text) => text,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        };
+        if existing.lines().any(|l| l.trim_end() == rule) {
+            return Ok(());
+        }
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut updated = existing;
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(&rule);
+        updated.push('\n');
+        std::fs::write(&target, updated)?;
+        Ok(())
+    }
+
     pub fn commit(&self, message: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
@@ -627,4 +667,24 @@ fn resolve_default_remote(repo: &std::path::Path) -> String {
         }
     }
     "origin".to_owned()
+}
+
+/// Builds a root-anchored gitignore pattern for a literal path.
+fn ignore_rule(path: &str) -> String {
+    let trimmed = path.trim_start_matches("./").trim_start_matches('/');
+    let mut rule = String::from("/");
+    for (i, c) in trimmed.chars().enumerate() {
+        let needs_escape = matches!(c, '*' | '?' | '[' | '\\')
+            || (i == 0 && matches!(c, '#' | '!'));
+        if needs_escape {
+            rule.push('\\');
+        }
+        rule.push(c);
+    }
+    // Trailing spaces are significant only when escaped.
+    if rule.ends_with(' ') {
+        rule.pop();
+        rule.push_str("\\ ");
+    }
+    rule
 }

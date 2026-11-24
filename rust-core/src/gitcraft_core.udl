@@ -190,6 +190,9 @@ interface RepoSession {
   void discard_file(string path);
 
   [Throws=GitCraftError]
+  void ignore_path(string path, boolean local_only);
+
+  [Throws=GitCraftError]
   void commit(string message);
 
   [Throws=GitCraftError]

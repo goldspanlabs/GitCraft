@@ -91,6 +91,16 @@ private struct WorkingChangesInspectorView: View {
                                     )
                                     .contextMenu {
                                         Button("Stage File") { tab.stageFile(file.path) }
+                                        if file.status == "?" {
+                                            Divider()
+                                            Button("Add to .gitignore") {
+                                                tab.ignorePath(file.path, localOnly: false)
+                                            }
+                                            Button("Add to .git/info/exclude (local only)") {
+                                                tab.ignorePath(file.path, localOnly: true)
+                                            }
+                                            Divider()
+                                        }
                                         Button("Discard Changes…", role: .destructive) {
                                             tab.pendingConfirmation = .discardFile(path: file.path)
                                         }

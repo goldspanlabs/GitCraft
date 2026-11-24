@@ -603,6 +603,12 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    func ignorePath(_ path: String, localOnly: Bool) {
+        performMutation { session in
+            try session.ignorePath(path: path, localOnly: localOnly)
+        }
+    }
+
     func commitChanges() {
         let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }

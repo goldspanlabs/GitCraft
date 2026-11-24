@@ -613,3 +613,52 @@ fn untracked_file_with_glob_characters_is_not_mistaken_for_tracked_file() {
     );
     assert_eq!(rows.iter().filter(|r| r.kind == "addition").count(), 2);
 }
+
+// ----------------------------------------------------------------- ignore ---
+
+#[test]
+fn ignore_path_writes_gitignore_and_hides_file() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    write(dir.path(), "scratch.txt", "x\n");
+
+    session.ignore_path("scratch.txt".into(), false).unwrap();
+    // Idempotent: a second call must not duplicate the rule.
+    session.ignore_path("scratch.txt".into(), false).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "/scratch.txt\n"
+    );
+    let status = session.status().unwrap();
+    assert!(!status.unstaged_files.iter().any(|f| f.path == "scratch.txt"));
+}
+
+#[test]
+fn ignore_path_local_only_uses_info_exclude() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    fs::create_dir(dir.path().join("gen")).unwrap();
+    write(&dir.path().join("gen"), "out.swift", "x\n");
+
+    session.ignore_path("gen/".into(), true).unwrap();
+
+    assert!(!dir.path().join(".gitignore").exists());
+    let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+    assert!(exclude.lines().any(|l| l == "/gen/"));
+    assert!(session.status().unwrap().unstaged_files.is_empty());
+}
+
+#[test]
+fn ignore_path_appends_after_missing_trailing_newline() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    write(dir.path(), ".gitignore", "target");
+
+    session.ignore_path("#weird*.txt".into(), false).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "target\n/\\#weird\\*.txt\n"
+    );
+}
