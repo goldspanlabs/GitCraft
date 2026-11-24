@@ -315,15 +315,25 @@ private struct OperationBanner: View {
 struct ErrorBannerView: View {
     let message: String
     let onDismiss: () -> Void
+    @State private var showingDetails = false
+
+    private var parts: ErrorSummary { ErrorSummary(message) }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
-            Text(message)
+            Text(parts.summary)
                 .font(.caption)
-                .lineLimit(2)
-            Spacer()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(parts.hasDetails ? "Click Show Details for the full output" : "")
+            Spacer(minLength: 8)
+            if parts.hasDetails {
+                Button("Show Details…") { showingDetails = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.caption2.bold())
@@ -333,6 +343,48 @@ struct ErrorBannerView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.12))
+        .sheet(isPresented: $showingDetails) {
+            ErrorDetailsSheet(text: parts.full)
+        }
+    }
+}
+
+/// The full text of an error (for example a failing hook's output): scrollable,
+/// selectable, and copyable.
+private struct ErrorDetailsSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Details")
+                .font(.headline)
+            ScrollView([.vertical, .horizontal]) {
+                Text(text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor))
+            )
+
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 620, idealWidth: 720, minHeight: 320, idealHeight: 420)
     }
 }
 

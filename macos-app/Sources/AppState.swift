@@ -80,7 +80,7 @@ final class WorkspaceState: ObservableObject {
             controller.showInTabs()
             return true
         } catch {
-            openError = "Unable to open \(standardized.lastPathComponent): \(error.localizedDescription)"
+            openError = "Unable to open \(standardized.lastPathComponent): \(error.displayMessage)"
             return false
         }
     }
@@ -388,7 +388,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -443,7 +443,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -474,7 +474,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -500,7 +500,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -564,7 +564,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 limit = min(limit * 2, 64_000)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
                 return
             }
         }
@@ -656,7 +656,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = Self.displayRows(rows)
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -676,7 +676,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
                 if loadedDetailOid == oid { loadedDetailOid = nil }
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -701,7 +701,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = []
                     loadedDetailOid = nil
                 }
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
         }
     }
@@ -975,8 +975,50 @@ final class RepoTab: ObservableObject, Identifiable {
                 onSuccess?()
                 refresh()
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.displayMessage
             }
+        }
+    }
+}
+
+
+extension Error {
+    /// The text to show a person for an error. Errors from the Rust core wrap git's own
+    /// message in `GitCraftError.Message(msg:)`, whose default description is noisy.
+    var displayMessage: String {
+        if let error = self as? GitCraftError {
+            switch error {
+            case let .Message(msg):
+                return msg.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return localizedDescription
+    }
+}
+
+/// Splits an error message into a one-line summary for the banner and the full text for
+/// the details sheet.
+struct ErrorSummary: Equatable {
+    /// Banner text: the first non-empty line, cut to a readable length.
+    let summary: String
+    /// The whole message, shown in the details sheet.
+    let full: String
+    /// True when the banner can't show everything (several lines, or a long line).
+    let hasDetails: Bool
+
+    static let maxSummaryLength = 140
+
+    init(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
+        let first = lines.first ?? trimmed
+        full = trimmed
+        if first.count > Self.maxSummaryLength {
+            summary = String(first.prefix(Self.maxSummaryLength)) + "…"
+            hasDetails = true
+        } else {
+            summary = first
+            hasDetails = lines.count > 1
         }
     }
 }
