@@ -173,17 +173,16 @@ struct SidebarView: View {
                             .onTapGesture {
                                 tab.scrollToCommit(oidHex: tag.targetOidHex)
                             }
-                            .contextMenu {
-                                Button("Push \(tag.name) to origin") {
+                            .nativeContextMenu {
+                                [.item("Push \(tag.name) to origin") {
                                     tab.pushTag(tag.name)
-                                }
-                                Divider()
-                                Button("Delete \(tag.name) (Local)…", role: .destructive) {
+                                }, .separator,
+                                 .item("Delete \(tag.name) (Local)…") {
                                     tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: false)
-                                }
-                                Button("Delete \(tag.name) (Local & Remote)…", role: .destructive) {
+                                 },
+                                 .item("Delete \(tag.name) (Local & Remote)…") {
                                     tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: true)
-                                }
+                                 }]
                             }
                         }
                     }
@@ -221,17 +220,15 @@ struct SidebarView: View {
                                 Spacer()
                             }
                             .contentShape(Rectangle())
-                            .contextMenu {
-                                Button("Pop \(stash.name)") {
+                            .nativeContextMenu {
+                                [.item("Pop \(stash.name)") {
                                     tab.stashPop(stash.index)
-                                }
-                                Button("Apply \(stash.name)") {
+                                }, .item("Apply \(stash.name)") {
                                     tab.stashApply(stash.index)
-                                }
-                                Divider()
-                                Button("Drop \(stash.name)…", role: .destructive) {
+                                }, .separator,
+                                 .item("Drop \(stash.name)…") {
                                     tab.pendingConfirmation = .dropStash(index: stash.index, name: stash.name)
-                                }
+                                 }]
                             }
                         }
                     }
@@ -476,26 +473,30 @@ private struct LocalBranchRowView: View {
                 tab.checkoutBranch(branch.name)
             }
         )
-        .contextMenu {
-            if !branch.isHead {
-                Button("Checkout...") {
-                    tab.checkoutBranch(branch.name)
-                }
-                Button("Merge into '\(tab.currentBranch)'") {
-                    tab.mergeBranch(branch.name)
-                }
-            }
-            Button("New Branch...") {
-                tab.newBranchStartPoint = branch.name
-                tab.isShowingNewBranchSheet = true
-            }
-            if !branch.isHead {
-                Divider()
-                Button("Delete...", role: .destructive) {
-                    tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
-                }
-            }
+        .nativeContextMenu { menuEntries }
+    }
+
+    private var menuEntries: [HeaderMenuEntry] {
+        var entries: [HeaderMenuEntry] = []
+        if !branch.isHead {
+            entries.append(.item("Checkout...") {
+                tab.checkoutBranch(branch.name)
+            })
+            entries.append(.item("Merge into '\(tab.currentBranch)'") {
+                tab.mergeBranch(branch.name)
+            })
         }
+        entries.append(.item("New Branch...") {
+            tab.newBranchStartPoint = branch.name
+            tab.isShowingNewBranchSheet = true
+        })
+        if !branch.isHead {
+            entries.append(.separator)
+            entries.append(.item("Delete...") {
+                tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
+            })
+        }
+        return entries
     }
 }
 
@@ -529,19 +530,25 @@ private struct RemoteBranchRowView: View {
                 tab.checkoutBranch(branch.name)
             }
         )
-        .contextMenu {
-            Button("Checkout...") {
+        .nativeContextMenu {
+            [.item("Checkout...") {
                 tab.checkoutBranch(branch.name)
-            }
-            Button("New Branch...") {
+            }, .item("New Branch...") {
                 tab.newBranchStartPoint = branch.name
                 tab.isShowingNewBranchSheet = true
-            }
-            Divider()
-            Button("Delete '\(branch.name)'", role: .destructive) {
+            }, .separator,
+             .item("Delete '\(branch.name)'") {
                 tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
-            }
+             }]
         }
+    }
+}
+
+extension View {
+    /// Right-click menu built on `NSMenu` rather than `.contextMenu`, so macOS does not
+    /// append its "Ask Siri" item to text rows. Left-clicks and double-clicks pass through.
+    func nativeContextMenu(_ entries: @escaping () -> [HeaderMenuEntry]) -> some View {
+        overlay(RightClickMenuArea(entries: entries))
     }
 }
 
