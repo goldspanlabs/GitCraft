@@ -569,6 +569,13 @@ final class RepoTab: ObservableObject, Identifiable {
             }
         }
         if Task.isCancelled { return }
+        if scopeToCurrentBranch {
+            // Outside the Branch view (e.g. another branch picked in the sidebar): switch to
+            // All, which reloads the list from the top, then look for the commit again.
+            toggleScopeToCurrentBranch()
+            revealTask = Task { await self.revealCommit(oidHex: oidHex) }
+            return
+        }
         // Not reachable in the current graph (e.g. hidden by the search filter): don't
         // leave the panes showing an unrelated commit.
         errorMessage = "That commit isn't in the current commit list."

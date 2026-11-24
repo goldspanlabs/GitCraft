@@ -70,8 +70,9 @@ fn short_branch_name(full: &str) -> &str {
         .unwrap_or(full)
 }
 
-/// Tips and hidden commits for the "current branch vs base" view, or `None`
-/// when the full graph should be shown.
+/// Tips and hidden commits for the branch view, or `None` when the full graph should be
+/// shown. The view walks only from the checked-out branch, so it shows that branch's whole
+/// history and leaves out the default branch's commits and every other branch.
 fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
     let head = repo.head().ok()?;
     let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
@@ -80,15 +81,7 @@ fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::
     if short_branch_name(&head_ref) == short_branch_name(&base_ref) || head_id == base_id {
         return None;
     }
-    // Hide everything below the fork point, but keep the fork commit itself.
-    let hidden = repo
-        .merge_base(head_id, base_id)
-        .ok()
-        .flatten()
-        .and_then(|mb| repo.find_commit(mb.detach()).ok())
-        .map(|c| c.parent_ids().map(|p| p.detach()).collect())
-        .unwrap_or_default();
-    Some((vec![head_id, base_id], hidden))
+    Some((vec![head_id], Vec::new()))
 }
 
 fn graph_walk(
