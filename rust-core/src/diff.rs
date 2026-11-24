@@ -23,10 +23,14 @@ pub fn working_tree_file(
     let raw = git_cli::run(repo, &args)?;
     let ext = path.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
 
+    // An empty unstaged diff only means "untracked" if git doesn't know the
+    // path. A tracked file with no unstaged changes must yield no rows.
     if raw.trim().is_empty() && !staged {
         if let Some(rel_path) = path {
+            let is_tracked =
+                git_cli::run(repo, &["ls-files", "--error-unmatch", "--", rel_path]).is_ok();
             let full_path = repo.join(rel_path);
-            if full_path.is_file() {
+            if !is_tracked && full_path.is_file() {
                 if let Ok(bytes) = std::fs::read(&full_path) {
                     if bytes.len() > 256 * 1024 || bytes.contains(&0) {
                         return Ok(vec![DiffRow {
