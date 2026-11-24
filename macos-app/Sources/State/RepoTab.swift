@@ -204,23 +204,28 @@ final class RepoTab: ObservableObject, Identifiable {
     private var sortObserver: NSObjectProtocol?
     private var lastCommitSort = CommitSortPreference.current
 
-    /// Resolves symlinks (such as `/var` → `/private/var` on macOS) so checkout paths
-    /// match the canonical paths returned by `git worktree list`.
+    /// Resolves symlinks with POSIX `realpath` so checkout paths match `git worktree list`
+    /// verbatim. Unlike `URL.resolvingSymlinksInPath()`, `realpath` preserves macOS's
+    /// `/private` prefix on `/var` and `/tmp`.
     static func canonicalPath(for path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        if let resolved = realpath(path, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     init(url: URL) throws {
-        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
-        let session = try RepoSession(path: canonical.path)
-        self.url = canonical
+        let canonical = Self.canonicalPath(for: url.path)
+        let session = try RepoSession(path: canonical)
+        self.url = URL(fileURLWithPath: canonical)
         self.session = session
-        self.activeCheckoutPath = canonical.path
+        self.activeCheckoutPath = canonical
         let listed = (try? session.listWorktrees()) ?? []
         self.worktrees = listed
         // Git lists the primary checkout first, so a tab opened on a linked worktree still
         // names the repository after its main folder.
-        self.repoPath = listed.first?.path ?? canonical.path
+        self.repoPath = listed.first?.path ?? canonical
     }
 
     /// Shows a failure in the banner, or a brief toast when the core reports a no-op.

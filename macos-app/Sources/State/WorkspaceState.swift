@@ -63,8 +63,9 @@ final class WorkspaceState: ObservableObject {
     /// Opens `url` in a new tab, or brings its existing tab to the front.
     @discardableResult
     func openRepository(at url: URL) -> Bool {
-        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolved.path) }) {
+        let resolvedPath = RepoTab.canonicalPath(for: url.path)
+        let resolved = URL(fileURLWithPath: resolvedPath)
+        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
             existing.reveal()
             return true
         }
