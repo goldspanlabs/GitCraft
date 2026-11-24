@@ -1,42 +1,14 @@
+mod common;
+
 use std::{
     fs,
     path::Path,
-    process::Command,
     thread,
     time::{Duration, Instant},
 };
 
+use common::{configure_git_identity, run_git};
 use gitcraft_core::{PullStrategy, RefKind, RepoSession};
-
-fn run_git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "GitCraft Tester")
-        .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
-        .env("GIT_COMMITTER_NAME", "GitCraft Tester")
-        .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
-        // Fixed dates make commit hashes identical on every run, so hash-matching
-        // searches and sort ties behave the same each time.
-        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
-        .output()
-        .expect("failed to invoke git");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\nstdout: {}\nstderr: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn configure_git_identity(dir: &Path) {
-    run_git(dir, &["config", "user.name", "GitCraft Tester"]);
-    run_git(dir, &["config", "user.email", "tester@gitcraft.local"]);
-}
 
 #[test]
 fn rejects_non_git_directory_and_handles_empty_repo() {

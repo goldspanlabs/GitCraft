@@ -2,63 +2,12 @@
 //! tests reach only indirectly (or not at all): unstaging, working-tree diffs,
 //! syntax highlighting, and the error paths of mutating operations.
 
+mod common;
+
 use std::{fs, path::Path, process::Command};
 
-use gitcraft_core::{PullStrategy, RepoSession};
-
-fn run_git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "GitCraft Tester")
-        .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
-        .env("GIT_COMMITTER_NAME", "GitCraft Tester")
-        .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
-        // Fixed dates make commit hashes identical on every run.
-        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
-        .output()
-        .expect("failed to invoke git");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\nstdout: {}\nstderr: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-/// Creates a repo on `main` with a local identity configured, and no commits.
-fn init_repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    run_git(dir.path(), &["init", "-b", "main"]);
-    run_git(dir.path(), &["config", "user.name", "GitCraft Tester"]);
-    run_git(
-        dir.path(),
-        &["config", "user.email", "tester@gitcraft.local"],
-    );
-    dir
-}
-
-fn write(dir: &Path, name: &str, contents: &str) {
-    fs::write(dir.join(name), contents).unwrap();
-}
-
-/// Creates a repo with one commit containing `a.txt` and `b.txt`.
-fn init_repo_with_commit() -> tempfile::TempDir {
-    let dir = init_repo();
-    write(dir.path(), "a.txt", "alpha\n");
-    write(dir.path(), "b.txt", "bravo\n");
-    run_git(dir.path(), &["add", "-A"]);
-    run_git(dir.path(), &["commit", "-m", "initial"]);
-    dir
-}
-
-fn open(dir: &Path) -> RepoSession {
-    RepoSession::new(dir.to_string_lossy().into_owned()).unwrap()
-}
+use common::{init_repo, init_repo_with_commit, open, run_git, write};
+use gitcraft_core::PullStrategy;
 
 // ---------------------------------------------------------------- staging ---
 

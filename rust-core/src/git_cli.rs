@@ -12,6 +12,19 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Mutations include network transfers and hooks, so they get much longer.
 const MUTATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// Output of a completed git command, preserving its exit status for callers
+/// (such as `git merge-tree`) where non-zero exit codes carry structured meaning.
+pub struct CommandOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs a read-only git command and returns its exit status, stdout, and stderr.
+pub fn run_status(repo: &Path, args: &[&str]) -> io::Result<CommandOutput> {
+    execute_raw(repo, args, READ_TIMEOUT, false)
+}
+
 /// Runs a read-only git command and returns its stdout.
 ///
 /// Sets `GIT_OPTIONAL_LOCKS=0` so queries like `git status` never rewrite the index,
@@ -25,7 +38,12 @@ pub fn mutate(repo: &Path, args: &[&str]) -> io::Result<()> {
     execute(repo, args, MUTATE_TIMEOUT, true).map(|_| ())
 }
 
-fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io::Result<String> {
+fn execute_raw(
+    repo: &Path,
+    args: &[&str],
+    timeout: Duration,
+    mutating: bool,
+) -> io::Result<CommandOutput> {
     let mut command = Command::new("git");
     command
         // Report non-ASCII paths verbatim instead of as "\303\251" escapes.
@@ -49,18 +67,27 @@ fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io:
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }
     let child = command.spawn()?;
-    let output = wait_with_timeout(child, timeout, args.first().copied().unwrap_or("git"))?;
+    let captured = wait_with_timeout(child, timeout, args.first().copied().unwrap_or("git"))?;
+    Ok(CommandOutput {
+        status: captured.status,
+        stdout: String::from_utf8_lossy(&captured.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&captured.stderr).into_owned(),
+    })
+}
+
+fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io::Result<String> {
+    let output = execute_raw(repo, args, timeout, mutating)?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let stderr = output.stderr.trim();
+        let stdout = output.stdout.trim();
         // Some failures (e.g. "nothing to commit") are reported on stdout, and a killed
         // process says nothing at all; never return an empty message.
         let message = if !stderr.is_empty() {
-            stderr
+            stderr.to_owned()
         } else if !stdout.is_empty() {
-            stdout
+            stdout.to_owned()
         } else {
             format!(
                 "git {} failed ({})",
