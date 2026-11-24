@@ -104,7 +104,7 @@ struct RepoDetailView: View {
             }
 
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
-            VSplitView {
+            PersistentVSplit(minTop: 200, minBottom: 210) {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,
@@ -131,10 +131,8 @@ struct RepoDetailView: View {
                         EmptyHistoryHint()
                     }
                 }
-                .frame(minHeight: 200)
-
+            } bottom: {
                 InspectorView(tab: tab)
-                    .frame(minHeight: 210, idealHeight: 290)
             }
         }
         .modifier(RepoSheets(tab: tab))

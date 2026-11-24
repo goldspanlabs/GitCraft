@@ -2,10 +2,11 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var tab: RepoTab
-    @State private var isLocalBranchesExpanded = true
-    @State private var isRemotesExpanded = false
-    @State private var isTagsExpanded = false
-    @State private var isStashesExpanded = false
+    // Remembered across launches (shared by every repository window).
+    @AppStorage("sidebar.localBranchesExpanded") private var isLocalBranchesExpanded = true
+    @AppStorage("sidebar.remotesExpanded") private var isRemotesExpanded = false
+    @AppStorage("sidebar.tagsExpanded") private var isTagsExpanded = false
+    @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
     @State private var collapsedFolderIDs: Set<String> = []
 
     private var localBranches: [BranchInfo] {

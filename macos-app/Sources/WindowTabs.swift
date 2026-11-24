@@ -61,6 +61,8 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         detail.sizingOptions = []
 
         let split = NSSplitViewController()
+        // macOS remembers the sidebar's collapsed state and width under this name.
+        split.splitView.autosaveName = "GitCraft.repoSplit"
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 220
         sidebarItem.maximumThickness = 340
@@ -69,7 +71,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         let window = NSWindow(contentViewController: split)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.setContentSize(NSSize(width: 1180, height: 760))
+        window.setContentSize(Self.savedContentSize())
         window.contentMinSize = NSSize(width: 1040, height: 680)
         window.title = tab.name
         window.subtitle = tab.currentBranch
@@ -112,6 +114,25 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func windowWillClose(_: Notification) {
         workspace.windowClosed(self)
+    }
+
+    // MARK: Window size (position is intentionally not remembered)
+
+    private static let sizeKey = "repoWindowContentSize"
+
+    private static func savedContentSize() -> NSSize {
+        let fallback = NSSize(width: 1180, height: 760)
+        guard let text = UserDefaults.standard.string(forKey: sizeKey) else { return fallback }
+        let size = NSSizeFromString(text)
+        return size.width >= 1040 && size.height >= 680 ? size : fallback
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              !window.styleMask.contains(.fullScreen)
+        else { return }
+        let size = window.contentRect(forFrameRect: window.frame).size
+        UserDefaults.standard.set(NSStringFromSize(size), forKey: Self.sizeKey)
     }
 
     // MARK: Toolbar

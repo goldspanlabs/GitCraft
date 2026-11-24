@@ -281,6 +281,22 @@ final class RepoTab: ObservableObject, Identifiable {
         return try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
     }
 
+    /// Hides git's plumbing header lines (`index`, `---`, `+++`, mode lines). When the diff
+    /// spans several files, each file's `diff --git` line is kept as a plain file name so
+    /// the files stay distinguishable; a single-file diff needs no header at all.
+    nonisolated static func displayRows(_ rows: [DiffRow]) -> [DiffRow] {
+        let fileCount = rows.reduce(0) { $0 + ($1.kind == "header" && $1.text.hasPrefix("diff --git ") ? 1 : 0) }
+        return rows.compactMap { row in
+            guard row.kind == "header" else { return row }
+            guard fileCount > 1, row.text.hasPrefix("diff --git ") else { return nil }
+            var shown = row
+            if let range = row.text.range(of: " b/", options: .backwards) {
+                shown.text = String(row.text[range.upperBound...])
+            }
+            return shown
+        }
+    }
+
     func refresh() {
         let session = self.session
         let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -540,7 +556,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     try session.getWorkingDiff(path: path, staged: staged)
                 }.value
                 if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
-                    diffRows = rows
+                    diffRows = Self.displayRows(rows)
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -576,7 +592,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     try session.getCommitDiff(oidHex: oidHex, path: path)
                 }.value
                 if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
-                    diffRows = rows
+                    diffRows = Self.displayRows(rows)
                 }
             } catch {
                 // Only react if this request is still the current one (same commit and file);
