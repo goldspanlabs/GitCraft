@@ -38,8 +38,10 @@ bundle: swift
 			--platform macosx \
 			--minimum-deployment-target 13.0 \
 			--app-icon AppIcon \
-			--output-partial-info-plist $(BUILD_DIR)/assetcatalog_generated_info.plist >/dev/null; \
-	else \
+			--output-partial-info-plist $(BUILD_DIR)/assetcatalog_generated_info.plist >/dev/null 2>&1 || true; \
+	fi
+	@if [ ! -f $(APP)/Contents/Resources/Assets.car ] && [ ! -f $(APP)/Contents/Resources/AppIcon.icns ]; then \
+		echo "actool produced no icon; falling back to iconutil"; \
 		mkdir -p $(BUILD_DIR)/AppIcon.iconset; \
 		sips -z 16 16     $(APP_DIR)/Resources/AppIcon-1024.png --out $(BUILD_DIR)/AppIcon.iconset/icon_16x16.png >/dev/null; \
 		sips -z 32 32     $(APP_DIR)/Resources/AppIcon-1024.png --out $(BUILD_DIR)/AppIcon.iconset/icon_16x16@2x.png >/dev/null; \
