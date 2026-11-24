@@ -14,11 +14,16 @@ struct InspectorView: View {
 
 private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
+    @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
 
     private var canCommit: Bool {
-        !tab.stagedFiles.isEmpty
-            && !tab.commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !tab.isBusy
+        GitPreferences.canCommit(
+            summary: tab.commitSummary,
+            stagedCount: tab.stagedFiles.count,
+            changedCount: tab.totalChangesCount,
+            autoStage: autoStageOnCommit,
+            isBusy: tab.isBusy
+        )
     }
 
     // This view has no tab strip, so a collapsed panel would have no way to reopen.

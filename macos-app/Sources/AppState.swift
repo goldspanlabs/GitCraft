@@ -792,8 +792,13 @@ final class RepoTab: ObservableObject, Identifiable {
         guard !summary.isEmpty else { return }
         let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullMessage = body.isEmpty ? summary : "\(summary)\n\n\(body)"
+        let autoStage = GitPreferences.autoStageOnCommit
 
+        // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
+            if autoStage {
+                try session.stageAll()
+            }
             try session.commit(message: fullMessage)
         } onSuccess: { [weak self] in
             self?.commitSummary = ""
