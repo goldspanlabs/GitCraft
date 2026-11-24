@@ -64,7 +64,7 @@ struct SettingsView: View {
                 Toggle("Always include tags when fetching", isOn: $fetchIncludeTags)
                 Toggle("Push automatically after committing", isOn: $pushOnCommit)
                 Toggle("Stage all changes when committing", isOn: $autoStageOnCommit)
-                Text("When on, Commit needs only a summary and commits every change. When off, only staged files are committed.")
+                Text("When on and nothing is staged, Commit stages every change first. Files you stage yourself are always committed alone.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

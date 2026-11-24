@@ -22,7 +22,8 @@ private struct WorkingChangesInspectorView: View {
             stagedCount: tab.stagedFiles.count,
             changedCount: tab.totalChangesCount,
             autoStage: autoStageOnCommit,
-            isBusy: tab.isBusy
+            isBusy: tab.isBusy,
+            amend: tab.amendCommit
         )
     }
 
@@ -164,9 +165,15 @@ private struct WorkingChangesInspectorView: View {
                     )
 
                     HStack {
-                        Text("\(tab.stagedFiles.count) staged")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Toggle("Skip Hooks", isOn: $tab.skipHooks)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 12))
+                        Toggle("Amend", isOn: Binding(
+                            get: { tab.amendCommit },
+                            set: { tab.setAmend($0) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 12))
                         Spacer()
                         Button("Stash…") {
                             tab.isShowingStashSheet = true

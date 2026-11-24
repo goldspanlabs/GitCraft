@@ -862,6 +862,34 @@ impl RepoSession {
         Ok(())
     }
 
+    /// Commits with the Skip Hooks (`--no-verify`) and Amend (`--amend`) options.
+    pub fn commit_with_options(
+        &self,
+        message: String,
+        skip_hooks: bool,
+        amend: bool,
+    ) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let mut args = vec!["commit", "-m", &message];
+        if skip_hooks {
+            args.push("--no-verify");
+        }
+        if amend {
+            args.push("--amend");
+        }
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
+    }
+
+    /// The full message of HEAD, used to fill the composer when amending.
+    pub fn head_commit_message(&self) -> Result<String, GitCraftError> {
+        let output = git_cli::run(&self.path, &["log", "-1", "--format=%B"])?;
+        Ok(output.trim_end().to_owned())
+    }
+
     pub fn fetch(&self, include_tags: bool) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock

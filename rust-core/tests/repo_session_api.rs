@@ -400,6 +400,48 @@ fn commit_records_staged_changes_with_message() {
 }
 
 #[test]
+fn commit_skip_hooks_bypasses_a_failing_pre_commit_hook() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let hook = dir.path().join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    write(dir.path(), "a.txt", "alpha v2\n");
+    session.stage("a.txt".into()).unwrap();
+    assert!(session
+        .commit_with_options("blocked".into(), false, false)
+        .is_err());
+    session
+        .commit_with_options("skipped".into(), true, false)
+        .unwrap();
+
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert_eq!(rows[0].summary, "skipped");
+}
+
+#[test]
+fn commit_amend_rewrites_head_without_adding_a_commit() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    write(dir.path(), "a.txt", "alpha v2\n");
+    session.stage("a.txt".into()).unwrap();
+    session.commit("update alpha".into()).unwrap();
+    let before = session.get_commit_graph(0, 10, None).unwrap().len();
+
+    assert_eq!(session.head_commit_message().unwrap(), "update alpha");
+    session
+        .commit_with_options("update alpha, reworded".into(), false, true)
+        .unwrap();
+
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert_eq!(rows.len(), before);
+    assert_eq!(rows[0].summary, "update alpha, reworded");
+}
+
+#[test]
 fn commit_detail_for_unknown_oid_is_an_error() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());

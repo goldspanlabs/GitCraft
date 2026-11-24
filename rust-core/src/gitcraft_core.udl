@@ -242,6 +242,12 @@ interface RepoSession {
   void commit(string message);
 
   [Throws=GitCraftError]
+  void commit_with_options(string message, boolean skip_hooks, boolean amend);
+
+  [Throws=GitCraftError]
+  string head_commit_message();
+
+  [Throws=GitCraftError]
   void fetch(boolean include_tags);
 
   [Throws=GitCraftError]
