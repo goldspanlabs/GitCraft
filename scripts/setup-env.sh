@@ -11,7 +11,7 @@ PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
 prepend_line() {
   local file="$1"
   local line="$2"
-  if grep -qxF "$line" "$file" 2>/dev/null; then
+  if [ -f "$file" ] && [ "$(head -n 1 "$file")" = "$line" ]; then
     return 0
   fi
   local tmp
@@ -19,7 +19,7 @@ prepend_line() {
   trap 'rm -f "$tmp"' RETURN
   printf '%s\n' "$line" > "$tmp"
   if [ -f "$file" ]; then
-    cat "$file" >> "$tmp"
+    grep -vxF "$line" "$file" >> "$tmp" || true
   fi
   cat "$tmp" > "$file"
   rm -f "$tmp"
@@ -36,6 +36,21 @@ append_line() {
     printf '\n' >> "$file"
   fi
   printf '%s\n' "$line" >> "$file"
+}
+
+install_cargo_llvm_cov() {
+  local target="$1"
+  local tmp_dir
+  tmp_dir="$(mktemp -d "$HOME/.local/bin/.cargo-llvm-cov.tmp.XXXXXX")"
+  trap 'rm -rf "$tmp_dir"' RETURN
+  if curl -fsSL "https://github.com/taiki-e/cargo-llvm-cov/releases/latest/download/cargo-llvm-cov-${target}.tar.gz" | tar -xz -C "$tmp_dir" \
+    && [ -x "$tmp_dir/cargo-llvm-cov" ]; then
+    mv -f "$tmp_dir/cargo-llvm-cov" "$HOME/.local/bin/cargo-llvm-cov"
+  else
+    echo "warning: could not download cargo-llvm-cov (network may be restricted); continuing without it" >&2
+  fi
+  rm -rf "$tmp_dir"
+  trap - RETURN
 }
 
 prepend_line "$HOME/.bashrc" "$PATH_EXPORT"
@@ -63,9 +78,7 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     *) target="" ;;
   esac
   if [ -n "$target" ]; then
-    if ! curl -fsSL "https://github.com/taiki-e/cargo-llvm-cov/releases/latest/download/cargo-llvm-cov-${target}.tar.gz" | tar -xz -C "$HOME/.local/bin"; then
-      echo "warning: could not download cargo-llvm-cov (network may be restricted); continuing without it" >&2
-    fi
+    install_cargo_llvm_cov "$target"
   fi
 fi
 
