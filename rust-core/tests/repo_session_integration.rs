@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gitcraft_core::{RefKind, RepoSession};
+use gitcraft_core::{PullStrategy, RefKind, RepoSession};
 
 fn run_git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -252,7 +252,7 @@ fn mock_bare_remote_fetch_pull_push_and_ahead_behind() {
         .iter()
         .any(|c| c.summary == "Initial" && !c.is_remote_only));
 
-    session_b.pull().unwrap();
+    session_b.pull(PullStrategy::GitConfig).unwrap();
     assert!(clone_b.join("a.txt").exists());
     let graph_after_pull = session_b.get_commit_graph(0, 10, None).unwrap();
     assert!(graph_after_pull.iter().all(|c| !c.is_remote_only));

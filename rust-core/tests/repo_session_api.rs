@@ -4,7 +4,7 @@
 
 use std::{fs, path::Path, process::Command};
 
-use gitcraft_core::RepoSession;
+use gitcraft_core::{PullStrategy, RepoSession};
 
 fn run_git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -946,7 +946,7 @@ fn pull_of_diverged_branches_falls_back_to_a_merge() {
     run_git(dir.path(), &["add", "-A"]);
     run_git(dir.path(), &["commit", "-m", "mine"]);
 
-    session.pull().unwrap();
+    session.pull(PullStrategy::GitConfig).unwrap();
     assert!(dir.path().join("other.txt").exists());
     assert!(dir.path().join("mine.txt").exists());
 }
@@ -1019,4 +1019,117 @@ fn merge_state_is_detected_in_a_linked_worktree() {
     let status = open(&wt).status().unwrap();
     assert!(status.is_merging);
     assert!(status.has_conflicts);
+}
+
+/// Two clones of one origin whose `main` branches have diverged (each side has a
+/// commit the other lacks, touching different files).
+fn diverged_pair() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+    let (dir, origin) = repo_with_bare_origin();
+    open(dir.path()).push().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    run_git(
+        other.path(),
+        &["clone", "-q", origin.path().to_str().unwrap(), "."],
+    );
+    write(other.path(), "theirs.txt", "theirs\n");
+    run_git(other.path(), &["add", "-A"]);
+    run_git(other.path(), &["commit", "-m", "theirs"]);
+    run_git(other.path(), &["push", "-q"]);
+    write(dir.path(), "mine.txt", "mine\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "mine"]);
+    (dir, origin, other)
+}
+
+fn parent_count(dir: &Path) -> usize {
+    run_git(dir, &["rev-list", "--parents", "-n", "1", "HEAD"])
+        .split_whitespace()
+        .count()
+        - 1
+}
+
+#[test]
+fn pull_with_rebase_keeps_history_linear() {
+    let (dir, _o, _other) = diverged_pair();
+    open(dir.path()).pull(PullStrategy::Rebase).unwrap();
+    assert!(dir.path().join("theirs.txt").exists());
+    assert_eq!(
+        parent_count(dir.path()),
+        1,
+        "rebase must not create a merge commit"
+    );
+}
+
+#[test]
+fn pull_with_merge_creates_a_merge_commit() {
+    let (dir, _o, _other) = diverged_pair();
+    open(dir.path()).pull(PullStrategy::Merge).unwrap();
+    assert_eq!(parent_count(dir.path()), 2);
+}
+
+#[test]
+fn pull_fast_forward_only_refuses_diverged_branches() {
+    let (dir, _o, _other) = diverged_pair();
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+    assert!(open(dir.path())
+        .pull(PullStrategy::FastForwardOnly)
+        .is_err());
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn rebase_conflict_is_reported_and_can_be_aborted() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    run_git(
+        other.path(),
+        &["clone", "-q", origin.path().to_str().unwrap(), "."],
+    );
+    write(other.path(), "a.txt", "theirs\n");
+    run_git(other.path(), &["commit", "-qam", "theirs"]);
+    run_git(other.path(), &["push", "-q"]);
+    write(dir.path(), "a.txt", "mine\n");
+    run_git(dir.path(), &["commit", "-qam", "mine"]);
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+
+    assert!(session.pull(PullStrategy::Rebase).is_err());
+    let status = session.status().unwrap();
+    assert!(status.is_rebasing);
+    assert!(status.has_conflicts);
+
+    session.abort_rebase().unwrap();
+    let status = session.status().unwrap();
+    assert!(!status.is_rebasing);
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn rebase_can_be_continued_after_resolving_conflicts() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    run_git(
+        other.path(),
+        &["clone", "-q", origin.path().to_str().unwrap(), "."],
+    );
+    write(other.path(), "a.txt", "theirs\n");
+    run_git(other.path(), &["commit", "-qam", "theirs"]);
+    run_git(other.path(), &["push", "-q"]);
+    write(dir.path(), "a.txt", "mine\n");
+    run_git(dir.path(), &["commit", "-qam", "mine"]);
+
+    assert!(session.pull(PullStrategy::Rebase).is_err());
+    write(dir.path(), "a.txt", "resolved\n");
+    session.stage("a.txt".into()).unwrap();
+    session.continue_rebase().unwrap();
+
+    assert!(!session.status().unwrap().is_rebasing);
+    assert_eq!(parent_count(dir.path()), 1);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "resolved\n"
+    );
 }

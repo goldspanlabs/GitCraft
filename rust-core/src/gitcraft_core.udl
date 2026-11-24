@@ -5,6 +5,13 @@ interface GitCraftError {
   Message(string msg);
 };
 
+enum PullStrategy {
+  "GitConfig",
+  "Merge",
+  "Rebase",
+  "FastForwardOnly"
+};
+
 enum RefKind {
   "LocalBranch",
   "RemoteBranch",
@@ -108,6 +115,7 @@ dictionary RepoStatus {
   string branch;
   boolean is_clean;
   boolean is_merging;
+  boolean is_rebasing;
   boolean has_conflicts;
 };
 
@@ -224,7 +232,11 @@ interface RepoSession {
   void fetch();
 
   [Throws=GitCraftError]
-  void pull();
+  void pull(PullStrategy strategy);
+  [Throws=GitCraftError]
+  void abort_rebase();
+  [Throws=GitCraftError]
+  void continue_rebase();
 
   [Throws=GitCraftError]
   void push();

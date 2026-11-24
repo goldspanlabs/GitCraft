@@ -36,6 +36,18 @@ impl From<io::Error> for GitCraftError {
     }
 }
 
+/// How `pull` reconciles diverged branches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullStrategy {
+    /// Follow the repository's git config (`pull.rebase` / `pull.ff`); when neither is
+    /// set, merge, as git did before it started asking.
+    GitConfig,
+    Merge,
+    Rebase,
+    /// Refuse to create a merge commit or rewrite history; fail if branches diverged.
+    FastForwardOnly,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefKind {
     LocalBranch,
@@ -152,6 +164,7 @@ pub struct RepoStatus {
     pub branch: String,
     pub is_clean: bool,
     pub is_merging: bool,
+    pub is_rebasing: bool,
     pub has_conflicts: bool,
 }
 
@@ -212,6 +225,22 @@ impl RepoSession {
         self.graph_dirty.swap(false, Ordering::AcqRel)
     }
 
+    /// Whether `<git dir>/<name>` exists. Asks git for the location so it also works when
+    /// `.git` is a file (linked worktrees, submodules).
+    fn git_path_exists(&self, name: &str) -> bool {
+        git_cli::run(&self.path, &["rev-parse", "--git-path", name])
+            .map(|out| {
+                let p = PathBuf::from(out.trim());
+                if p.is_absolute() {
+                    p
+                } else {
+                    self.path.join(p)
+                }
+                .exists()
+            })
+            .unwrap_or(false)
+    }
+
     pub fn status(&self) -> Result<RepoStatus, GitCraftError> {
         // -z: NUL-separated, paths are never quoted or escaped (non-ASCII, spaces, quotes).
         let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "-z", "--branch"])?;
@@ -262,17 +291,9 @@ impl RepoSession {
             }
         }
 
-        let is_merging = git_cli::run(&self.path, &["rev-parse", "--git-path", "MERGE_HEAD"])
-            .map(|out| {
-                let p = PathBuf::from(out.trim());
-                if p.is_absolute() {
-                    p
-                } else {
-                    self.path.join(p)
-                }
-                .exists()
-            })
-            .unwrap_or(false);
+        let is_merging = self.git_path_exists("MERGE_HEAD");
+        let is_rebasing =
+            self.git_path_exists("rebase-merge") || self.git_path_exists("rebase-apply");
         let files: Vec<String> = all_paths.into_iter().collect();
         Ok(RepoStatus {
             is_clean: staged_files.is_empty() && unstaged_files.is_empty(),
@@ -281,6 +302,7 @@ impl RepoSession {
             unstaged_files,
             branch,
             is_merging,
+            is_rebasing,
             has_conflicts,
         })
     }
@@ -783,21 +805,58 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn pull(&self) -> Result<(), GitCraftError> {
+    pub fn pull(&self, strategy: PullStrategy) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        match git_cli::mutate(&self.path, &["pull"]) {
-            Ok(()) => Ok(()),
-            // With no pull.rebase/pull.ff configured, git refuses diverged pulls. Fall back
-            // to a merge, which is what git did before it started asking.
-            Err(e) if e.to_string().contains("divergent branches") => {
+        match strategy {
+            PullStrategy::GitConfig => match git_cli::mutate(&self.path, &["pull"]) {
+                Ok(()) => Ok(()),
+                // With no pull.rebase/pull.ff configured, git refuses diverged pulls. Fall
+                // back to a merge, which is what git did before it started asking.
+                Err(e) if e.to_string().contains("divergent branches") => {
+                    git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
+                    Ok(())
+                }
+                Err(e) => Err(e.into()),
+            },
+            PullStrategy::Merge => {
                 git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
                 Ok(())
             }
-            Err(e) => Err(e.into()),
+            PullStrategy::Rebase => {
+                git_cli::mutate(&self.path, &["pull", "--rebase"])?;
+                Ok(())
+            }
+            PullStrategy::FastForwardOnly => {
+                git_cli::mutate(&self.path, &["pull", "--ff-only"])?;
+                Ok(())
+            }
         }
+    }
+
+    pub fn abort_rebase(&self) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["rebase", "--abort"])?;
+        Ok(())
+    }
+
+    /// Continues a stopped rebase after conflicts were resolved and staged. The editor is
+    /// disabled so git keeps the existing commit message instead of waiting on one.
+    pub fn continue_rebase(&self) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(
+            &self.path,
+            &["-c", "core.editor=true", "rebase", "--continue"],
+        )?;
+        Ok(())
     }
 
     pub fn push(&self) -> Result<(), GitCraftError> {
