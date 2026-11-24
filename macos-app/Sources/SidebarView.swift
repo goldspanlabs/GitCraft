@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var tab: RepoTab
-    @State private var isWorkingTreeExpanded = true
     @State private var isLocalBranchesExpanded = true
     @State private var isRemotesExpanded = false
     @State private var isTagsExpanded = false
@@ -45,34 +44,6 @@ struct SidebarView: View {
 
     var body: some View {
         List {
-            Section(isExpanded: $isWorkingTreeExpanded) {
-                if isWorkingTreeExpanded {
-                    Button {
-                        tab.scrollToWorkingChanges()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.and.pencil")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
-                                .frame(width: 16, alignment: .center)
-                            Text("Working Changes")
-                            Spacer()
-                            if tab.totalChangesCount > 0 {
-                                Text("\(tab.totalChangesCount)")
-                                    .font(.caption2.monospacedDigit())
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 1)
-                                    .background(Color.accentColor.opacity(0.18))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            } header: {
-                SectionHeaderLabel(title: "WORKING TREE") { [] }
-            }
-
             Section(isExpanded: $isLocalBranchesExpanded) {
                 if isLocalBranchesExpanded {
                     ForEach(localBranchRows) { row in
