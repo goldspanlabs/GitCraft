@@ -160,6 +160,7 @@ pub struct RepoSession {
     sync_repo: gix::ThreadSafeRepository,
     mutation_lock: Arc<Mutex<()>>,
     dirty: Arc<AtomicBool>,
+    graph_dirty: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
 }
 
@@ -182,19 +183,33 @@ impl RepoSession {
         let sync_repo = gix::ThreadSafeRepository::open(&path)
             .map_err(|e| GitCraftError::message(e.to_string()))?;
         let dirty = Arc::new(AtomicBool::new(false));
+        let graph_dirty = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
-        watcher::spawn_dirty_watcher(&path, Arc::clone(&dirty), Arc::clone(&stopped));
+        watcher::spawn_dirty_watcher(
+            &path,
+            Arc::clone(&dirty),
+            Arc::clone(&graph_dirty),
+            Arc::clone(&stopped),
+        );
         Ok(Self {
             path,
             sync_repo,
             mutation_lock: Arc::new(Mutex::new(())),
             dirty,
+            graph_dirty,
             stopped,
         })
     }
 
+    /// True if anything relevant changed (working tree, index, refs) since the last call.
     pub fn take_dirty(&self) -> bool {
         self.dirty.swap(false, Ordering::AcqRel)
+    }
+
+    /// True if refs, HEAD or config changed, so the graph and ref lists need reloading.
+    /// Plain working-tree edits only need a status refresh.
+    pub fn take_graph_dirty(&self) -> bool {
+        self.graph_dirty.swap(false, Ordering::AcqRel)
     }
 
     pub fn status(&self) -> Result<RepoStatus, GitCraftError> {

@@ -250,9 +250,15 @@ final class RepoTab: ObservableObject, Identifiable {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }
-                let dirty = await Task.detached { session.takeDirty() }.value
-                if dirty {
+                // Refs/HEAD/config changes need the full reload; plain file edits (including
+                // build output) only need a status refresh, which is far cheaper.
+                let (graphDirty, dirty) = await Task.detached {
+                    (session.takeGraphDirty(), session.takeDirty())
+                }.value
+                if graphDirty {
                     self?.refresh()
+                } else if dirty {
+                    self?.refreshStatus()
                 }
             }
         }
@@ -294,6 +300,26 @@ final class RepoTab: ObservableObject, Identifiable {
                 shown.text = String(row.text[range.upperBound...])
             }
             return shown
+        }
+    }
+
+    /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
+    func refreshStatus() {
+        let session = self.session
+        Task {
+            do {
+                let status = try await Task.detached { try session.status() }.value
+                currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
+                isMerging = status.isMerging
+                hasConflicts = status.hasConflicts
+                if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
+                if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
+                if selectedCommit == nil {
+                    loadWorkingDiffSelection()
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

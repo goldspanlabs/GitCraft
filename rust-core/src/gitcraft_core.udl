@@ -230,4 +230,5 @@ interface RepoSession {
   void push();
 
   boolean take_dirty();
+  boolean take_graph_dirty();
 };
