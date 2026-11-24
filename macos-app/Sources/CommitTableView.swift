@@ -510,6 +510,11 @@ final class GraphCellView: NSView {
         leftPadding * 2 + CGFloat(max(1, lanes)) * laneWidth
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     func configureWorkingChanges() {
         isWorkingChanges = true
         commit = nil
