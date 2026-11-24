@@ -128,6 +128,7 @@ final class RepoTab: ObservableObject, Identifiable {
     enum DestructiveAction: Identifiable {
         case discardFile(path: String)
         case deleteBranch(name: String, force: Bool)
+        case forceDeleteBranch(name: String)
         case deleteRemoteBranch(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
         case abortMerge
@@ -138,6 +139,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case let .discardFile(path): return "discard-\(path)"
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
+            case let .forceDeleteBranch(name): return "force-del-branch-\(name)"
             case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case .abortMerge: return "abort-merge"
@@ -150,6 +152,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case let .discardFile(path): return "Discard changes to \"\(path)\"?"
             case let .deleteBranch(name, _): return "Delete branch \"\(name)\"?"
+            case let .forceDeleteBranch(name): return "Branch \"\(name)\" isn't merged"
             case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
@@ -165,6 +168,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will permanently revert your uncommitted changes to this file."
             case .deleteBranch:
                 return "This will delete the local branch reference."
+            case .forceDeleteBranch:
+                return "It has commits that aren't in the checked-out branch. Deleting it removes the branch name, and those commits are lost unless they exist elsewhere. Git can often recover them from the reflog for a while."
             case .deleteRemoteBranch:
                 return "This will delete the branch from the remote repository. The local branch of the same name, if any, is kept."
             case let .deleteTag(_, remote):
@@ -184,6 +189,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
+            case .forceDeleteBranch: return "Force Delete"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
@@ -924,9 +930,14 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func deleteBranch(_ branchName: String, force: Bool) {
-        performMutation { session in
+        performMutation({ session in
             try session.deleteBranch(branchName: branchName, force: force)
-        }
+        }, onFailure: { [weak self] error in
+            // A safe delete refused because the branch has unmerged commits: ask before forcing.
+            guard !force, error.displayMessage.contains("is not fully merged") else { return false }
+            self?.pendingConfirmation = .forceDeleteBranch(name: branchName)
+            return true
+        })
     }
 
     func deleteRemoteBranch(_ branchName: String) {
@@ -966,6 +977,8 @@ final class RepoTab: ObservableObject, Identifiable {
             discardFile(path)
         case let .deleteBranch(name, force):
             deleteBranch(name, force: force)
+        case let .forceDeleteBranch(name):
+            deleteBranch(name, force: true)
         case let .deleteRemoteBranch(name):
             deleteRemoteBranch(name)
         case let .deleteTag(name, deleteRemote):
@@ -1049,9 +1062,12 @@ final class RepoTab: ObservableObject, Identifiable {
         NSPasteboard.general.setString(oid, forType: .string)
     }
 
+    /// Runs `work` off the main thread, then refreshes. `onFailure` gets the first chance to
+    /// handle an error; returning true means it did, so the error banner is skipped.
     private func performMutation(
         _ work: @escaping @Sendable (RepoSession) throws -> Void,
-        onSuccess: (@MainActor () -> Void)? = nil
+        onSuccess: (@MainActor () -> Void)? = nil,
+        onFailure: (@MainActor (Error) -> Bool)? = nil
     ) {
         let session = self.session
         isBusy = true
@@ -1065,6 +1081,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 onSuccess?()
                 refresh()
             } catch {
+                if let onFailure, onFailure(error) { return }
                 errorMessage = error.displayMessage
             }
         }
