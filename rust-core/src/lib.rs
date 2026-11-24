@@ -127,6 +127,7 @@ pub struct TagInfo {
     pub name: String,
     pub full_ref: String,
     pub target_oid_hex: String,
+    pub created_timestamp: i64,
 }
 
 #[derive(Clone, Debug)]

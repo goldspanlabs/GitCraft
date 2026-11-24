@@ -86,6 +86,7 @@ dictionary TagInfo {
   string name;
   string full_ref;
   string target_oid_hex;
+  i64 created_timestamp;
 };
 
 dictionary RemoteInfo {

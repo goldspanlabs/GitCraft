@@ -755,3 +755,26 @@ fn fetch_remote_targets_only_the_named_remote() {
     open(&clone_path).fetch_remote("origin".into()).unwrap();
     assert!(run_git(&clone_path, &["branch", "-r"]).contains("origin/newbranch"));
 }
+
+#[test]
+fn tags_are_listed_newest_created_first() {
+    let dir = init_repo_with_commit();
+    // A lightweight tag on the existing commit, then an annotated tag created later
+    // whose name sorts *before* it alphabetically.
+    run_git(dir.path(), &["tag", "zzz-light"]);
+    let ok = Command::new("git")
+        .args(["tag", "-a", "aaa-annotated", "-m", "later"])
+        .current_dir(dir.path())
+        .env("GIT_COMMITTER_NAME", "GitCraft Tester")
+        .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
+        .env("GIT_COMMITTER_DATE", "2099-01-01T00:00:00Z")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+
+    let tags = open(dir.path()).list_tags().unwrap();
+    let names: Vec<_> = tags.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["aaa-annotated", "zzz-light"]);
+    assert!(tags[0].created_timestamp > tags[1].created_timestamp);
+}

@@ -314,6 +314,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 stagedFiles = status.stagedFiles
                 unstagedFiles = status.unstagedFiles
                 branches = branchList
+                // The core already returns tags newest-created first.
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList

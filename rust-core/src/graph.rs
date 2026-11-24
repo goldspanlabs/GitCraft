@@ -592,18 +592,51 @@ pub fn list_tags(sync_repo: &gix::ThreadSafeRepository) -> Result<Vec<TagInfo>, 
         };
         let full_name = reference.name().as_bstr().to_str_lossy().into_owned();
         if let Some(name) = full_name.strip_prefix("refs/tags/") {
+            let direct_id = reference.id().detach();
             if let Ok(peeled) = reference.into_fully_peeled_id() {
+                let peeled_id = peeled.detach();
                 tags.push(TagInfo {
                     name: name.to_owned(),
                     full_ref: full_name,
-                    target_oid_hex: peeled.detach().to_hex().to_string(),
+                    target_oid_hex: peeled_id.to_hex().to_string(),
+                    created_timestamp: tag_created_seconds(&repo, direct_id, peeled_id),
                 });
             }
         }
     }
 
-    tags.sort_by(|a, b| a.name.cmp(&b.name));
+    // Newest first; fall back to name so ties are stable.
+    tags.sort_by(|a, b| {
+        b.created_timestamp
+            .cmp(&a.created_timestamp)
+            .then_with(|| b.name.cmp(&a.name))
+    });
     Ok(tags)
+}
+
+/// When a tag was created: the tagger date of an annotated tag, otherwise the
+/// date of the commit a lightweight tag points at.
+fn tag_created_seconds(
+    repo: &gix::Repository,
+    direct_id: gix::ObjectId,
+    peeled_id: gix::ObjectId,
+) -> i64 {
+    if direct_id != peeled_id {
+        if let Ok(object) = repo.find_object(direct_id) {
+            if let Ok(tag) = object.try_into_tag() {
+                if let Ok(Some(tagger)) = tag.tagger() {
+                    if let Ok(time) = tagger.time() {
+                        return time.seconds;
+                    }
+                }
+            }
+        }
+    }
+    repo.find_commit(peeled_id)
+        .ok()
+        .and_then(|c| c.time().ok())
+        .map(|t| t.seconds)
+        .unwrap_or_default()
 }
 
 fn resolve_upstream_ref(config: &gix::config::Snapshot<'_>, branch_name: &str) -> Option<String> {
