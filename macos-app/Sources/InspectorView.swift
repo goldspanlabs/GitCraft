@@ -70,7 +70,7 @@ private struct WorkingChangesInspectorView: View {
                             }
                         }
 
-                        Divider().padding(.horizontal, 10)
+                        Divider()
 
                         // Unstaged section
                         VStack(alignment: .leading, spacing: 4) {
