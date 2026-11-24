@@ -589,3 +589,27 @@ fn status_lists_same_file_as_staged_and_unstaged() {
     assert!(status.unstaged_files.iter().any(|f| f.path == "a.txt"));
     assert!(!status.is_clean);
 }
+
+#[test]
+fn untracked_file_with_glob_characters_is_not_mistaken_for_tracked_file() {
+    // `notes[1].txt` is a glob that matches the tracked `notes1.txt`. Paths
+    // must be treated literally, or the untracked file loses its synthetic diff.
+    let dir = init_repo();
+    write(dir.path(), "notes1.txt", "tracked\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "initial"]);
+    write(dir.path(), "notes[1].txt", "untracked\nsecond\n");
+
+    let session = open(dir.path());
+    let rows = session
+        .get_working_diff(Some("notes[1].txt".into()), false)
+        .unwrap();
+
+    assert_eq!(rows.first().map(|r| r.kind.as_str()), Some("hunk"));
+    assert!(
+        rows[0].text.contains("(untracked)"),
+        "got: {}",
+        rows[0].text
+    );
+    assert_eq!(rows.iter().filter(|r| r.kind == "addition").count(), 2);
+}
