@@ -568,7 +568,10 @@ fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
     let w = work.path();
     run_git(w, &["init", "-b", "trunk"]);
     configure_git_identity(w);
-    run_git(w, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    run_git(
+        w,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
     commit_file(w, "r.txt", "root");
     run_git(w, &["push", "-u", "origin", "trunk"]);
     run_git(w, &["remote", "set-head", "origin", "trunk"]);
