@@ -176,6 +176,7 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var branches: [BranchInfo] = []
     @Published private(set) var tags: [TagInfo] = []
     @Published private(set) var stashes: [StashInfo] = []
+    @Published private(set) var remotes: [RemoteInfo] = []
     @Published private(set) var selectedCommit: CommitRow?
     @Published private(set) var commitDetail: CommitDetail?
     @Published private(set) var diffRows: [DiffRow] = []
@@ -193,6 +194,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
+    @Published var isShowingRemotesSheet = false
+    @Published var remotesSheetStartsAdding = false
     /// When true (default), the graph shows only the checked-out branch and the base branch,
     /// from their fork point. When false, it shows every branch.
     @Published private(set) var scopeToCurrentBranch = true
@@ -280,15 +283,17 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let branchesTask = Task.detached { try session.listBranches() }.value
                 async let tagsTask = Task.detached { try session.listTags() }.value
                 async let stashesTask = Task.detached { try session.listStashes() }.value
+                async let remotesTask = Task.detached { try session.listRemotes() }.value
                 async let graphTask = Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
                 }.value
 
-                let (status, branchList, tagList, stashList, graphRows) = try await (
+                let (status, branchList, tagList, stashList, remoteList, graphRows) = try await (
                     statusTask,
                     branchesTask,
                     tagsTask,
                     stashesTask,
+                    remotesTask,
                     graphTask
                 )
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
@@ -299,6 +304,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 branches = branchList
                 tags = tagList
                 stashes = stashList
+                remotes = remoteList
                 graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
@@ -607,6 +613,34 @@ final class RepoTab: ObservableObject, Identifiable {
         performMutation { session in
             try session.ignorePath(path: path, localOnly: localOnly)
         }
+    }
+
+    /// Runs a remote mutation and reports success/failure to the caller (used by the
+    /// remotes sheet so it can keep the form open on error).
+    func addRemote(name: String, url: String, onSuccess: (@MainActor () -> Void)? = nil) {
+        performMutation { session in try session.addRemote(name: name, url: url) } onSuccess: { onSuccess?() }
+    }
+
+    /// Applies a URL change and/or rename in one mutation so the two steps stay ordered.
+    func updateRemote(_ remote: RemoteInfo, newName: String, newURL: String) {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        performMutation { session in
+            if url != remote.fetchUrl || url != remote.pushUrl {
+                try session.setRemoteUrl(name: remote.name, url: url)
+            }
+            if name != remote.name {
+                try session.renameRemote(oldName: remote.name, newName: name)
+            }
+        }
+    }
+
+    func removeRemote(_ name: String) {
+        performMutation { session in try session.removeRemote(name: name) }
+    }
+
+    func fetchRemote(_ name: String) {
+        performMutation { session in try session.fetchRemote(name: name) }
     }
 
     func commitChanges() {

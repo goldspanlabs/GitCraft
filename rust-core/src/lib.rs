@@ -130,6 +130,13 @@ pub struct TagInfo {
 }
 
 #[derive(Clone, Debug)]
+pub struct RemoteInfo {
+    pub name: String,
+    pub fetch_url: String,
+    pub push_url: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct StashInfo {
     pub index: u32,
     pub name: String,
@@ -373,6 +380,91 @@ impl RepoSession {
         let remote = resolve_default_remote(&self.path);
         let refspec = format!("refs/tags/{tag_name}");
         git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
+        Ok(())
+    }
+
+    pub fn list_remotes(&self) -> Result<Vec<RemoteInfo>, GitCraftError> {
+        let output = git_cli::run(&self.path, &["remote", "-v"])?;
+        let mut remotes: Vec<RemoteInfo> = Vec::new();
+        for line in output.lines() {
+            // "<name>\t<url> (fetch|push)"
+            let Some((name, rest)) = line.split_once('\t') else {
+                continue;
+            };
+            let (url, kind) = match rest.rsplit_once(' ') {
+                Some((url, kind)) => (url.to_owned(), kind),
+                None => continue,
+            };
+            let idx = match remotes.iter().position(|r| r.name == name) {
+                Some(i) => i,
+                None => {
+                    remotes.push(RemoteInfo {
+                        name: name.to_owned(),
+                        fetch_url: String::new(),
+                        push_url: String::new(),
+                    });
+                    remotes.len() - 1
+                }
+            };
+            match kind {
+                "(fetch)" => remotes[idx].fetch_url = url,
+                "(push)" => remotes[idx].push_url = url,
+                _ => {}
+            }
+        }
+        Ok(remotes)
+    }
+
+    pub fn add_remote(&self, name: String, url: String) -> Result<(), GitCraftError> {
+        let (name, url) = (validate_remote_arg(&name)?, validate_remote_arg(&url)?);
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["remote", "add", &name, &url])?;
+        Ok(())
+    }
+
+    pub fn set_remote_url(&self, name: String, url: String) -> Result<(), GitCraftError> {
+        let (name, url) = (validate_remote_arg(&name)?, validate_remote_arg(&url)?);
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["remote", "set-url", &name, &url])?;
+        Ok(())
+    }
+
+    pub fn rename_remote(&self, old_name: String, new_name: String) -> Result<(), GitCraftError> {
+        let (old_name, new_name) = (
+            validate_remote_arg(&old_name)?,
+            validate_remote_arg(&new_name)?,
+        );
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["remote", "rename", &old_name, &new_name])?;
+        Ok(())
+    }
+
+    pub fn remove_remote(&self, name: String) -> Result<(), GitCraftError> {
+        let name = validate_remote_arg(&name)?;
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["remote", "remove", &name])?;
+        Ok(())
+    }
+
+    pub fn fetch_remote(&self, name: String) -> Result<(), GitCraftError> {
+        let name = validate_remote_arg(&name)?;
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        git_cli::mutate(&self.path, &["fetch", "--prune", &name])?;
         Ok(())
     }
 
@@ -687,4 +779,18 @@ fn ignore_rule(path: &str) -> String {
         rule.push_str("\\ ");
     }
     rule
+}
+
+/// Trims a remote name/URL and rejects empty values or ones git would parse as options.
+fn validate_remote_arg(value: &str) -> Result<String, GitCraftError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(GitCraftError::message("remote name and URL must not be empty"));
+    }
+    if value.starts_with('-') {
+        return Err(GitCraftError::message(format!(
+            "invalid remote value \"{value}\""
+        )));
+    }
+    Ok(value.to_owned())
 }

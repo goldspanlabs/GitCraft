@@ -251,6 +251,9 @@ struct RepoWorkspaceView: View {
         .sheet(isPresented: $tab.isShowingStashSheet) {
             NewStashSheet(tab: tab)
         }
+        .sheet(isPresented: $tab.isShowingRemotesSheet) {
+            RemotesSheet(tab: tab)
+        }
         .confirmationDialog(
             tab.pendingConfirmation?.title ?? "",
             isPresented: Binding(

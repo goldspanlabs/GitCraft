@@ -45,7 +45,7 @@ struct SidebarView: View {
 
     var body: some View {
         List {
-            Section {
+            Section(isExpanded: $isWorkingTreeExpanded) {
                 if isWorkingTreeExpanded {
                     Button {
                         tab.scrollToWorkingChanges()
@@ -70,10 +70,10 @@ struct SidebarView: View {
                     .buttonStyle(.plain)
                 }
             } header: {
-                CollapsibleSectionHeader(title: "WORKING TREE", isExpanded: $isWorkingTreeExpanded)
+                SectionHeaderLabel(title: "WORKING TREE") { [] }
             }
 
-            Section {
+            Section(isExpanded: $isLocalBranchesExpanded) {
                 if isLocalBranchesExpanded {
                     ForEach(localBranchRows) { row in
                         switch row.kind {
@@ -97,26 +97,22 @@ struct SidebarView: View {
                     }
                 }
             } header: {
-                CollapsibleSectionHeader(title: "LOCAL BRANCHES", isExpanded: $isLocalBranchesExpanded) {
-                    Button {
+                SectionHeaderLabel(title: "LOCAL BRANCHES") {
+                    [.item("New Branch…") {
                         tab.newBranchStartPoint = nil
                         tab.isShowingNewBranchSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 8)
-                    .help("Create new branch")
+                    }]
                 }
             }
 
-            if !remoteBranches.isEmpty {
-                Section {
+            do {
+                Section(isExpanded: $isRemotesExpanded) {
                     if isRemotesExpanded {
+                        if tab.remotes.isEmpty {
+                            Text("No remotes")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                         ForEach(remoteBranchRows) { row in
                             switch row.kind {
                             case let .folder(name, folderID, isExpanded):
@@ -139,11 +135,31 @@ struct SidebarView: View {
                         }
                     }
                 } header: {
-                    CollapsibleSectionHeader(title: "REMOTES", isExpanded: $isRemotesExpanded)
+                    SectionHeaderLabel(title: "REMOTES") {
+                        var entries: [HeaderMenuEntry] = [
+                            .item("Add Remote…") {
+                                tab.remotesSheetStartsAdding = true
+                                tab.isShowingRemotesSheet = true
+                            },
+                            .item("Manage Remotes…", enabled: !tab.remotes.isEmpty) {
+                                tab.remotesSheetStartsAdding = false
+                                tab.isShowingRemotesSheet = true
+                            },
+                        ]
+                        if !tab.remotes.isEmpty {
+                            entries.append(.separator)
+                            for remote in tab.remotes {
+                                entries.append(.item("Fetch \(remote.name)", enabled: !tab.isBusy) {
+                                    tab.fetchRemote(remote.name)
+                                })
+                            }
+                        }
+                        return entries
+                    }
                 }
             }
 
-            Section {
+            Section(isExpanded: $isTagsExpanded) {
                 if isTagsExpanded {
                     if tab.tags.isEmpty {
                         Text("No tags")
@@ -181,24 +197,15 @@ struct SidebarView: View {
                     }
                 }
             } header: {
-                CollapsibleSectionHeader(title: "TAGS", isExpanded: $isTagsExpanded) {
-                    Button {
+                SectionHeaderLabel(title: "TAGS") {
+                    [.item("New Tag…") {
                         tab.newTagTarget = nil
                         tab.isShowingNewTagSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 8)
-                    .help("Create new tag")
+                    }]
                 }
             }
 
-            Section {
+            Section(isExpanded: $isStashesExpanded) {
                 if isStashesExpanded {
                     if tab.stashes.isEmpty {
                         Text("No stashes")
@@ -239,20 +246,10 @@ struct SidebarView: View {
                     }
                 }
             } header: {
-                CollapsibleSectionHeader(title: "STASHES", isExpanded: $isStashesExpanded) {
-                    Button {
+                SectionHeaderLabel(title: "STASHES") {
+                    [.item("Stash Changes…", enabled: tab.totalChangesCount > 0 && !tab.isBusy) {
                         tab.isShowingStashSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 8)
-                    .disabled(tab.totalChangesCount == 0 || tab.isBusy)
-                    .help("Stash working changes")
+                    }]
                 }
             }
         }
@@ -507,50 +504,260 @@ private struct RemoteBranchRowView: View {
     }
 }
 
-private struct CollapsibleSectionHeader<Trailing: View>: View {
+enum HeaderMenuEntry {
+    case item(String, enabled: Bool = true, action: () -> Void)
+    case separator
+}
+
+/// Section title row with a right-click menu. The menu is a plain `NSMenu`, because
+/// SwiftUI's `.contextMenu` makes macOS append a system "Ask Siri" item on text rows.
+private struct SectionHeaderLabel: View {
     let title: String
-    @Binding var isExpanded: Bool
-    @ViewBuilder var trailing: () -> Trailing
+    let entries: () -> [HeaderMenuEntry]
 
-    init(
-        title: String,
-        isExpanded: Binding<Bool>,
-        @ViewBuilder trailing: @escaping () -> Trailing
-    ) {
+    init(title: String, entries: @escaping () -> [HeaderMenuEntry]) {
         self.title = title
-        self._isExpanded = isExpanded
-        self.trailing = trailing
-    }
-
-    init(
-        title: String,
-        isExpanded: Binding<Bool>
-    ) where Trailing == EmptyView {
-        self.title = title
-        self._isExpanded = isExpanded
-        self.trailing = { EmptyView() }
+        self.entries = entries
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .frame(width: 10, alignment: .center)
-                    Text(title)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
+        // The disclosure chevron is drawn natively by the sidebar `Section(isExpanded:)`.
+        HStack {
+            Text(title)
             Spacer()
+        }
+        .contentShape(Rectangle())
+        .overlay(RightClickMenuArea(entries: entries))
+    }
+}
 
-            trailing()
+private struct RightClickMenuArea: NSViewRepresentable {
+    let entries: () -> [HeaderMenuEntry]
+
+    func makeNSView(context: Context) -> RightClickView {
+        let view = RightClickView()
+        view.entries = entries
+        return view
+    }
+
+    func updateNSView(_ view: RightClickView, context: Context) {
+        view.entries = entries
+    }
+}
+
+private final class RightClickView: NSView {
+    var entries: () -> [HeaderMenuEntry] = { [] }
+
+    /// Only claim right-clicks (and ctrl-clicks) so hover and left-clicks still reach
+    /// the sidebar's native disclosure chevron underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent else { return nil }
+        switch event.type {
+        case .rightMouseDown:
+            return super.hitTest(point)
+        case .leftMouseDown where event.modifierFlags.contains(.control):
+            return super.hitTest(point)
+        default:
+            return nil
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) { showMenu(for: event) }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { showMenu(for: event) } else { super.mouseDown(with: event) }
+    }
+
+    private func showMenu(for event: NSEvent) {
+        let entries = entries()
+        guard !entries.isEmpty else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for entry in entries {
+            switch entry {
+            case let .item(title, enabled, action):
+                let item = NSMenuItem(title: title, action: #selector(MenuAction.run), keyEquivalent: "")
+                let target = MenuAction(action)
+                item.target = target
+                item.representedObject = target // keeps the target alive while the menu is open
+                item.isEnabled = enabled
+                menu.addItem(item)
+            case .separator:
+                menu.addItem(.separator())
+            }
+        }
+        // popUp(...) rather than popUpContextMenu: the latter lets the system append
+        // its own items (Ask Siri, Services).
+        menu.popUp(positioning: nil, at: convert(event.locationInWindow, from: nil), in: self)
+    }
+}
+
+private final class MenuAction: NSObject {
+    let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func run() { handler() }
+}
+
+struct RemotesSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @State private var newName = ""
+    @State private var newURL = ""
+    @State private var pendingRemoval: RemoteInfo?
+    @FocusState private var isNewNameFocused: Bool
+
+    private var canAdd: Bool {
+        !newName.trimmingCharacters(in: .whitespaces).isEmpty
+            && !newURL.trimmingCharacters(in: .whitespaces).isEmpty
+            && !tab.isBusy
+    }
+
+    private func add() {
+        guard canAdd else { return }
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        let url = newURL.trimmingCharacters(in: .whitespaces)
+        tab.addRemote(name: name, url: url) {
+            newName = ""
+            newURL = ""
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Remotes")
+                .font(.headline)
+
+            if tab.remotes.isEmpty {
+                Text("This repository has no remotes.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(tab.remotes, id: \.name) { remote in
+                        RemoteEditRow(tab: tab, remote: remote) {
+                            pendingRemoval = remote
+                        }
+                        .id("\(remote.name)|\(remote.fetchUrl)")
+                    }
+                }
+            }
+
+            Divider()
+
+            Text("Add Remote")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                TextField("Name (e.g. origin)", text: $newName)
+                    .frame(width: 140)
+                    .focused($isNewNameFocused)
+                TextField("URL", text: $newURL)
+                    .onSubmit(add)
+                Button("Add", action: add)
+                    .disabled(!canAdd)
+            }
+            .textFieldStyle(.roundedBorder)
+
+            if let error = tab.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    tab.errorMessage = nil
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 560)
+        .onAppear {
+            tab.errorMessage = nil
+            if tab.remotesSheetStartsAdding || tab.remotes.isEmpty {
+                isNewNameFocused = true
+            }
+        }
+        .confirmationDialog(
+            "Remove remote \"\(pendingRemoval?.name ?? "")\"?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            presenting: pendingRemoval
+        ) { remote in
+            Button("Remove", role: .destructive) {
+                tab.removeRemote(remote.name)
+                pendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: { _ in
+            Text("This removes the remote and its remote-tracking branches from this repository. Local branches are kept. Nothing is changed on the server.")
+        }
+    }
+}
+
+private struct RemoteEditRow: View {
+    @ObservedObject var tab: RepoTab
+    let remote: RemoteInfo
+    let onRemove: () -> Void
+    @State private var name: String
+    @State private var url: String
+
+    init(tab: RepoTab, remote: RemoteInfo, onRemove: @escaping () -> Void) {
+        self.tab = tab
+        self.remote = remote
+        self.onRemove = onRemove
+        _name = State(initialValue: remote.name)
+        _url = State(initialValue: remote.fetchUrl)
+    }
+
+    private var hasSeparatePushURL: Bool { remote.pushUrl != remote.fetchUrl }
+
+    private var isChanged: Bool {
+        name.trimmingCharacters(in: .whitespaces) != remote.name
+            || url.trimmingCharacters(in: .whitespaces) != remote.fetchUrl
+    }
+
+    private var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !url.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                TextField("Name", text: $name)
+                    .frame(width: 140)
+                TextField("URL", text: $url)
+                Button("Save") {
+                    tab.updateRemote(remote, newName: name, newURL: url)
+                }
+                .disabled(!isChanged || !isValid || tab.isBusy)
+                Button {
+                    tab.fetchRemote(remote.name)
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .help("Fetch \(remote.name) (and prune deleted branches)")
+                .disabled(tab.isBusy)
+                Button(role: .destructive, action: onRemove) {
+                    Image(systemName: "trash")
+                }
+                .help("Remove remote")
+                .disabled(tab.isBusy)
+            }
+            .textFieldStyle(.roundedBorder)
+            if hasSeparatePushURL {
+                Text("Push URL: \(remote.pushUrl) (set separately; Save replaces both URLs)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
     }
 }

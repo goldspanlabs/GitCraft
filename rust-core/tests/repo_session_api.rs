@@ -690,3 +690,68 @@ fn fetch_prunes_remote_branches_deleted_upstream() {
 
     assert!(!remote_refs(&clone_path).contains("origin/feature"));
 }
+
+// ---------------------------------------------------------------- remotes ---
+
+#[test]
+fn remote_management_roundtrip() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    assert!(session.list_remotes().unwrap().is_empty());
+
+    session
+        .add_remote("origin".into(), "https://example.com/a.git".into())
+        .unwrap();
+    let remotes = session.list_remotes().unwrap();
+    assert_eq!(remotes.len(), 1);
+    assert_eq!(remotes[0].name, "origin");
+    assert_eq!(remotes[0].fetch_url, "https://example.com/a.git");
+    assert_eq!(remotes[0].push_url, "https://example.com/a.git");
+
+    session
+        .set_remote_url("origin".into(), "https://example.com/b.git".into())
+        .unwrap();
+    assert_eq!(
+        session.list_remotes().unwrap()[0].fetch_url,
+        "https://example.com/b.git"
+    );
+
+    session
+        .rename_remote("origin".into(), "upstream".into())
+        .unwrap();
+    assert_eq!(session.list_remotes().unwrap()[0].name, "upstream");
+
+    session.remove_remote("upstream".into()).unwrap();
+    assert!(session.list_remotes().unwrap().is_empty());
+}
+
+#[test]
+fn remote_management_rejects_bad_input() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    assert!(session.add_remote("  ".into(), "x".into()).is_err());
+    assert!(session.add_remote("--mirror".into(), "x".into()).is_err());
+    assert!(session.add_remote("origin".into(), "-evil".into()).is_err());
+    // Duplicate names are reported by git.
+    session.add_remote("origin".into(), "u".into()).unwrap();
+    assert!(session.add_remote("origin".into(), "u2".into()).is_err());
+    assert!(session.remove_remote("nope".into()).is_err());
+}
+
+#[test]
+fn fetch_remote_targets_only_the_named_remote() {
+    let origin = init_repo_with_commit();
+    let clone_parent = tempfile::tempdir().unwrap();
+    let clone_path = clone_parent.path().join("clone");
+    run_git(
+        clone_parent.path(),
+        &[
+            "clone",
+            &origin.path().to_string_lossy(),
+            &clone_path.to_string_lossy(),
+        ],
+    );
+    run_git(origin.path(), &["branch", "newbranch"]);
+    open(&clone_path).fetch_remote("origin".into()).unwrap();
+    assert!(run_git(&clone_path, &["branch", "-r"]).contains("origin/newbranch"));
+}

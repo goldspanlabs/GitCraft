@@ -28,7 +28,7 @@ bundle: swift
 	cp $(APP_DIR)/.build/release/GitCraft $(APP)/Contents/MacOS/GitCraft
 	@SDK_VER="$$(xcrun --show-sdk-version 2>/dev/null || true)"; \
 	if [ -n "$$SDK_VER" ] && xcrun --find vtool >/dev/null 2>&1; then \
-		xcrun vtool -set-build-version macos 13.0 15.0 -replace \
+		xcrun vtool -set-build-version macos 14.0 15.0 -replace \
 			-output $(APP)/Contents/MacOS/GitCraft $(APP)/Contents/MacOS/GitCraft; \
 	fi
 	cp $(APP_DIR)/Info.plist $(APP)/Contents/Info.plist
@@ -36,7 +36,7 @@ bundle: swift
 		xcrun actool $(APP_DIR)/Resources/Assets.xcassets \
 			--compile $(APP)/Contents/Resources \
 			--platform macosx \
-			--minimum-deployment-target 13.0 \
+			--minimum-deployment-target 14.0 \
 			--app-icon AppIcon \
 			--output-partial-info-plist $(BUILD_DIR)/assetcatalog_generated_info.plist >/dev/null 2>&1 || true; \
 	fi

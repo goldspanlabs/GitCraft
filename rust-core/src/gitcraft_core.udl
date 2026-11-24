@@ -88,6 +88,12 @@ dictionary TagInfo {
   string target_oid_hex;
 };
 
+dictionary RemoteInfo {
+  string name;
+  string fetch_url;
+  string push_url;
+};
+
 dictionary StashInfo {
   u32 index;
   string name;
@@ -188,6 +194,24 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void discard_file(string path);
+
+  [Throws=GitCraftError]
+  sequence<RemoteInfo> list_remotes();
+
+  [Throws=GitCraftError]
+  void add_remote(string name, string url);
+
+  [Throws=GitCraftError]
+  void set_remote_url(string name, string url);
+
+  [Throws=GitCraftError]
+  void rename_remote(string old_name, string new_name);
+
+  [Throws=GitCraftError]
+  void remove_remote(string name);
+
+  [Throws=GitCraftError]
+  void fetch_remote(string name);
 
   [Throws=GitCraftError]
   void ignore_path(string path, boolean local_only);
