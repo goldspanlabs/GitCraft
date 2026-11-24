@@ -15,6 +15,12 @@ struct InspectorView: View {
 private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
 
+    private var canCommit: Bool {
+        !tab.stagedFiles.isEmpty
+            && !tab.commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !tab.isBusy
+    }
+
     var body: some View {
         HSplitView {
             // Left: Staged & Unstaged lists + Commit Composer
@@ -160,16 +166,19 @@ private struct WorkingChangesInspectorView: View {
                         }
                         .disabled(tab.totalChangesCount == 0 || tab.isBusy)
 
-                        Button("Commit") {
-                            tab.commitChanges()
+                        // A disabled prominent button renders as a heavy grey slab, so fall back
+                        // to the regular bordered style until committing is possible.
+                        if canCommit {
+                            Button("Commit") {
+                                tab.commitChanges()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.return, modifiers: .command)
+                        } else {
+                            Button("Commit") {}
+                                .buttonStyle(.bordered)
+                                .disabled(true)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(
-                            tab.stagedFiles.isEmpty
-                                || tab.commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                || tab.isBusy
-                        )
                     }
                 }
                 .padding(10)
