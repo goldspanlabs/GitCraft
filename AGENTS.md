@@ -46,7 +46,7 @@ These only run after you enable them with `git config core.hooksPath .githooks`.
 ## Conventions
 
 - **Commit messages:** a short imperative subject, for example `Keep the commit summary to one line`. Add a PR number in parentheses when merging a PR, as in `(#12)`. Add a body only when the reason isn't obvious from the subject.
-- **Branches:** develop on the branch named in the session instructions. Don't push to other branches without permission.
+- **Branches:** work on the feature branch you were given, not on `main`. Don't push to any other branch without permission.
 - **Pull requests:** only open one when asked. Mirror the repository's PR template if one exists.
 - **Rust:** keep fmt and clippy clean (CI and the hooks enforce both).
 - **Swift:** match the existing patterns in the file you're editing.
