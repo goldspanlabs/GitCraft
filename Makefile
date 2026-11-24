@@ -56,6 +56,8 @@ bundle: swift
 		iconutil -c icns $(BUILD_DIR)/AppIcon.iconset -o $(APP)/Contents/Resources/AppIcon.icns; \
 		rm -rf $(BUILD_DIR)/AppIcon.iconset; \
 	fi
+	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Light-1024.png $(APP)/Contents/Resources/AppIcon-Light.png
+	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png $(APP)/Contents/Resources/AppIcon-Dark.png
 	codesign --force --deep --sign - $(APP)
 
 clean:

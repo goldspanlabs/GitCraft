@@ -794,6 +794,7 @@ struct NewStashSheet: View {
 struct NewBranchSheet: View {
     @ObservedObject var tab: RepoTab
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var branchName = ""
     // Remembered between uses of the dialog.
     @AppStorage("createBranchCheckout") private var checkout = true
@@ -814,7 +815,7 @@ struct NewBranchSheet: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AppIconImage.image(for: colorScheme))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 64, height: 64)
@@ -956,6 +957,133 @@ struct NewBranchSheet: View {
             checkout: checkout,
             localChanges: localChanges
         )
+        dismiss()
+    }
+}
+
+/// The app icon matching the appearance: the light icon in light mode, the dark one in dark mode.
+enum AppIconImage {
+    static func image(for scheme: ColorScheme) -> NSImage {
+        let name = scheme == .dark ? "AppIcon-Dark" : "AppIcon-Light"
+        if let url = Bundle.main.url(forResource: name, withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return NSApp.applicationIconImage
+    }
+}
+
+/// Checks a commit out detached, after asking what to do with local changes.
+struct CheckoutCommitSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var localChanges: RepoTab.LocalChangesHandling = .doNotChange
+    @State private var confirmDiscard = false
+
+    private var commit: CommitRow? {
+        tab.commits.first { $0.oidHex == tab.checkoutCommitOid }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            Image(nsImage: AppIconImage.image(for: colorScheme))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 64, height: 64)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Checkout Commit")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Checkout a particular commit. Repository will be in detached HEAD state")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Commit to checkout:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .gridColumnAlignment(.trailing)
+
+                        HStack(spacing: 6) {
+                            Text(commit?.shortOid ?? String((tab.checkoutCommitOid ?? "").prefix(7)))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text(commit?.summary ?? "")
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow(alignment: .top) {
+                        Text("Local changes:")
+                            .font(.system(size: 13))
+
+                        Picker("", selection: $localChanges) {
+                            Text("Don't change")
+                                .tag(RepoTab.LocalChangesHandling.doNotChange)
+                            Text("Stash and reapply")
+                                .tag(RepoTab.LocalChangesHandling.stashAndReapply)
+                            Text("Discard")
+                                .tag(RepoTab.LocalChangesHandling.discard)
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                    }
+                }
+                .padding(.top, 2)
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.large)
+
+                    Button("Checkout") {
+                        if localChanges == .discard && tab.totalChangesCount > 0 {
+                            confirmDiscard = true
+                        } else {
+                            checkoutNow()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+                    .disabled(tab.checkoutCommitOid == nil)
+                }
+                .padding(.top, 6)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 20)
+        .confirmationDialog(
+            "Discard all local changes?",
+            isPresented: $confirmDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes and Checkout", role: .destructive) {
+                checkoutNow()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently reverts \(tab.totalChangesCount) changed file(s) and deletes untracked files. It can't be undone.")
+        }
+    }
+
+    private func checkoutNow() {
+        if let oid = tab.checkoutCommitOid {
+            tab.checkoutCommit(oid, localChanges: localChanges)
+        }
         dismiss()
     }
 }
