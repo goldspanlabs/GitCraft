@@ -7,39 +7,67 @@ let showAvatarsStorageKey = "showAvatars"
 
 /// Resolves and caches author avatars. GitHub noreply addresses map to the GitHub
 /// avatar of that user; everything else goes through Gravatar using a SHA-256 hash
-/// of the address (the address itself is never sent). Misses fall back to initials.
+/// of the address (the address itself is never sent). An address with no avatar gets the
+/// GitHub mark; if the lookup itself fails (offline, rate-limited) initials are shown and
+/// the lookup is retried after a minute.
 @MainActor
 final class AvatarLoader {
     static let shared = AvatarLoader()
 
+    private enum Lookup {
+        case found(NSImage)
+        case notFound
+        case failed
+    }
+
     private let cache = NSCache<NSString, NSImage>()
-    private var misses = Set<String>()
-    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+    private var failedAt: [String: Date] = [:]
+    private var inFlight: [String: Task<Lookup, Never>] = [:]
 
     func image(for email: String) async -> NSImage? {
         let key = email.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !key.isEmpty, !misses.contains(key) else { return nil }
+        guard !key.isEmpty else { return nil }
+        if let sender = KnownSender(email: key) { return sender.tile }
         if let hit = cache.object(forKey: key as NSString) { return hit }
-        if let task = inFlight[key] { return await task.value }
+        if let failed = failedAt[key], Date().timeIntervalSince(failed) < 60 { return nil }
+        if let task = inFlight[key] { return await resolve(await task.value, key: key) }
 
-        let task = Task<NSImage?, Never> {
-            guard let url = Self.avatarURL(for: key) else { return nil }
+        let task = Task<Lookup, Never> {
+            guard let url = Self.avatarURL(for: key) else { return .notFound }
             var request = URLRequest(url: url)
             request.timeoutInterval = 10
             guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200
-            else { return nil }
-            return NSImage(data: data)
+                  let status = (response as? HTTPURLResponse)?.statusCode
+            else { return .failed }
+            switch status {
+            case 200:
+                return NSImage(data: data).map(Lookup.found) ?? .notFound
+            case 404:
+                return .notFound
+            default:
+                return .failed
+            }
         }
         inFlight[key] = task
-        let image = await task.value
+        let result = await task.value
         inFlight[key] = nil
-        if let image {
+        return resolve(result, key: key)
+    }
+
+    private func resolve(_ lookup: Lookup, key: String) -> NSImage? {
+        switch lookup {
+        case let .found(image):
             cache.setObject(image, forKey: key as NSString)
-        } else {
-            misses.insert(key)
+            return image
+        case .notFound:
+            // No avatar exists for this address: fall back to the GitHub mark.
+            let tile = KnownSender.github.tile
+            cache.setObject(tile, forKey: key as NSString)
+            return tile
+        case .failed:
+            failedAt[key] = Date()
+            return nil
         }
-        return image
     }
 
     nonisolated static func avatarURL(for email: String) -> URL? {
