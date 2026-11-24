@@ -426,7 +426,7 @@ private struct CommitMessagePane: View {
                 Text("CHANGED FILES (\(tab.commitDetail?.files.count ?? 0))")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                CommitFileList(tab: tab, selectsPath: false) { onOpenFile($0 ?? "") }
+                CommitFileList(tab: tab, selectsPath: false, edgeInset: 0) { onOpenFile($0 ?? "") }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -437,6 +437,8 @@ private struct CommitMessagePane: View {
 private struct CommitFileList: View {
     @ObservedObject var tab: RepoTab
     var selectsPath = true
+    /// Margin between the pane edge and the row highlight (matches the 10pt header inset).
+    var edgeInset: CGFloat = 10
     let onSelect: (String?) -> Void
 
     var body: some View {
@@ -453,7 +455,7 @@ private struct CommitFileList: View {
                             .truncationMode(.head)
                         Spacer()
                     }
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(
                         selectsPath && tab.selectedFilePath == file.path
@@ -464,6 +466,7 @@ private struct CommitFileList: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .padding(.horizontal, edgeInset)
             }
         }
         .padding(.vertical, 4)
