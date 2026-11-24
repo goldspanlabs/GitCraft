@@ -2,120 +2,210 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// Hands the hosting `NSWindow` to SwiftUI code once the view is in a window.
-struct WindowAccessor: NSViewRepresentable {
-    let onWindow: (NSWindow) -> Void
-
-    func makeNSView(context _: Context) -> NSView {
-        let view = AccessorView()
-        view.onWindow = onWindow
-        return view
-    }
-
-    func updateNSView(_: NSView, context _: Context) {}
-
-    private final class AccessorView: NSView {
-        var onWindow: ((NSWindow) -> Void)?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let window { onWindow?(window) }
-        }
-    }
+extension NSToolbarItem.Identifier {
+    static let repoActions = NSToolbarItem.Identifier("GitCraft.repoActions")
+    static let repoSearch = NSToolbarItem.Identifier("GitCraft.repoSearch")
 }
 
 enum WindowTabs {
     static let identifier = "GitCraft.repository"
 
-    /// Makes `window` a native macOS tab of an existing repository window, if there is one.
-    /// Windows opened together (restoring several repositories) may not be on screen yet
-    /// when the next one looks for a host, so the search is retried briefly.
+    /// Shows `window`, as a native tab of an existing GitCraft window if there is one.
     @MainActor
-    static func joinRepositoryTabs(_ window: NSWindow, retries: Int = 6) {
-        // GitCraft reopens its repositories itself; AppKit restoring the windows as well
-        // brings every repository back twice.
-        window.isRestorable = false
+    static func show(_ window: NSWindow) {
+        window.isRestorable = false // GitCraft reopens its own repositories at launch
         window.tabbingIdentifier = identifier
         window.tabbingMode = .preferred
-        guard window.tabbedWindows == nil else { return } // already tabbed
         let host = NSApp.windows.first {
             $0 !== window
                 && $0.tabbingIdentifier == identifier
                 && $0.tabbingMode == .preferred
+                && $0.isVisible
                 && !$0.isMiniaturized
-                && ($0.tabbedWindows != nil || $0.isVisible)
         }
         if let host {
             host.addTabbedWindow(window, ordered: .above)
-            window.makeKeyAndOrderFront(nil)
-        } else if retries > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                joinRepositoryTabs(window, retries: retries - 1)
-            }
+        } else {
+            window.center()
         }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Brings the tab holding `window` to the front.
+    @MainActor
+    static func reveal(_ window: NSWindow) {
+        window.tabGroup?.selectedWindow = window
+        window.makeKeyAndOrderFront(nil)
     }
 }
 
-/// Keeps a reference to a view's window. (SwiftUI `@State` can't be written from the
-/// window accessor, which can fire before the view is installed.)
+/// One repository: an AppKit window (sidebar + detail in an `NSSplitViewController`, an
+/// `NSToolbar`) that macOS groups with the other repository windows as native tabs.
 @MainActor
-final class WindowHolder: ObservableObject {
-    weak var window: NSWindow?
-}
-
-/// Connects a repository's `RepoTab` to its window: joins the tab group, shows the
-/// clean/dirty dot on the tab, and releases the repository when the window closes.
-@MainActor
-final class RepoWindowBinding: ObservableObject {
-    private var window: NSWindow?
-    private var tab: RepoTab?
-    private var closeObserver: NSObjectProtocol?
-    private var changes: AnyCancellable?
+final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
+    let tab: RepoTab
+    private unowned let workspace: WorkspaceState
     private let dot = TabStatusDot()
-    private var onClose: ((RepoTab) -> Void)?
+    private var changes: AnyCancellable?
+    private var searchField: NSSearchField?
 
-    func attach(window: NSWindow) {
-        guard self.window !== window else { return }
-        self.window = window
-        WindowTabs.joinRepositoryTabs(window)
-        window.tab.accessoryView = dot
-        closeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: window,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let tab = self.tab else { return }
-                self.onClose?(tab)
-            }
-        }
-        updateTab()
-    }
-
-    func closeWindow() {
-        window?.close()
-    }
-
-    func bind(tab: RepoTab, onClose: @escaping (RepoTab) -> Void) {
-        guard self.tab !== tab else { return }
+    init(tab: RepoTab, workspace: WorkspaceState) {
         self.tab = tab
-        self.onClose = onClose
+        self.workspace = workspace
+
+        let sidebar = NSHostingController(rootView: AppearanceScoped { SidebarView(tab: tab) })
+        sidebar.sizingOptions = []
+        let detail = NSHostingController(rootView: AppearanceScoped {
+            RepoDetailView(workspace: workspace, tab: tab)
+        })
+        detail.sizingOptions = []
+
+        let split = NSSplitViewController()
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = 220
+        sidebarItem.maximumThickness = 340
+        split.addSplitViewItem(sidebarItem)
+        split.addSplitViewItem(NSSplitViewItem(viewController: detail))
+
+        let window = NSWindow(contentViewController: split)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.setContentSize(NSSize(width: 1180, height: 760))
+        window.contentMinSize = NSSize(width: 1040, height: 680)
+        window.title = tab.name
+        window.subtitle = tab.currentBranch
+
+        super.init(window: window)
+        window.delegate = self
+        window.tab.accessoryView = dot
+
+        let toolbar = NSToolbar(identifier: "GitCraft.repoToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
+
         changes = tab.objectWillChange
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateTab() }
-        updateTab()
+            .sink { [weak self] _ in self?.refreshChrome() }
+        refreshChrome()
     }
 
-    private func updateTab() {
-        guard let tab else { return }
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not used") }
+
+    func showInTabs() { WindowTabs.show(window!) }
+    func reveal() { WindowTabs.reveal(window!) }
+
+    private func refreshChrome() {
+        window?.title = tab.name
+        window?.subtitle = tab.currentBranch
         dot.isDirty = tab.totalChangesCount > 0
         window?.tab.toolTip = tab.totalChangesCount > 0
             ? "\(tab.name): \(tab.totalChangesCount) uncommitted changes"
             : "\(tab.name): clean"
     }
 
-    deinit {
-        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+    /// The tab bar's "+" button asks the responder chain for this.
+    @objc override func newWindowForTab(_: Any?) {
+        workspace.openWelcome()
+    }
+
+    func windowWillClose(_: Notification) {
+        workspace.windowClosed(self)
+    }
+
+    // MARK: Toolbar
+
+    func toolbarDefaultItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.toggleSidebar, .sidebarTrackingSeparator, .repoActions, .flexibleSpace, .repoSearch]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(
+        _: NSToolbar,
+        itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar _: Bool
+    ) -> NSToolbarItem? {
+        switch identifier {
+        case .repoActions:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            let (workspace, tab) = (self.workspace, self.tab)
+            let hosting = NSHostingView(rootView: AppearanceScoped {
+                RepoToolbarActionsView(workspace: workspace, tab: tab)
+            })
+            item.view = hosting
+            item.isBordered = false
+            item.label = "Actions"
+            return item
+        case .repoSearch:
+            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            item.searchField.placeholderString = "Filter commits"
+            item.searchField.stringValue = tab.searchQuery
+            item.searchField.delegate = self
+            item.label = "Filter"
+            searchField = item.searchField
+            return item
+        default:
+            return nil
+        }
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSSearchField, field === searchField else { return }
+        tab.updateSearch(field.stringValue)
+    }
+}
+
+/// The "Repository Manager" tab: open a repository or pick a recent one.
+@MainActor
+final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
+    private unowned let workspace: WorkspaceState
+
+    init(workspace: WorkspaceState) {
+        self.workspace = workspace
+        let window = NSWindow(contentViewController: NSViewController())
+        super.init(window: window)
+
+        let root = AppearanceScoped { [weak self] in
+            WelcomeWindowContent(workspace: workspace) { self?.window?.close() }
+        }
+        let hosting = NSHostingController(rootView: root)
+        hosting.sizingOptions = []
+        window.contentViewController = hosting
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.setContentSize(NSSize(width: 1180, height: 760))
+        window.contentMinSize = NSSize(width: 1040, height: 680)
+        window.title = "Repository Manager"
+        window.delegate = self
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not used") }
+
+    func showInTabs() { WindowTabs.show(window!) }
+
+    func windowWillClose(_: Notification) {
+        workspace.welcomeClosed(self)
+    }
+
+    @objc override func newWindowForTab(_: Any?) {
+        workspace.openWelcome()
+    }
+}
+
+private struct WelcomeWindowContent: View {
+    @ObservedObject var workspace: WorkspaceState
+    let onOpened: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let error = workspace.openError {
+                ErrorBannerView(message: error) { workspace.openError = nil }
+            }
+            WelcomeView(workspace: workspace, onOpened: onOpened)
+        }
     }
 }
 

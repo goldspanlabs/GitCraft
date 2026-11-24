@@ -4,23 +4,15 @@ import SwiftUI
 @main
 struct GitCraftApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var workspace = WorkspaceState()
 
+    // Windows are plain AppKit windows (see `RepoWindowController`), so the only SwiftUI
+    // scene is Settings. It also carries the app-wide menu commands.
     var body: some Scene {
-        // One window per repository; macOS groups them into native tabs. A window with
-        // no value (what the tab bar's "+" button opens) shows the welcome screen.
-        WindowGroup("GitCraft", for: URL.self) { $url in
-            RepoWindowView(url: url)
-                .environmentObject(workspace)
-                .frame(minWidth: 1040, minHeight: 680)
-        }
-        .commands {
-            RepoCommands(workspace: workspace)
-        }
-
-        // Adds "GitCraft ▸ Settings…" (⌘,) to the macOS application menu.
         Settings {
             SettingsView()
+        }
+        .commands {
+            RepoCommands()
         }
     }
 }
@@ -29,10 +21,24 @@ struct GitCraftApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
-        // GitCraft restores its own open repositories (see `WorkspaceState.restoreTabsIfNeeded`).
-        // Letting macOS restore the windows too opens every repository twice.
-        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
     }
+
+    func applicationDidFinishLaunching(_: Notification) {
+        let saved = UserDefaults.standard.string(forKey: AppearancePreference.storageKey) ?? ""
+        AppearancePreference.apply(AppearancePreference(rawValue: saved) ?? .system)
+
+        let workspace = WorkspaceState.shared
+        if !workspace.restoreTabs() {
+            workspace.openWelcome()
+        }
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { WorkspaceState.shared.openWelcome() }
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
         WorkspaceState.isTerminating = true
@@ -40,158 +46,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-private struct ActiveRepoTabKey: FocusedValueKey {
-    typealias Value = RepoTab
-}
-
-extension FocusedValues {
-    var activeRepoTab: RepoTab? {
-        get { self[ActiveRepoTabKey.self] }
-        set { self[ActiveRepoTabKey.self] = newValue }
-    }
-}
-
 struct RepoCommands: Commands {
-    let workspace: WorkspaceState
-    @Environment(\.openWindow) private var openWindow
-    @FocusedValue(\.activeRepoTab) private var activeTab
-
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Open Repository…") {
-                workspace.install(openWindow: openWindow)
-                workspace.chooseRepository()
-            }
-            .keyboardShortcut("o", modifiers: .command)
-            Button("New Repository Tab…") {
-                workspace.install(openWindow: openWindow)
-                workspace.chooseRepository()
-            }
-            .keyboardShortcut("t", modifiers: .command)
+            Button("Open Repository…") { WorkspaceState.shared.chooseRepository() }
+                .keyboardShortcut("o", modifiers: .command)
+            Button("New Repository Tab…") { WorkspaceState.shared.chooseRepository() }
+                .keyboardShortcut("t", modifiers: .command)
             Divider()
-            Button("Refresh") { activeTab?.refresh() }
+            Button("Refresh") { WorkspaceState.shared.activeTab?.refresh() }
                 .keyboardShortcut("r", modifiers: .command)
-                .disabled(activeTab == nil)
+        }
+        CommandGroup(after: .sidebar) {
+            Button("Toggle Sidebar") {
+                NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
         }
     }
 }
 
-/// Content of every window: a repository when `url` is set, otherwise the welcome screen.
-struct RepoWindowView: View {
-    let url: URL?
-    @EnvironmentObject private var workspace: WorkspaceState
-    @Environment(\.openWindow) private var openWindow
+/// Applies the user's appearance preference to a hosted SwiftUI tree.
+struct AppearanceScoped<Content: View>: View {
     @AppStorage(AppearancePreference.storageKey)
     private var appearanceRaw = AppearancePreference.system.rawValue
-
-    private var appearance: AppearancePreference {
-        AppearancePreference(rawValue: appearanceRaw) ?? .system
-    }
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        Group {
-            if let url {
-                RepositoryWindowContent(url: url)
-            } else {
-                WelcomeWindowContent()
-            }
-        }
-        .preferredColorScheme(appearance.colorScheme)
-        // Applies the saved appearance at launch. Changes made in Settings are applied
-        // by `SettingsView` itself, so this still works if no repository window is open.
-        .onAppear {
-            workspace.install(openWindow: openWindow)
-            AppearancePreference.apply(appearance)
-        }
+        content()
+            .preferredColorScheme((AppearancePreference(rawValue: appearanceRaw) ?? .system).colorScheme)
     }
 }
 
-private struct RepositoryWindowContent: View {
-    let url: URL
-    @EnvironmentObject private var workspace: WorkspaceState
-    @StateObject private var binding = RepoWindowBinding()
-    @State private var tab: RepoTab?
-
-    var body: some View {
-        Group {
-            if let tab {
-                RepoWorkspaceView(workspace: workspace, tab: tab)
-                    .focusedSceneValue(\.activeRepoTab, tab)
-            } else {
-                VStack(spacing: 0) {
-                    if let error = workspace.openError {
-                        ErrorBanner(message: error) { workspace.openError = nil }
-                    }
-                    Spacer()
-                }
-            }
-        }
-        .background(WindowAccessor { binding.attach(window: $0) })
-        .onAppear {
-            guard tab == nil else { return }
-            // A second window for a repository that's already open (macOS restoring a
-            // window that GitCraft's own restore also opened) just closes itself.
-            if workspace.isOpen(url) && workspace.hasNoPendingTab(for: url) {
-                binding.closeWindow()
-                return
-            }
-            guard let claimed = workspace.claimTab(for: url) else { return }
-            tab = claimed
-            binding.bind(tab: claimed) { workspace.releaseTab($0) }
-        }
-    }
-}
-
-private struct WelcomeWindowContent: View {
-    @EnvironmentObject private var workspace: WorkspaceState
-    @Environment(\.openWindow) private var openWindow
-    @StateObject private var holder = WindowHolder()
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if let error = workspace.openError {
-                ErrorBanner(message: error) { workspace.openError = nil }
-            }
-            WelcomeView(workspace: workspace) {
-                // The repository opens in its own tab; this welcome tab is done.
-                holder.window?.close()
-            }
-        }
-        .background(WindowAccessor { [holder] window in
-            holder.window = window
-            window.title = "Repository Manager"
-            WindowTabs.joinRepositoryTabs(window)
-        })
-        .onAppear {
-            // Child views appear before their parents, so install here rather than relying
-            // on `RepoWindowView` having done it already.
-            workspace.install(openWindow: openWindow)
-            // At launch, bring back the repositories that were open last time.
-            if workspace.restoreTabsIfNeeded() {
-                // Give the restored repository windows time to appear (and join tabs) first.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { holder.window?.close() }
-            }
-        }
-    }
-}
-
-struct RepoWorkspaceView: View {
+/// The window's detail column: banners, commit graph and inspector.
+struct RepoDetailView: View {
     @ObservedObject var workspace: WorkspaceState
     @ObservedObject var tab: RepoTab
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var searchText = ""
 
-    @ViewBuilder
-    private var detail: some View {
+    var body: some View {
         VStack(spacing: 0) {
             if let error = workspace.openError {
-                ErrorBanner(message: error) {
+                ErrorBannerView(message: error) {
                     workspace.openError = nil
                 }
             }
 
             if let error = tab.errorMessage {
-                ErrorBanner(message: error) {
+                ErrorBannerView(message: error) {
                     tab.errorMessage = nil
                 }
             }
@@ -236,113 +137,90 @@ struct RepoWorkspaceView: View {
                     .frame(minHeight: 210, idealHeight: 290)
             }
         }
-        // Hidden shortcut for Cmd+Shift+S sidebar toggle
-        .background(
-            Button("") {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-                }
-            }
-            .keyboardShortcut("s", modifiers: [.command, .shift])
-            .opacity(0)
-        )
+        .modifier(RepoSheets(tab: tab))
     }
+}
+
+/// The toolbar's centre cluster (Quick Launch, Fetch/Pull/Push, Stash, branch filter).
+/// Hosted in an `NSToolbarItem` by `RepoWindowController`.
+struct RepoToolbarActionsView: View {
+    let workspace: WorkspaceState
+    @ObservedObject var tab: RepoTab
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(tab: tab)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
-        } detail: {
-            detail
-        }
-        .navigationTitle(tab.name)
-        .navigationSubtitle(tab.currentBranch)
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Filter commits")
-        .onChange(of: searchText) { newValue in
-            tab.updateSearch(newValue)
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 10) {
-                    Button {
-                        workspace.chooseRepository()
-                    } label: {
-                        TopBarIconLabel(title: "Quick Launch") {
-                            ToolbarIconView(icon: .quickLaunch)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open Repository (Cmd+O)")
+        HStack(spacing: 10) {
+            Button {
+                workspace.chooseRepository()
+            } label: {
+                TopBarIconLabel(title: "Quick Launch") {
+                    ToolbarIconView(icon: .quickLaunch)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Open Repository (Cmd+O)")
 
-                    HStack(spacing: 0) {
-                        Button {
-                            tab.runRemote(.fetch)
-                        } label: {
-                            TopBarIconLabel(title: "Fetch") {
-                                ToolbarIconView(icon: .fetch)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(tab.isBusy)
-                        .help("Fetch from remote")
-
-                        TopBarSeparator()
-
-                        Button {
-                            tab.runRemote(.pull)
-                        } label: {
-                            TopBarIconLabel(title: "Pull", badgeCount: tab.currentBranchBehindCount) {
-                                ToolbarIconView(icon: .pull)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(tab.isBusy)
-                        .help("Pull from remote")
-
-                        TopBarSeparator()
-
-                        Button {
-                            tab.runRemote(.push)
-                        } label: {
-                            TopBarIconLabel(title: "Push", badgeCount: tab.currentBranchAheadCount) {
-                                ToolbarIconView(icon: .push)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(tab.isBusy)
-                        .help("Push to remote")
-                    }
-
-                    TopBarStashItem(tab: tab)
-
-                    Button {
-                        tab.toggleScopeToCurrentBranch()
-                    } label: {
-                        TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
-                            ToolbarIconView(icon: .filter)
-                                .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .help(tab.scopeToCurrentBranch
-                        ? "Showing the current branch and its base branch — click to show all branches"
-                        : "Showing all branches — click to show only the current branch and its base branch")
-
-                    if tab.isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(.leading, 4)
+            HStack(spacing: 0) {
+                Button {
+                    tab.runRemote(.fetch)
+                } label: {
+                    TopBarIconLabel(title: "Fetch") {
+                        ToolbarIconView(icon: .fetch)
                     }
                 }
-                .fixedSize()
-                .background(ToolbarPillRemovalView())
+                .buttonStyle(.plain)
+                .disabled(tab.isBusy)
+                .help("Fetch from remote")
+
+                TopBarSeparator()
+
+                Button {
+                    tab.runRemote(.pull)
+                } label: {
+                    TopBarIconLabel(title: "Pull", badgeCount: tab.currentBranchBehindCount) {
+                        ToolbarIconView(icon: .pull)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(tab.isBusy)
+                .help("Pull from remote")
+
+                TopBarSeparator()
+
+                Button {
+                    tab.runRemote(.push)
+                } label: {
+                    TopBarIconLabel(title: "Push", badgeCount: tab.currentBranchAheadCount) {
+                        ToolbarIconView(icon: .push)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(tab.isBusy)
+                .help("Push to remote")
+            }
+
+            TopBarStashItem(tab: tab)
+
+            Button {
+                tab.toggleScopeToCurrentBranch()
+            } label: {
+                TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
+                    ToolbarIconView(icon: .filter)
+                        .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
+                }
+            }
+            .buttonStyle(.plain)
+            .help(tab.scopeToCurrentBranch
+                ? "Showing the current branch and its base branch — click to show all branches"
+                : "Showing all branches — click to show only the current branch and its base branch")
+
+            if tab.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.leading, 4)
             }
         }
-        .modifier(RepoSheets(tab: tab))
-        .onAppear {
-            searchText = tab.searchQuery
-        }
+        .fixedSize()
+        .padding(.horizontal, 6)
     }
 }
 
@@ -427,7 +305,7 @@ private struct MergeBanner: View {
     }
 }
 
-private struct ErrorBanner: View {
+struct ErrorBannerView: View {
     let message: String
     let onDismiss: () -> Void
 
@@ -448,55 +326,6 @@ private struct ErrorBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.12))
-    }
-}
-
-private struct ToolbarPillRemovalView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = PillRemovalProbeView()
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? PillRemovalProbeView)?.stripToolbarBezel()
-    }
-
-    private final class PillRemovalProbeView: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            stripToolbarBezel()
-            DispatchQueue.main.async { [weak self] in
-                self?.stripToolbarBezel()
-            }
-        }
-
-        override func layout() {
-            super.layout()
-            stripToolbarBezel()
-        }
-
-        func stripToolbarBezel() {
-            if let items = window?.toolbar?.items {
-                for item in items {
-                    item.isBordered = false
-                }
-            }
-            // Walk up to the enclosing NSToolbarItemViewer and hide any background platter/glass subviews.
-            var cursor: NSView? = superview
-            while let current = cursor {
-                let className = String(describing: type(of: current))
-                if className.contains("ToolbarItemViewer") || className.contains("ToolbarItemGroup") {
-                    for sub in current.subviews {
-                        let subName = String(describing: type(of: sub))
-                        if subName.contains("Bezel") || subName.contains("Glass") || subName.contains("Platter") || subName.contains("Background") || subName.contains("VisualEffect") {
-                            sub.isHidden = true
-                            sub.alphaValue = 0
-                        }
-                    }
-                }
-                cursor = current.superview
-            }
-        }
     }
 }
 
