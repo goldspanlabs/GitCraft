@@ -1,0 +1,58 @@
+# AGENTS.md
+
+Guidance for coding agents working in this repository.
+
+## Project layout
+
+GitCraft is a native macOS Git client. Git work happens in a Rust core; the UI is SwiftUI/AppKit.
+
+- `rust-core/` — Rust library (`gitcraft_core`). Git operations live here.
+  - `src/gitcraft_core.udl` — UniFFI interface definition. The Swift bindings are generated from it.
+  - `src/bin/uniffi-bindgen` — binary used to generate the bindings.
+  - `tests/` — Rust integration tests.
+- `macos-app/` — Swift package for the app.
+  - `Sources/*.swift` — UI code (`AppState`, `CommitTableView`, `SidebarView`, `InspectorView`, and others).
+  - `Sources/Generated/` — **generated, gitignored. Do not edit or commit.** Regenerate with `make bindings`.
+  - `Tests/` — Swift unit tests. `UITests/` — XcodeGen project for UI tests.
+- `.githooks/` — local git hooks (see below).
+
+The Swift side should reach Git only through the Rust core's exported API, not by shelling out to `git` itself.
+
+## Build and test
+
+Run from the repository root.
+
+| Task | Command | Notes |
+|---|---|---|
+| Rust tests | `cargo test --manifest-path rust-core/Cargo.toml` | Runs on any platform |
+| Rust format check | `cargo fmt --manifest-path rust-core/Cargo.toml --check` | |
+| Rust lint | `cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings` | Warnings are errors |
+| Regenerate bindings | `make bindings` | Required after changing `gitcraft_core.udl` |
+| Swift tests | `make test-swift` | Builds Rust and regenerates bindings first. macOS only |
+| Full app bundle | `make` | Produces `build/GitCraft.app`. macOS only |
+| UI tests | `make ui-tests` | Needs `xcodegen` and `xcodebuild`. macOS only |
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, Rust tests, `make test-swift`, and coverage. Before reporting a change as done, run the checks that apply to what you touched. If you can't run them here, say so and don't claim they pass.
+
+## Git hooks
+
+`.githooks/` contains:
+
+- `pre-commit` — runs `cargo fmt --check` when staged files include Rust.
+- `pre-push` — runs `cargo fmt --check` and `cargo clippy -D warnings`.
+
+These only run after you enable them with `git config core.hooksPath .githooks`. This isn't set up automatically, so check it before assuming the hooks are active. Don't bypass hooks with `--no-verify`.
+
+## Conventions
+
+- **Commit messages:** a short imperative subject, for example `Keep the commit summary to one line`. Add a PR number in parentheses when merging a PR, as in `(#12)`. Add a body only when the reason isn't obvious from the subject.
+- **Branches:** develop on the branch named in the session instructions. Don't push to other branches without permission.
+- **Pull requests:** only open one when asked. Mirror the repository's PR template if one exists.
+- **Rust:** keep fmt and clippy clean (CI and the hooks enforce both).
+- **Swift:** match the existing patterns in the file you're editing.
+
+## Things to be careful about
+
+- Don't edit `Sources/Generated/` by hand. Change the UDL or the Rust code and regenerate.
+- Destructive Git operations (discard, hard reset, force push, amend on pushed commits) need explicit user confirmation and a clear test. Check the flow end to end, including staged and untracked state.
+- macOS-only tooling (Xcode, `codesign`, `actool`, `xcodegen`) isn't available on Linux. Don't assume a Swift build or UI test passed unless you ran it on macOS.
