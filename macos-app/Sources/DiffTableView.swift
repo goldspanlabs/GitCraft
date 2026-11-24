@@ -41,6 +41,7 @@ struct DiffTableView: NSViewRepresentable {
         scrollView.documentView = table
         scrollView.contentView.postsFrameChangedNotifications = true
         context.coordinator.observeResize(scrollView: scrollView, table: table)
+        context.coordinator.observeHorizontalScroll(scrollView: scrollView, table: table)
         return scrollView
     }
 
@@ -63,6 +64,8 @@ struct DiffTableView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         var rows: [DiffRow]
         private var frameObserver: NSObjectProtocol?
+        private var boundsObserver: NSObjectProtocol?
+        private var gutterOffset: CGFloat = 0
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("DiffRowCell")
 
         init(rows: [DiffRow]) {
@@ -72,6 +75,28 @@ struct DiffTableView: NSViewRepresentable {
         deinit {
             if let frameObserver {
                 NotificationCenter.default.removeObserver(frameObserver)
+            }
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+        }
+
+        /// Keeps the line-number gutter pinned to the left edge while the code scrolls
+        /// horizontally underneath it.
+        func observeHorizontalScroll(scrollView: NSScrollView, table: NSTableView) {
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self, weak scrollView, weak table] _ in
+                guard let self, let scrollView, let table else { return }
+                let x = max(0, scrollView.contentView.bounds.origin.x)
+                guard abs(x - self.gutterOffset) > 0.01 else { return }
+                self.gutterOffset = x
+                table.enumerateAvailableRowViews { rowView, _ in
+                    (rowView.view(atColumn: 0) as? DiffRowCellView)?.gutterOffset = x
+                }
             }
         }
 
@@ -104,20 +129,31 @@ struct DiffTableView: NSViewRepresentable {
             let cell = (tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self) as? DiffRowCellView)
                 ?? DiffRowCellView(identifier: Self.cellIdentifier)
             cell.configure(row: rows[row])
+            cell.gutterOffset = gutterOffset
             return cell
         }
     }
 }
 
 final class DiffRowCellView: NSTableCellView {
+    private let gutterView = NSView()
+    private let gutterTint = NSView()
     private let oldLineLabel = NSTextField(labelWithString: "")
     private let newLineLabel = NSTextField(labelWithString: "")
     private let gutterDivider = NSBox()
     private let codeLabel = NSTextField(labelWithString: "")
+    private var gutterLeading: NSLayoutConstraint?
     private var row: DiffRow?
 
+    /// 6 + 36 + 4 + 36 + 6 + 1: labels, spacing and the divider.
+    private static let gutterWidth: CGFloat = 89
     private static let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     private static let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+
+    /// Horizontal scroll offset the gutter is shifted by so it stays visible.
+    var gutterOffset: CGFloat = 0 {
+        didSet { gutterLeading?.constant = gutterOffset }
+    }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -132,10 +168,9 @@ final class DiffRowCellView: NSTableCellView {
     }
 
     private func setupViews() {
-        oldLineLabel.translatesAutoresizingMaskIntoConstraints = false
-        newLineLabel.translatesAutoresizingMaskIntoConstraints = false
-        gutterDivider.translatesAutoresizingMaskIntoConstraints = false
-        codeLabel.translatesAutoresizingMaskIntoConstraints = false
+        for view in [gutterView, gutterTint, oldLineLabel, newLineLabel, gutterDivider, codeLabel] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
 
         for gutter in [oldLineLabel, newLineLabel] {
             gutter.font = Self.gutterFont
@@ -150,26 +185,47 @@ final class DiffRowCellView: NSTableCellView {
         codeLabel.allowsEditingTextAttributes = false
         codeLabel.isSelectable = true
 
-        addSubview(oldLineLabel)
-        addSubview(newLineLabel)
-        addSubview(gutterDivider)
+        // The gutter is opaque (so scrolled code never shows through) with the row's
+        // highlight tinted on top.
+        gutterView.wantsLayer = true
+        gutterTint.wantsLayer = true
+
         addSubview(codeLabel)
+        addSubview(gutterView)
+        gutterView.addSubview(gutterTint)
+        gutterView.addSubview(oldLineLabel)
+        gutterView.addSubview(newLineLabel)
+        gutterView.addSubview(gutterDivider)
+
+        let leading = gutterView.leadingAnchor.constraint(equalTo: leadingAnchor)
+        gutterLeading = leading
 
         NSLayoutConstraint.activate([
-            oldLineLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            leading,
+            gutterView.topAnchor.constraint(equalTo: topAnchor),
+            gutterView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gutterView.widthAnchor.constraint(equalToConstant: Self.gutterWidth),
+
+            gutterTint.leadingAnchor.constraint(equalTo: gutterView.leadingAnchor),
+            gutterTint.trailingAnchor.constraint(equalTo: gutterView.trailingAnchor),
+            gutterTint.topAnchor.constraint(equalTo: gutterView.topAnchor),
+            gutterTint.bottomAnchor.constraint(equalTo: gutterView.bottomAnchor),
+
+            oldLineLabel.leadingAnchor.constraint(equalTo: gutterView.leadingAnchor, constant: 6),
             oldLineLabel.widthAnchor.constraint(equalToConstant: 36),
-            oldLineLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            oldLineLabel.centerYAnchor.constraint(equalTo: gutterView.centerYAnchor),
 
             newLineLabel.leadingAnchor.constraint(equalTo: oldLineLabel.trailingAnchor, constant: 4),
             newLineLabel.widthAnchor.constraint(equalToConstant: 36),
-            newLineLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            newLineLabel.centerYAnchor.constraint(equalTo: gutterView.centerYAnchor),
 
             gutterDivider.leadingAnchor.constraint(equalTo: newLineLabel.trailingAnchor, constant: 6),
-            gutterDivider.topAnchor.constraint(equalTo: topAnchor),
-            gutterDivider.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gutterDivider.topAnchor.constraint(equalTo: gutterView.topAnchor),
+            gutterDivider.bottomAnchor.constraint(equalTo: gutterView.bottomAnchor),
             gutterDivider.widthAnchor.constraint(equalToConstant: 1),
 
-            codeLabel.leadingAnchor.constraint(equalTo: gutterDivider.trailingAnchor, constant: 8),
+            // The code does not move; it starts just right of the gutter's resting place.
+            codeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.gutterWidth + 8),
             codeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             codeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -218,6 +274,8 @@ final class DiffRowCellView: NSTableCellView {
             defaultTextColor = NSColor.labelColor
         }
         layer?.backgroundColor = bgColor.cgColor
+        gutterView.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        gutterTint.layer?.backgroundColor = bgColor.cgColor
 
         if row.spans.isEmpty {
             codeLabel.textColor = defaultTextColor
