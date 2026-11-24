@@ -97,10 +97,24 @@ struct RepoDetailView: View {
                 }
             }
 
-            if tab.isMerging || tab.hasConflicts {
-                MergeBanner(hasConflicts: tab.hasConflicts) {
-                    tab.pendingConfirmation = .abortMerge
-                }
+            if tab.isRebasing {
+                OperationBanner(
+                    title: tab.hasConflicts
+                        ? "Rebase stopped on conflicts — resolve them, stage the files, then continue, or abort."
+                        : "Rebase in progress — continue to apply the remaining commits, or abort.",
+                    abortLabel: "Abort Rebase…",
+                    onAbort: { tab.pendingConfirmation = .abortRebase },
+                    continueLabel: "Continue Rebase",
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRebase() }
+                )
+            } else if tab.isMerging || tab.hasConflicts {
+                OperationBanner(
+                    title: tab.hasConflicts
+                        ? "Merge in progress with conflicts — resolve conflicts, stage files, and commit, or abort."
+                        : "Merge in progress — review staged changes and commit, or abort.",
+                    abortLabel: "Abort Merge…",
+                    onAbort: { tab.pendingConfirmation = .abortMerge }
+                )
             }
 
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
@@ -267,23 +281,29 @@ private struct EmptyHistoryHint: View {
     }
 }
 
-private struct MergeBanner: View {
-    let hasConflicts: Bool
+/// Banner for an operation that is paused mid-way (merge or rebase).
+private struct OperationBanner: View {
+    let title: String
+    let abortLabel: String
     let onAbort: () -> Void
+    var continueLabel: String?
+    var onContinue: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.merge")
                 .foregroundStyle(.orange)
-            Text(
-                hasConflicts
-                    ? "Merge in progress with conflicts — resolve conflicts, stage files, and commit, or abort."
-                    : "Merge in progress — review staged changes and commit, or abort."
-            )
-            .font(.caption)
-            .lineLimit(2)
+            Text(title)
+                .font(.caption)
+                .lineLimit(2)
             Spacer()
-            Button("Abort Merge…", action: onAbort)
+            if let continueLabel {
+                Button(continueLabel) { onContinue?() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(onContinue == nil)
+            }
+            Button(abortLabel, action: onAbort)
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }

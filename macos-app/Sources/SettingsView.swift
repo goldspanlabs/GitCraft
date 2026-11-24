@@ -7,6 +7,7 @@ struct SettingsView: View {
     private var appearanceRaw = AppearancePreference.system.rawValue
 
     @AppStorage(showAvatarsStorageKey) private var showAvatars = true
+    @AppStorage(PullStrategyPreference.storageKey) private var pullStrategyRaw = PullStrategyPreference.gitConfig.rawValue
 
     private var appearance: AppearancePreference {
         AppearancePreference(rawValue: appearanceRaw) ?? .system
@@ -37,6 +38,19 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Text("General")
+            }
+
+            Section {
+                Picker("When pulling", selection: $pullStrategyRaw) {
+                    ForEach(PullStrategyPreference.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                Text((PullStrategyPreference(rawValue: pullStrategyRaw) ?? .gitConfig).detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Git")
             }
 
             Section {

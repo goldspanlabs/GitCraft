@@ -44,3 +44,47 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
         NSApp.appearance = preference.nsAppearance
     }
 }
+
+/// How "Pull" reconciles diverged branches. Persisted under `storageKey`.
+enum PullStrategyPreference: String, CaseIterable, Identifiable {
+    case gitConfig
+    case merge
+    case rebase
+    case fastForwardOnly
+
+    static let storageKey = "pullStrategy"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .gitConfig: return "Git config"
+        case .merge: return "Merge"
+        case .rebase: return "Rebase"
+        case .fastForwardOnly: return "Fast-forward only"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .gitConfig:
+            return "Follows pull.rebase / pull.ff in your git config, and merges if neither is set."
+        case .merge: return "Creates a merge commit when your branch and the remote have diverged."
+        case .rebase: return "Replays your local commits on top of the remote branch, keeping history linear."
+        case .fastForwardOnly: return "Never creates a merge or rewrites commits; fails if the branches have diverged."
+        }
+    }
+
+    var core: PullStrategy {
+        switch self {
+        case .gitConfig: return .gitConfig
+        case .merge: return .merge
+        case .rebase: return .rebase
+        case .fastForwardOnly: return .fastForwardOnly
+        }
+    }
+
+    static var current: PullStrategyPreference {
+        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .gitConfig
+    }
+}

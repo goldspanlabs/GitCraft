@@ -130,6 +130,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case deleteBranch(name: String, force: Bool)
         case deleteTag(name: String, deleteRemote: Bool)
         case abortMerge
+        case abortRebase
         case dropStash(index: UInt32, name: String)
 
         var id: String {
@@ -138,6 +139,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case .abortMerge: return "abort-merge"
+            case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
             }
         }
@@ -149,6 +151,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
             case .abortMerge: return "Abort in-progress merge?"
+            case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
             }
         }
@@ -165,6 +168,8 @@ final class RepoTab: ObservableObject, Identifiable {
                     : "This will remove the tag from your local repository."
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
+            case .abortRebase:
+                return "This will stop the rebase and put your branch back as it was before the pull."
             case .dropStash:
                 return "The stashed changes will be removed. This can't be undone from GitCraft."
             }
@@ -175,6 +180,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteTag: return "Delete"
             case .abortMerge: return "Abort Merge"
+            case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
             }
         }
@@ -186,6 +192,7 @@ final class RepoTab: ObservableObject, Identifiable {
 
     @Published private(set) var currentBranch = ""
     @Published private(set) var isMerging = false
+    @Published private(set) var isRebasing = false
     @Published private(set) var hasConflicts = false
     @Published private(set) var stagedFiles: [FileChange] = []
     @Published private(set) var unstagedFiles: [FileChange] = []
@@ -317,6 +324,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 let status = try await Task.detached { try session.status() }.value
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
                 isMerging = status.isMerging
+                isRebasing = status.isRebasing
                 hasConflicts = status.hasConflicts
                 if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
                 if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
@@ -361,6 +369,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 )
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
                 isMerging = status.isMerging
+                isRebasing = status.isRebasing
                 hasConflicts = status.hasConflicts
                 stagedFiles = status.stagedFiles
                 unstagedFiles = status.unstagedFiles
@@ -782,6 +791,18 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    func abortRebase() {
+        performMutation { session in
+            try session.abortRebase()
+        }
+    }
+
+    func continueRebase() {
+        performMutation { session in
+            try session.continueRebase()
+        }
+    }
+
     func abortMerge() {
         performMutation { session in
             try session.abortMerge()
@@ -799,6 +820,8 @@ final class RepoTab: ObservableObject, Identifiable {
             deleteTag(name, deleteRemote: deleteRemote)
         case .abortMerge:
             abortMerge()
+        case .abortRebase:
+            abortRebase()
         case let .dropStash(index, _):
             stashDrop(index)
         }
@@ -858,10 +881,11 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func runRemote(_ operation: RemoteOperation) {
+        let pullStrategy = PullStrategyPreference.current.core
         performMutation { session in
             switch operation {
             case .fetch: try session.fetch()
-            case .pull: try session.pull()
+            case .pull: try session.pull(strategy: pullStrategy)
             case .push: try session.push()
             }
         }
