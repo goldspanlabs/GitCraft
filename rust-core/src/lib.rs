@@ -623,7 +623,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["fetch"])?;
+        git_cli::mutate(&self.path, &["fetch", "--prune"])?;
         Ok(())
     }
 

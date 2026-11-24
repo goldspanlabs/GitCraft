@@ -662,3 +662,31 @@ fn ignore_path_appends_after_missing_trailing_newline() {
         "target\n/\\#weird\\*.txt\n"
     );
 }
+
+// ------------------------------------------------------------------ fetch ---
+
+#[test]
+fn fetch_prunes_remote_branches_deleted_upstream() {
+    let origin = init_repo_with_commit();
+    run_git(origin.path(), &["branch", "feature"]);
+
+    let clone_parent = tempfile::tempdir().unwrap();
+    let clone_path = clone_parent.path().join("clone");
+    run_git(
+        clone_parent.path(),
+        &[
+            "clone",
+            &origin.path().to_string_lossy(),
+            &clone_path.to_string_lossy(),
+        ],
+    );
+    let remote_refs = |dir: &Path| run_git(dir, &["branch", "-r"]);
+    assert!(remote_refs(&clone_path).contains("origin/feature"));
+
+    // Deleted on the "server" after the clone was made.
+    run_git(origin.path(), &["branch", "-D", "feature"]);
+
+    open(&clone_path).fetch().unwrap();
+
+    assert!(!remote_refs(&clone_path).contains("origin/feature"));
+}
