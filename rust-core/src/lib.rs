@@ -36,6 +36,15 @@ impl From<io::Error> for GitCraftError {
     }
 }
 
+/// Order in which the commit graph lists commits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitSort {
+    /// Newest commit time first (the default).
+    ByDate,
+    /// Children before parents without interleaving separate lines of history.
+    Topological,
+}
+
 /// How `pull` reconciles diverged branches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PullStrategy {
@@ -175,6 +184,7 @@ pub struct RepoSession {
     dirty: Arc<AtomicBool>,
     graph_dirty: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
+    commit_sort: std::sync::atomic::AtomicU8,
 }
 
 impl Drop for RepoSession {
@@ -211,6 +221,7 @@ impl RepoSession {
             dirty,
             graph_dirty,
             stopped,
+            commit_sort: std::sync::atomic::AtomicU8::new(0),
         })
     }
 
@@ -307,13 +318,35 @@ impl RepoSession {
         })
     }
 
+    /// Chooses the order used by the graph queries. Takes effect on the next query.
+    pub fn set_commit_sort(&self, sort: CommitSort) {
+        let value = match sort {
+            CommitSort::ByDate => 0,
+            CommitSort::Topological => 1,
+        };
+        self.commit_sort.store(value, Ordering::Release);
+    }
+
+    fn commit_sort(&self) -> CommitSort {
+        match self.commit_sort.load(Ordering::Acquire) {
+            1 => CommitSort::Topological,
+            _ => CommitSort::ByDate,
+        }
+    }
+
     pub fn get_commit_graph(
         &self,
         offset: u32,
         limit: u32,
         search_query: Option<String>,
     ) -> Result<Vec<CommitRow>, GitCraftError> {
-        graph::get_commit_graph(&self.sync_repo, offset, limit, search_query)
+        graph::get_commit_graph(
+            &self.sync_repo,
+            offset,
+            limit,
+            search_query,
+            self.commit_sort(),
+        )
     }
 
     pub fn get_branch_graph(
@@ -322,7 +355,13 @@ impl RepoSession {
         limit: u32,
         search_query: Option<String>,
     ) -> Result<Vec<CommitRow>, GitCraftError> {
-        graph::get_branch_graph(&self.sync_repo, offset, limit, search_query)
+        graph::get_branch_graph(
+            &self.sync_repo,
+            offset,
+            limit,
+            search_query,
+            self.commit_sort(),
+        )
     }
 
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
@@ -505,13 +544,18 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn fetch_remote(&self, name: String) -> Result<(), GitCraftError> {
+    pub fn fetch_remote(&self, name: String, include_tags: bool) -> Result<(), GitCraftError> {
         let name = validate_remote_arg(&name)?;
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["fetch", "--prune", &name])?;
+        let mut args = vec!["fetch", "--prune"];
+        if include_tags {
+            args.push("--tags");
+        }
+        args.push(&name);
+        git_cli::mutate(&self.path, &args)?;
         Ok(())
     }
 
@@ -796,12 +840,16 @@ impl RepoSession {
         Ok(())
     }
 
-    pub fn fetch(&self) -> Result<(), GitCraftError> {
+    pub fn fetch(&self, include_tags: bool) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["fetch", "--prune"])?;
+        let mut args = vec!["fetch", "--prune"];
+        if include_tags {
+            args.push("--tags");
+        }
+        git_cli::mutate(&self.path, &args)?;
         Ok(())
     }
 

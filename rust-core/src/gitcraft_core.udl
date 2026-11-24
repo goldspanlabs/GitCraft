@@ -5,6 +5,11 @@ interface GitCraftError {
   Message(string msg);
 };
 
+enum CommitSort {
+  "ByDate",
+  "Topological"
+};
+
 enum PullStrategy {
   "GitConfig",
   "Merge",
@@ -126,6 +131,8 @@ interface RepoSession {
   [Throws=GitCraftError]
   RepoStatus status();
 
+  void set_commit_sort(CommitSort sort);
+
   [Throws=GitCraftError]
   sequence<CommitRow> get_commit_graph(u32 offset, u32 limit, string? search_query);
 
@@ -220,7 +227,7 @@ interface RepoSession {
   void remove_remote(string name);
 
   [Throws=GitCraftError]
-  void fetch_remote(string name);
+  void fetch_remote(string name, boolean include_tags);
 
   [Throws=GitCraftError]
   void ignore_path(string path, boolean local_only);
@@ -229,7 +236,7 @@ interface RepoSession {
   void commit(string message);
 
   [Throws=GitCraftError]
-  void fetch();
+  void fetch(boolean include_tags);
 
   [Throws=GitCraftError]
   void pull(PullStrategy strategy);

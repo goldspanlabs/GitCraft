@@ -689,7 +689,7 @@ fn fetch_prunes_remote_branches_deleted_upstream() {
     // Deleted on the "server" after the clone was made.
     run_git(origin.path(), &["branch", "-D", "feature"]);
 
-    open(&clone_path).fetch().unwrap();
+    open(&clone_path).fetch(false).unwrap();
 
     assert!(!remote_refs(&clone_path).contains("origin/feature"));
 }
@@ -755,7 +755,9 @@ fn fetch_remote_targets_only_the_named_remote() {
         ],
     );
     run_git(origin.path(), &["branch", "newbranch"]);
-    open(&clone_path).fetch_remote("origin".into()).unwrap();
+    open(&clone_path)
+        .fetch_remote("origin".into(), false)
+        .unwrap();
     assert!(run_git(&clone_path, &["branch", "-r"]).contains("origin/newbranch"));
 }
 
@@ -1131,5 +1133,95 @@ fn rebase_can_be_continued_after_resolving_conflicts() {
     assert_eq!(
         fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "resolved\n"
+    );
+}
+
+fn commit_at(dir: &Path, file: &str, message: &str, timestamp: i64) {
+    write(dir, file, &format!("{message}\n"));
+    run_git(dir, &["add", "-A"]);
+    let date = format!("@{timestamp} +0000");
+    let out = Command::new("git")
+        .args(["commit", "-q", "-m", message])
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "T")
+        .env("GIT_AUTHOR_EMAIL", "t@t.local")
+        .env("GIT_COMMITTER_NAME", "T")
+        .env("GIT_COMMITTER_EMAIL", "t@t.local")
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "commit {message} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn topological_sort_keeps_each_line_of_history_together() {
+    use gitcraft_core::CommitSort;
+    let dir = init_repo();
+    commit_at(dir.path(), "base.txt", "base", 1_000);
+    run_git(dir.path(), &["checkout", "-q", "-b", "side"]);
+    commit_at(dir.path(), "s1.txt", "s1", 2_000);
+    commit_at(dir.path(), "s2.txt", "s2", 4_000);
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+    commit_at(dir.path(), "m1.txt", "m1", 3_000);
+    commit_at(dir.path(), "m2.txt", "m2", 5_000);
+
+    let session = open(dir.path());
+    let summaries = |sort| -> Vec<String> {
+        session.set_commit_sort(sort);
+        session
+            .get_commit_graph(0, 50, None)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.summary)
+            .collect()
+    };
+
+    // By date the two branches interleave.
+    assert_eq!(
+        summaries(CommitSort::ByDate),
+        ["m2", "s2", "m1", "s1", "base"]
+    );
+
+    // Topologically each branch's commits stay contiguous, parents after children.
+    let topo = summaries(CommitSort::Topological);
+    assert_eq!(topo.len(), 5);
+    assert_eq!(topo[4], "base");
+    let pos = |name: &str| topo.iter().position(|s| s == name).unwrap();
+    assert_eq!(pos("m2") + 1, pos("m1"));
+    assert_eq!(pos("s2") + 1, pos("s1"));
+}
+
+#[test]
+fn fetch_can_include_tags() {
+    let (dir, origin) = repo_with_bare_origin();
+    open(dir.path()).push().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    run_git(
+        other.path(),
+        &["clone", "-q", origin.path().to_str().unwrap(), "."],
+    );
+    // A tag on a commit that is not reachable from any branch, so a plain fetch
+    // would not pick it up.
+    run_git(other.path(), &["checkout", "-q", "--detach"]);
+    write(other.path(), "orphan.txt", "x\n");
+    run_git(other.path(), &["add", "-A"]);
+    run_git(other.path(), &["commit", "-q", "-m", "orphan"]);
+    run_git(other.path(), &["tag", "orphan-tag"]);
+    run_git(other.path(), &["push", "-q", "origin", "orphan-tag"]);
+
+    let session = open(dir.path());
+    session.fetch(false).unwrap();
+    assert!(run_git(dir.path(), &["tag", "--list", "orphan-tag"])
+        .trim()
+        .is_empty());
+    session.fetch(true).unwrap();
+    assert_eq!(
+        run_git(dir.path(), &["tag", "--list", "orphan-tag"]).trim(),
+        "orphan-tag"
     );
 }

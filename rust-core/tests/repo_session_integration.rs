@@ -236,7 +236,7 @@ fn mock_bare_remote_fetch_pull_push_and_ahead_behind() {
     assert_eq!(main_a_after.ahead, 0);
 
     // Clone B fetches -> behind == 1, then pulls -> behind == 0
-    session_b.fetch().unwrap();
+    session_b.fetch(false).unwrap();
     let branches_b = session_b.list_branches().unwrap();
     let main_b = branches_b
         .iter()

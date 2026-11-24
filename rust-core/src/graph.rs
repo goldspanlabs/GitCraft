@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use gix::bstr::ByteSlice;
 
-use crate::{BranchInfo, CommitRow, GitCraftError, GraphEdge, RefBadge, RefKind, TagInfo};
+use crate::{
+    BranchInfo, CommitRow, CommitSort, GitCraftError, GraphEdge, RefBadge, RefKind, TagInfo,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct RawCommit {
@@ -18,8 +20,9 @@ pub fn get_commit_graph(
     offset: u32,
     limit: u32,
     search_query: Option<String>,
+    sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
-    graph_walk(sync_repo, offset, limit, search_query, false)
+    graph_walk(sync_repo, offset, limit, search_query, false, sort)
 }
 
 /// Like [`get_commit_graph`], but limited to the checked-out branch and the
@@ -30,8 +33,9 @@ pub fn get_branch_graph(
     offset: u32,
     limit: u32,
     search_query: Option<String>,
+    sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
-    graph_walk(sync_repo, offset, limit, search_query, true)
+    graph_walk(sync_repo, offset, limit, search_query, true, sort)
 }
 
 /// Resolves the default branch: `origin/HEAD`'s target, else `main`/`master`
@@ -92,6 +96,7 @@ fn graph_walk(
     limit: u32,
     search_query: Option<String>,
     scoped: bool,
+    sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
     if limit == 0 {
         return Ok(Vec::new());
@@ -118,14 +123,31 @@ fn graph_walk(
 
     let target_count = offset.saturating_add(limit) as usize;
 
-    let walk = repo
-        .rev_walk(tips)
-        .with_hidden(hidden)
-        .sorting(gix::revision::walk::Sorting::ByCommitTime(
-            gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
-        ))
-        .all()
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
+    let graph_err = |e: &dyn std::fmt::Display| GitCraftError::message(e.to_string());
+    let ids: Box<dyn Iterator<Item = Result<gix::ObjectId, GitCraftError>>> = match sort {
+        CommitSort::ByDate => {
+            let walk = repo
+                .rev_walk(tips)
+                .with_hidden(hidden)
+                .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                    gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+                ))
+                .all()
+                .map_err(|e| graph_err(&e))?;
+            Box::new(walk.map(|entry| entry.map(|info| info.id).map_err(|e| graph_err(&e))))
+        }
+        CommitSort::Topological => {
+            // Like `git log --topo-order`: a parent never appears before its children and
+            // commits of one line of history are not interleaved with another's.
+            let topo =
+                gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(hidden))
+                    .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
+                    .parents(gix::traverse::commit::Parents::All)
+                    .build()
+                    .map_err(|e| graph_err(&e))?;
+            Box::new(topo.map(|entry| entry.map(|info| info.id).map_err(|e| graph_err(&e))))
+        }
+    };
 
     let mut active_lanes: Vec<Option<gix::ObjectId>> = Vec::new();
     let mut lane_colors: Vec<u8> = Vec::new();
@@ -133,13 +155,12 @@ fn graph_walk(
 
     let mut results: Vec<CommitRow> = Vec::new();
 
-    for entry in walk {
-        let info = entry.map_err(|e| GitCraftError::message(e.to_string()))?;
-        let commit = info
-            .object()
+    for entry in ids {
+        let oid = entry?;
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| GitCraftError::message(e.to_string()))?;
 
-        let oid = info.id;
         let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
 
         let is_local = !has_local_refs || local_reachable.contains(&oid);
@@ -971,7 +992,7 @@ mod tests {
 
         let sync_repo = gix::ThreadSafeRepository::open(p).unwrap();
 
-        let all_rows = get_commit_graph(&sync_repo, 0, 50, None).unwrap();
+        let all_rows = get_commit_graph(&sync_repo, 0, 50, None, CommitSort::ByDate).unwrap();
         assert_eq!(all_rows.len(), 3);
         assert_eq!(all_rows[0].summary, "Merge UI");
         assert!(all_rows[0]
@@ -983,11 +1004,18 @@ mod tests {
             .iter()
             .any(|r| r.name == "v0.1.0" && matches!(r.kind, RefKind::Tag)));
 
-        let page2 = get_commit_graph(&sync_repo, 1, 1, None).unwrap();
+        let page2 = get_commit_graph(&sync_repo, 1, 1, None, CommitSort::ByDate).unwrap();
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].oid_hex, all_rows[1].oid_hex);
 
-        let filtered = get_commit_graph(&sync_repo, 0, 10, Some("UI feature".into())).unwrap();
+        let filtered = get_commit_graph(
+            &sync_repo,
+            0,
+            10,
+            Some("UI feature".into()),
+            CommitSort::ByDate,
+        )
+        .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].summary, "Add UI feature");
 

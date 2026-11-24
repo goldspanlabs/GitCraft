@@ -53,9 +53,22 @@ fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io:
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
-        Err(io::Error::other(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        // Some failures (e.g. "nothing to commit") are reported on stdout, and a killed
+        // process says nothing at all; never return an empty message.
+        let message = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!(
+                "git {} failed ({})",
+                args.first().copied().unwrap_or(""),
+                output.status
+            )
+        };
+        Err(io::Error::other(message))
     }
 }
 
