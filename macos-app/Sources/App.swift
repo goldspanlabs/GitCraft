@@ -215,11 +215,6 @@ struct RepoToolbarActionsView: View {
                 ? "Showing the current branch and its base branch — click to show all branches"
                 : "Showing all branches — click to show only the current branch and its base branch")
 
-            if tab.isBusy {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.leading, 4)
-            }
         }
         .fixedSize()
         .padding(.horizontal, 6)

@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 
 extension NSToolbarItem.Identifier {
+    static let repoTitle = NSToolbarItem.Identifier("GitCraft.repoTitle")
     static let repoActions = NSToolbarItem.Identifier("GitCraft.repoActions")
     static let repoSearch = NSToolbarItem.Identifier("GitCraft.repoSearch")
 }
@@ -45,7 +46,32 @@ enum WindowTabs {
 final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
     private unowned let workspace: WorkspaceState
+    /// Longest the repository / branch text may grow before it is truncated.
+    private static let titleTextMaxWidth: CGFloat = 240
     private let dot = TabStatusDot()
+    private let spinner: NSProgressIndicator = {
+        let indicator = NSProgressIndicator()
+        indicator.style = .spinning
+        indicator.controlSize = .small
+        indicator.isIndeterminate = true
+        indicator.isDisplayedWhenStopped = false
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        return indicator
+    }()
+    private let titleLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }()
+    private let subtitleLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        return label
+    }()
     private var changes: AnyCancellable?
     private var searchField: NSSearchField?
 
@@ -84,6 +110,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
+        window.titleVisibility = .hidden
 
         changes = tab.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -100,6 +127,13 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func refreshChrome() {
         window?.title = tab.name
         window?.subtitle = tab.currentBranch
+        titleLabel.stringValue = tab.name
+        subtitleLabel.stringValue = tab.currentBranch
+        if tab.isBusy {
+            spinner.startAnimation(nil)
+        } else {
+            spinner.stopAnimation(nil)
+        }
         dot.isDirty = true
         window?.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
         window?.tab.toolTip = tab.totalChangesCount > 0
@@ -138,7 +172,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: Toolbar
 
     func toolbarDefaultItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .repoActions, .flexibleSpace, .repoSearch]
+        [.toggleSidebar, .sidebarTrackingSeparator, .repoTitle, .flexibleSpace, .repoActions, .flexibleSpace, .repoSearch]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -151,6 +185,38 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         willBeInsertedIntoToolbar _: Bool
     ) -> NSToolbarItem? {
         switch identifier {
+        case .repoTitle:
+            // The window title is drawn here (the system one is hidden) so the busy
+            // spinner can sit immediately to the right of it.
+            let text = NSStackView(views: [titleLabel, subtitleLabel])
+            text.orientation = .vertical
+            text.alignment = .leading
+            text.spacing = 0
+
+            // Fixed-size slot: the layout doesn't shift when the spinner comes and goes.
+            let slot = NSView()
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            slot.addSubview(spinner)
+            NSLayoutConstraint.activate([
+                slot.widthAnchor.constraint(equalToConstant: 16),
+                slot.heightAnchor.constraint(equalToConstant: 16),
+                spinner.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
+            ])
+
+            let row = NSStackView(views: [text, slot])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 16
+            row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
+            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
+            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
+
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = row
+            item.isBordered = false
+            item.label = "Repository"
+            return item
         case .repoActions:
             let item = NSToolbarItem(itemIdentifier: identifier)
             let (workspace, tab) = (self.workspace, self.tab)
