@@ -1,0 +1,16 @@
+#!/bin/sh
+# Mirrors the Rust half of CI before anything leaves the machine.
+set -e
+
+# GUI apps launch git with a minimal PATH, so make sure cargo can be found.
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-push: cargo fmt --check" >&2
+cargo fmt --manifest-path rust-core/Cargo.toml --check >&2
+
+echo "pre-push: cargo clippy" >&2
+cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings >&2
+
+echo "pre-push: cargo test" >&2
+cargo test --manifest-path rust-core/Cargo.toml --quiet >&2

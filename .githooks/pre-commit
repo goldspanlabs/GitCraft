@@ -1,0 +1,15 @@
+#!/bin/sh
+# Fast check before every commit: Rust formatting, only when Rust files are staged.
+set -e
+
+git diff --cached --name-only | grep -q '^rust-core/.*\.rs$' || exit 0
+
+# GUI apps launch git with a minimal PATH, so make sure cargo can be found.
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-commit: cargo fmt --check" >&2
+if ! cargo fmt --manifest-path rust-core/Cargo.toml --check >&2; then
+    echo "pre-commit: formatting differs; run 'cargo fmt --manifest-path rust-core/Cargo.toml'" >&2
+    exit 1
+fi
