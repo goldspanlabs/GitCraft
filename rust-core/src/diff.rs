@@ -103,6 +103,9 @@ pub fn parse(input: &str) -> io::Result<Vec<DiffRow>> {
     parse_with_ext(input, None)
 }
 
+/// Diffs longer than this are cut off so a huge generated file can't stall the UI.
+const MAX_DIFF_ROWS: usize = 20_000;
+
 fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<DiffRow>> {
     let mut rows = Vec::new();
     let mut highlighter = default_ext.map(highlight::LineHighlighter::new);
@@ -110,6 +113,16 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
     let mut new_line: u32 = 0;
 
     for line in input.lines() {
+        if rows.len() >= MAX_DIFF_ROWS {
+            rows.push(DiffRow {
+                kind: "hunk".into(),
+                text: format!("Diff truncated: showing the first {MAX_DIFF_ROWS} lines"),
+                old_line: None,
+                new_line: None,
+                spans: Vec::new(),
+            });
+            break;
+        }
         if let Some(file_path) = line.strip_prefix("+++ b/") {
             let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
             highlighter = ext.map(highlight::LineHighlighter::new);
@@ -214,6 +227,17 @@ fn parse_hunk_start(line: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn very_long_diffs_are_truncated_with_a_notice() {
+        let mut input = String::from("@@ -1,30000 +1,30000 @@\n");
+        for i in 0..30_000 {
+            input.push_str(&format!("+line {i}\n"));
+        }
+        let rows = parse(&input).unwrap();
+        assert_eq!(rows.len(), MAX_DIFF_ROWS + 1);
+        assert!(rows.last().unwrap().text.starts_with("Diff truncated"));
+    }
+
     #[test]
     fn classifies_unified_lines_and_line_numbers() {
         let rows = parse("@@ -10,2 +20,2 @@\n-old\n+new\n same").unwrap();
