@@ -140,9 +140,8 @@ struct SidebarView: View {
                     } else {
                         ForEach(tab.tags, id: \.fullRef) { tag in
                             HStack(spacing: 6) {
-                                Image(systemName: "tag")
+                                PhosphorIcon(glyph: .tag)
                                     .foregroundStyle(.orange)
-                                    .font(.caption)
                                     .frame(width: 16, alignment: .center)
                                 Text(tag.name)
                                     .lineLimit(1)
@@ -186,9 +185,8 @@ struct SidebarView: View {
                     } else {
                         ForEach(tab.stashes, id: \.index) { stash in
                             HStack(spacing: 6) {
-                                Image(systemName: "tray.and.arrow.down")
-                                    .foregroundStyle(.purple)
-                                    .font(.caption)
+                                PhosphorIcon(glyph: .archive)
+                                    .foregroundStyle(.secondary)
                                     .frame(width: 16, alignment: .center)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(stash.message)
@@ -346,9 +344,8 @@ private struct BranchFolderRowView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 10, alignment: .center)
 
-            Image(systemName: isTopLevelRemote ? "icloud" : "folder")
+            PhosphorIcon(glyph: isTopLevelRemote ? .cloud : .folder)
                 .foregroundStyle(.secondary)
-                .font(.caption)
                 .frame(width: 16, alignment: .center)
 
             Text(name)
@@ -374,9 +371,8 @@ private struct LocalBranchRowView: View {
     var body: some View {
         HStack(spacing: 6) {
             // Align leaf branch icon under folder icon when nested, or flush when top-level
-            Image(systemName: "arrow.triangle.branch")
+            PhosphorIcon(glyph: .branch)
                 .foregroundStyle(.secondary)
-                .font(.system(size: 11))
                 .frame(width: 16, alignment: .center)
 
             Text(displayName)
@@ -466,9 +462,8 @@ private struct RemoteBranchRowView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.branch")
+            PhosphorIcon(glyph: .branch)
                 .foregroundStyle(.secondary)
-                .font(.caption)
                 .frame(width: 16, alignment: .center)
 
             Text(displayName)
@@ -819,8 +814,7 @@ struct NewBranchSheet: View {
                             .gridColumnAlignment(.trailing)
 
                         HStack(spacing: 5) {
-                            Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 11))
+                            PhosphorIcon(glyph: .branch)
                                 .foregroundStyle(.secondary)
                             Text(startPointDisplay)
                                 .font(.system(size: 13))
@@ -835,8 +829,7 @@ struct NewBranchSheet: View {
 
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
-                                Image(systemName: "arrow.triangle.branch")
-                                    .font(.system(size: 11))
+                                PhosphorIcon(glyph: .branch)
                                     .foregroundStyle(.secondary)
                                 TextField("Enter Branch Name", text: $branchName)
                                     .textFieldStyle(.plain)
