@@ -134,6 +134,7 @@ private struct WorkingChangesInspectorView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
                         )
+                        .accessibilityIdentifier("commit-summary")
 
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $tab.commitBody)
@@ -175,10 +176,12 @@ private struct WorkingChangesInspectorView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.return, modifiers: .command)
+                            .accessibilityIdentifier("commit-button")
                         } else {
                             Button("Commit") {}
                                 .buttonStyle(.bordered)
                                 .disabled(true)
+                                .accessibilityIdentifier("commit-button")
                         }
                     }
                 }

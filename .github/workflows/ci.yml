@@ -5,6 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,3 +34,31 @@ jobs:
         run: cargo llvm-cov --manifest-path rust-core/Cargo.toml --summary-only
       - name: Build GitCraft.app
         run: make
+
+  ui-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build GitCraft.app
+        run: make
+      - name: Generate the UI test project
+        run: xcodegen generate --spec project.yml --project .
+        working-directory: macos-app/UITests
+      - name: Run UI tests
+        env:
+          TEST_RUNNER_GITCRAFT_APP_PATH: ${{ github.workspace }}/build/GitCraft.app
+        run: >
+          xcodebuild test
+          -project macos-app/UITests/GitCraftUITests.xcodeproj
+          -scheme GitCraftUITests
+          -destination 'platform=macOS'
+          -resultBundlePath build/UITests.xcresult
+      - name: Upload the result bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: build/UITests.xcresult
