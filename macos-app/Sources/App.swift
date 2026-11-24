@@ -141,7 +141,7 @@ struct RepoDetailView: View {
     }
 }
 
-/// The toolbar's centre cluster (Quick Launch, Fetch/Pull/Push, Stash, branch filter).
+/// The toolbar's centre cluster (Fetch/Pull/Push, Stash, branch filter).
 /// Hosted in an `NSToolbarItem` by `RepoWindowController`.
 struct RepoToolbarActionsView: View {
     let workspace: WorkspaceState
@@ -149,16 +149,6 @@ struct RepoToolbarActionsView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button {
-                workspace.chooseRepository()
-            } label: {
-                TopBarIconLabel(title: "Quick Launch") {
-                    ToolbarIconView(icon: .quickLaunch)
-                }
-            }
-            .buttonStyle(.plain)
-            .help("Open Repository (Cmd+O)")
-
             HStack(spacing: 0) {
                 Button {
                     tab.runRemote(.fetch)
