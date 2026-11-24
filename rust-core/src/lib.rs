@@ -216,11 +216,7 @@ impl RepoSession {
         // -z: NUL-separated, paths are never quoted or escaped (non-ASCII, spaces, quotes).
         let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "-z", "--branch"])?;
         let mut entries = output.split('\0');
-        let branch = entries
-            .next()
-            .unwrap_or_default()
-            .trim_start_matches("## ")
-            .to_owned();
+        let branch = clean_branch_header(entries.next().unwrap_or_default());
 
         let mut all_paths = BTreeSet::new();
         let mut staged_files = Vec::new();
@@ -266,7 +262,17 @@ impl RepoSession {
             }
         }
 
-        let is_merging = self.path.join(".git/MERGE_HEAD").exists();
+        let is_merging = git_cli::run(&self.path, &["rev-parse", "--git-path", "MERGE_HEAD"])
+            .map(|out| {
+                let p = PathBuf::from(out.trim());
+                if p.is_absolute() {
+                    p
+                } else {
+                    self.path.join(p)
+                }
+                .exists()
+            })
+            .unwrap_or(false);
         let files: Vec<String> = all_paths.into_iter().collect();
         Ok(RepoStatus {
             is_clean: staged_files.is_empty() && unstaged_files.is_empty(),
@@ -571,6 +577,21 @@ impl RepoSession {
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         let branch_name = validate_ref_arg(&branch_name)?;
+        let remote_ref = format!("refs/remotes/{branch_name}");
+        let local_ref = format!("refs/heads/{branch_name}");
+        if ref_exists(&self.path, &remote_ref) && !ref_exists(&self.path, &local_ref) {
+            // A remote branch such as origin/x: check out (creating) a local tracking
+            // branch instead of leaving HEAD detached.
+            let local_name = branch_name
+                .split_once('/')
+                .map_or(branch_name.as_str(), |(_, n)| n);
+            if ref_exists(&self.path, &format!("refs/heads/{local_name}")) {
+                git_cli::mutate(&self.path, &["checkout", local_name, "--"])?;
+            } else {
+                git_cli::mutate(&self.path, &["checkout", "--track", &branch_name])?;
+            }
+            return Ok(());
+        }
         git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])?;
         Ok(())
     }
@@ -638,7 +659,7 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["add", "--", &path])?;
+        git_cli::mutate(&self.path, &["--literal-pathspecs", "add", "--", &path])?;
         Ok(())
     }
 
@@ -648,10 +669,16 @@ impl RepoSession {
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         if has_head(&self.path) {
-            git_cli::mutate(&self.path, &["reset", "HEAD", "--", &path])?;
+            git_cli::mutate(
+                &self.path,
+                &["--literal-pathspecs", "reset", "HEAD", "--", &path],
+            )?;
         } else {
             // No commits yet: there is no HEAD to reset to, so drop the entry from the index.
-            git_cli::mutate(&self.path, &["rm", "--cached", "--", &path])?;
+            git_cli::mutate(
+                &self.path,
+                &["--literal-pathspecs", "rm", "--cached", "--", &path],
+            )?;
         }
         Ok(())
     }
@@ -684,8 +711,16 @@ impl RepoSession {
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         // Try checkout -- first; if untracked, fall back to git clean -fd --.
-        if git_cli::mutate(&self.path, &["checkout", "--", &path]).is_err() {
-            git_cli::mutate(&self.path, &["clean", "-fd", "--", &path])?;
+        if git_cli::mutate(
+            &self.path,
+            &["--literal-pathspecs", "checkout", "--", &path],
+        )
+        .is_err()
+        {
+            git_cli::mutate(
+                &self.path,
+                &["--literal-pathspecs", "clean", "-fd", "--", &path],
+            )?;
         }
         Ok(())
     }
@@ -753,8 +788,16 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["pull"])?;
-        Ok(())
+        match git_cli::mutate(&self.path, &["pull"]) {
+            Ok(()) => Ok(()),
+            // With no pull.rebase/pull.ff configured, git refuses diverged pulls. Fall back
+            // to a merge, which is what git did before it started asking.
+            Err(e) if e.to_string().contains("divergent branches") => {
+                git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn push(&self) -> Result<(), GitCraftError> {
@@ -762,7 +805,25 @@ impl RepoSession {
             .mutation_lock
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
-        git_cli::mutate(&self.path, &["push"])?;
+        let has_upstream = git_cli::run(
+            &self.path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .is_ok();
+        if has_upstream {
+            git_cli::mutate(&self.path, &["push"])?;
+        } else {
+            // First push of this branch: publish it and set its upstream.
+            let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
+                .map(|b| b.trim().to_owned())
+                .ok()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| {
+                    GitCraftError::message("HEAD is detached; check out a branch to push")
+                })?;
+            let remote = resolve_default_remote(&self.path);
+            git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])?;
+        }
         Ok(())
     }
 
@@ -808,6 +869,27 @@ fn ignore_rule(path: &str) -> String {
         rule.push_str("\\ ");
     }
     rule
+}
+
+/// True when `full_ref` (e.g. `refs/heads/main`) exists.
+fn ref_exists(repo: &std::path::Path, full_ref: &str) -> bool {
+    git_cli::run(repo, &["show-ref", "--verify", "-q", full_ref]).is_ok()
+}
+
+/// Turns the `## ...` header of `git status --branch` into a plain branch string:
+/// "No commits yet on main" -> "main", "HEAD (no branch)" -> "HEAD (detached)".
+/// An upstream (`main...origin/main [ahead 1]`) is left for callers to split off.
+fn clean_branch_header(header: &str) -> String {
+    let header = header.trim_start_matches("## ");
+    for prefix in ["No commits yet on ", "Initial commit on "] {
+        if let Some(rest) = header.strip_prefix(prefix) {
+            return rest.to_owned();
+        }
+    }
+    if header.starts_with("HEAD (no branch)") {
+        return "HEAD (detached)".to_owned();
+    }
+    header.to_owned()
 }
 
 /// True when HEAD resolves to a commit (false in a repository with no commits yet).

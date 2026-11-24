@@ -890,3 +890,133 @@ fn unstage_does_not_stage_a_deletion_when_reset_fails() {
     assert!(status.staged_files.iter().all(|f| f.status != "D"));
     assert_eq!(status.staged_files.len(), 1);
 }
+
+/// A repo with one commit plus a bare "origin" it can push to.
+fn repo_with_bare_origin() -> (tempfile::TempDir, tempfile::TempDir) {
+    let dir = init_repo_with_commit();
+    let origin = tempfile::tempdir().unwrap();
+    run_git(origin.path(), &["init", "--bare", "-b", "main"]);
+    run_git(
+        dir.path(),
+        &["remote", "add", "origin", origin.path().to_str().unwrap()],
+    );
+    (dir, origin)
+}
+
+#[test]
+fn first_push_publishes_the_branch_and_sets_its_upstream() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+
+    let upstream = run_git(
+        dir.path(),
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
+    assert_eq!(upstream.trim(), "origin/main");
+    assert!(!run_git(origin.path(), &["branch", "--list", "main"])
+        .trim()
+        .is_empty());
+
+    // A second push (with an upstream now) still works.
+    write(dir.path(), "a.txt", "more\n");
+    run_git(dir.path(), &["commit", "-am", "more"]);
+    session.push().unwrap();
+}
+
+#[test]
+fn pull_of_diverged_branches_falls_back_to_a_merge() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+
+    // Someone else pushes a commit touching a different file...
+    let other = tempfile::tempdir().unwrap();
+    run_git(
+        other.path(),
+        &["clone", "-q", origin.path().to_str().unwrap(), "."],
+    );
+    write(other.path(), "other.txt", "theirs\n");
+    run_git(other.path(), &["add", "-A"]);
+    run_git(other.path(), &["commit", "-m", "theirs"]);
+    run_git(other.path(), &["push", "-q"]);
+
+    // ...while we commit locally, so the branches diverge.
+    write(dir.path(), "mine.txt", "mine\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "mine"]);
+
+    session.pull().unwrap();
+    assert!(dir.path().join("other.txt").exists());
+    assert!(dir.path().join("mine.txt").exists());
+}
+
+#[test]
+fn checking_out_a_remote_branch_creates_a_tracking_branch() {
+    let (dir, _origin) = repo_with_bare_origin();
+    run_git(dir.path(), &["branch", "feature"]);
+    run_git(dir.path(), &["push", "-q", "origin", "feature"]);
+    run_git(dir.path(), &["branch", "-D", "feature"]);
+    run_git(dir.path(), &["fetch", "-q", "origin"]);
+
+    let session = open(dir.path());
+    session.checkout_branch("origin/feature".into()).unwrap();
+    assert_eq!(
+        run_git(dir.path(), &["branch", "--show-current"]).trim(),
+        "feature"
+    );
+}
+
+#[test]
+fn staging_treats_paths_as_literals_not_globs() {
+    let dir = init_repo_with_commit();
+    write(dir.path(), "a*.txt", "x\n");
+    write(dir.path(), "ab.txt", "x\n");
+    let session = open(dir.path());
+    session.stage("a*.txt".into()).unwrap();
+    let staged: Vec<_> = session
+        .status()
+        .unwrap()
+        .staged_files
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(staged, ["a*.txt"]);
+}
+
+#[test]
+fn status_branch_is_clean_for_empty_and_detached_repos() {
+    let empty = init_repo();
+    assert_eq!(open(empty.path()).status().unwrap().branch, "main");
+
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["checkout", "-q", "--detach"]);
+    assert_eq!(open(dir.path()).status().unwrap().branch, "HEAD (detached)");
+}
+
+#[test]
+fn merge_state_is_detected_in_a_linked_worktree() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["branch", "side"]);
+    let wt_parent = tempfile::tempdir().unwrap();
+    let wt = wt_parent.path().join("wt");
+    run_git(
+        dir.path(),
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "side"],
+    );
+    // Make main and side conflict.
+    write(dir.path(), "a.txt", "main change\n");
+    run_git(dir.path(), &["commit", "-qam", "main"]);
+    write(&wt, "a.txt", "side change\n");
+    run_git(&wt, &["commit", "-qam", "side"]);
+    let merged = Command::new("git")
+        .args(["merge", "main"])
+        .current_dir(&wt)
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "expected a conflict");
+
+    let status = open(&wt).status().unwrap();
+    assert!(status.is_merging);
+    assert!(status.has_conflicts);
+}
