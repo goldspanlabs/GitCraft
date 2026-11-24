@@ -525,7 +525,7 @@ fn stash_apply_and_drop_with_invalid_index_are_errors() {
 }
 
 #[test]
-fn stash_apply_keeps_entry_while_pop_removes_it() {
+fn stash_apply_keeps_entry_until_it_is_dropped() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());
 
