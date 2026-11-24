@@ -252,7 +252,15 @@ struct CommitTableView: NSViewRepresentable {
                 let commitIndex = row - 1
                 let commit = rows[commitIndex]
                 let hasIncomingLine = hasIncomingLane(at: commitIndex)
-                cell.configure(commit: commit, hasIncomingLine: hasIncomingLine)
+                // The dashed Working Changes line leads into the HEAD commit when it's the first row.
+                let connectsToWorkingChanges = commitIndex == 0
+                    && commit.lane == 0
+                    && commit.refs.contains(where: { $0.isCurrent })
+                cell.configure(
+                    commit: commit,
+                    hasIncomingLine: hasIncomingLine,
+                    connectsToWorkingChanges: connectsToWorkingChanges
+                )
             }
             return cell
         }
@@ -381,11 +389,15 @@ final class CommitRowCellView: NSTableCellView {
         timeLabel.stringValue = ""
     }
 
-    func configure(commit: CommitRow, hasIncomingLine: Bool) {
+    func configure(commit: CommitRow, hasIncomingLine: Bool, connectsToWorkingChanges: Bool = false) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
         graphView.alphaValue = commit.isRemoteOnly ? 0.65 : 1.0
-        graphView.configure(commit: commit, hasIncomingLine: hasIncomingLine)
+        graphView.configure(
+            commit: commit,
+            hasIncomingLine: hasIncomingLine,
+            connectsToWorkingChanges: connectsToWorkingChanges
+        )
 
         badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if commit.refs.isEmpty {
@@ -503,6 +515,7 @@ final class GraphCellView: NSView {
     private var commit: CommitRow?
     private var hasIncomingLine = false
     private var isWorkingChanges = false
+    private var connectsToWorkingChanges = false
 
     override var isFlipped: Bool { true }
 
@@ -517,13 +530,15 @@ final class GraphCellView: NSView {
 
     func configureWorkingChanges() {
         isWorkingChanges = true
+        connectsToWorkingChanges = false
         commit = nil
         hasIncomingLine = false
         needsDisplay = true
     }
 
-    func configure(commit: CommitRow, hasIncomingLine: Bool) {
+    func configure(commit: CommitRow, hasIncomingLine: Bool, connectsToWorkingChanges: Bool = false) {
         isWorkingChanges = false
+        self.connectsToWorkingChanges = connectsToWorkingChanges
         self.commit = commit
         self.hasIncomingLine = hasIncomingLine
         needsDisplay = true
@@ -567,6 +582,17 @@ final class GraphCellView: NSView {
         }
 
         guard let commit else { return }
+
+        // Continue the dashed Working Changes line down into this (HEAD) commit.
+        if connectsToWorkingChanges {
+            let x = xForLane(commit.lane)
+            ctx.setStrokeColor(NSColor.secondaryLabelColor.cgColor)
+            ctx.setLineDash(phase: 0, lengths: [2.5, 2.5])
+            ctx.move(to: CGPoint(x: x, y: 0))
+            ctx.addLine(to: CGPoint(x: x, y: midY))
+            ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
 
         // Draw edges first so the commit node renders cleanly on top.
         for edge in commit.edges {
