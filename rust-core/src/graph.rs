@@ -64,12 +64,6 @@ fn default_base(repo: &gix::Repository) -> Option<(String, gix::ObjectId)> {
     })
 }
 
-fn short_branch_name(full: &str) -> &str {
-    full.strip_prefix("refs/heads/")
-        .or_else(|| full.strip_prefix("refs/remotes/origin/"))
-        .unwrap_or(full)
-}
-
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be
 /// shown (detached HEAD, or no default branch to compare against). The view walks only from
 /// the checked-out branch, so it shows that branch's whole history and leaves out other
