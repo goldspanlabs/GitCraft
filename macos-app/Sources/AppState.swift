@@ -286,7 +286,10 @@ final class RepoTab: ObservableObject, Identifiable {
         let query: String? = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? nil
             : searchQuery
-        let limit = pageSize
+        // Reload at least everything already loaded: refreshing only the first page would
+        // shrink the list under a user who has scrolled further down, yanking the table
+        // back up (and the scroll-to-load-more would then immediately refetch).
+        let limit = max(pageSize, UInt32(commits.count))
         let scoped = scopeToCurrentBranch
 
         Task {
