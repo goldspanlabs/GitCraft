@@ -38,7 +38,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text(appearanceDescription)
+                Text(appearance.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -99,13 +99,5 @@ struct SettingsView: View {
         .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(appearance.colorScheme)
-    }
-
-    private var appearanceDescription: String {
-        switch appearance {
-        case .system: return "Matches the appearance set in System Settings."
-        case .light: return "Always uses the light appearance."
-        case .dark: return "Always uses the dark appearance."
-        }
     }
 }

@@ -1,22 +1,55 @@
 import AppKit
 import SwiftUI
 
+/// String-backed preference enum stored in `UserDefaults`.
+protocol UserDefaultsEnum: RawRepresentable, CaseIterable, Identifiable where RawValue == String {
+    static var storageKey: String { get }
+    static var defaultValue: Self { get }
+}
+
+extension UserDefaultsEnum {
+    var id: String { rawValue }
+
+    static var current: Self {
+        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? defaultValue
+    }
+}
+
+/// UserDefaults key for the "show avatars" preference (Settings ▸ Commits).
+let showAvatarsStorageKey = "showAvatars"
+
+/// Persistence keys and collapsed dimensions for the bottom inspector split panel.
+enum BottomPanelDefaults {
+    static let storageKey = "bottomPanelHeight"
+    /// Whether the bottom panel is collapsed to just its tab strip.
+    static let collapsedKey = "bottomPanelCollapsed"
+    /// Height of the tab strip (30pt) plus its divider: what stays visible when collapsed.
+    static let collapsedHeight: CGFloat = 31
+}
+
 /// User-selectable appearance for the whole app. Persisted in `UserDefaults`
 /// under `storageKey` so `@AppStorage` views and the Settings window stay in sync.
-enum AppearancePreference: String, CaseIterable, Identifiable {
+enum AppearancePreference: String, UserDefaultsEnum {
     case system
     case light
     case dark
 
     static let storageKey = "appearancePreference"
-
-    var id: String { rawValue }
+    static let defaultValue: AppearancePreference = .system
 
     var title: String {
         switch self {
         case .system: return "System"
         case .light: return "Light"
         case .dark: return "Dark"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .system: return "Matches the appearance set in System Settings."
+        case .light: return "Always uses the light appearance."
+        case .dark: return "Always uses the dark appearance."
         }
     }
 
@@ -46,15 +79,14 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
 }
 
 /// How "Pull" reconciles diverged branches. Persisted under `storageKey`.
-enum PullStrategyPreference: String, CaseIterable, Identifiable {
+enum PullStrategyPreference: String, UserDefaultsEnum {
     case gitConfig
     case merge
     case rebase
     case fastForwardOnly
 
     static let storageKey = "pullStrategy"
-
-    var id: String { rawValue }
+    static let defaultValue: PullStrategyPreference = .gitConfig
 
     var title: String {
         switch self {
@@ -82,10 +114,6 @@ enum PullStrategyPreference: String, CaseIterable, Identifiable {
         case .rebase: return .rebase
         case .fastForwardOnly: return .fastForwardOnly
         }
-    }
-
-    static var current: PullStrategyPreference {
-        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .gitConfig
     }
 }
 
@@ -150,13 +178,12 @@ enum GitPreferences {
 }
 
 /// Order of the commit graph. Persisted under `storageKey`.
-enum CommitSortPreference: String, CaseIterable, Identifiable {
+enum CommitSortPreference: String, UserDefaultsEnum {
     case date
     case topological
 
     static let storageKey = "commitSort"
-
-    var id: String { rawValue }
+    static let defaultValue: CommitSortPreference = .date
 
     var title: String {
         switch self {
@@ -178,21 +205,16 @@ enum CommitSortPreference: String, CaseIterable, Identifiable {
         case .topological: return .topological
         }
     }
-
-    static var current: CommitSortPreference {
-        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .date
-    }
 }
 
 /// What to type in place of a space in a branch name (git forbids spaces).
-enum BranchSpaceReplacement: String, CaseIterable, Identifiable {
+enum BranchSpaceReplacement: String, UserDefaultsEnum {
     case dash
     case underscore
     case keep
 
     static let storageKey = "branchSpaceReplacement"
-
-    var id: String { rawValue }
+    static let defaultValue: BranchSpaceReplacement = .dash
 
     var title: String {
         switch self {
@@ -208,9 +230,5 @@ enum BranchSpaceReplacement: String, CaseIterable, Identifiable {
         case .underscore: return "_"
         case .keep: return nil
         }
-    }
-
-    static var current: BranchSpaceReplacement {
-        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .dash
     }
 }

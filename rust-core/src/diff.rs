@@ -3,8 +3,7 @@ use std::{io, path::Path};
 use crate::{git_cli, highlight, DiffRow};
 
 pub fn working_tree(repo: &Path) -> io::Result<Vec<DiffRow>> {
-    let raw = git_cli::run(repo, &["diff", "--no-ext-diff", "--unified=3"])?;
-    parse_with_ext(&raw, None)
+    working_tree_file(repo, None, false)
 }
 
 pub fn working_tree_file(
@@ -48,22 +47,16 @@ pub fn working_tree_file(
             if !is_tracked && full_path.is_file() {
                 if let Ok(bytes) = std::fs::read(&full_path) {
                     if bytes.len() > 256 * 1024 || bytes.contains(&0) {
-                        return Ok(vec![DiffRow {
-                            kind: "hunk".into(),
-                            text: format!("Binary or large file ({} bytes)", bytes.len()),
-                            old_line: None,
-                            new_line: None,
-                            spans: Vec::new(),
-                        }]);
+                        return Ok(vec![DiffRow::meta(
+                            "hunk",
+                            format!("Binary or large file ({} bytes)", bytes.len()),
+                        )]);
                     }
                     let text = String::from_utf8_lossy(&bytes);
-                    let mut rows = vec![DiffRow {
-                        kind: "hunk".into(),
-                        text: format!("@@ -0,0 +1,{} @@ (untracked)", text.lines().count()),
-                        old_line: None,
-                        new_line: None,
-                        spans: Vec::new(),
-                    }];
+                    let mut rows = vec![DiffRow::meta(
+                        "hunk",
+                        format!("@@ -0,0 +1,{} @@ (untracked)", text.lines().count()),
+                    )];
                     let mut hl = ext.map(highlight::LineHighlighter::new);
                     for (idx, line) in text.lines().enumerate() {
                         let spans = hl
@@ -114,25 +107,16 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
 
     for line in input.lines() {
         if rows.len() >= MAX_DIFF_ROWS {
-            rows.push(DiffRow {
-                kind: "hunk".into(),
-                text: format!("Diff truncated: showing the first {MAX_DIFF_ROWS} lines"),
-                old_line: None,
-                new_line: None,
-                spans: Vec::new(),
-            });
+            rows.push(DiffRow::meta(
+                "hunk",
+                format!("Diff truncated: showing the first {MAX_DIFF_ROWS} lines"),
+            ));
             break;
         }
         if let Some(file_path) = line.strip_prefix("+++ b/") {
             let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
             highlighter = ext.map(highlight::LineHighlighter::new);
-            rows.push(DiffRow {
-                kind: "header".into(),
-                text: line.to_owned(),
-                old_line: None,
-                new_line: None,
-                spans: Vec::new(),
-            });
+            rows.push(DiffRow::meta("header", line));
             continue;
         }
 
@@ -142,13 +126,7 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
             || line.starts_with("new file mode")
             || line.starts_with("deleted file mode")
         {
-            rows.push(DiffRow {
-                kind: "header".into(),
-                text: line.to_owned(),
-                old_line: None,
-                new_line: None,
-                spans: Vec::new(),
-            });
+            rows.push(DiffRow::meta("header", line));
             continue;
         }
 
@@ -157,13 +135,7 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
                 old_line = o;
                 new_line = n;
             }
-            rows.push(DiffRow {
-                kind: "hunk".into(),
-                text: line.to_owned(),
-                old_line: None,
-                new_line: None,
-                spans: Vec::new(),
-            });
+            rows.push(DiffRow::meta("hunk", line));
             continue;
         }
 

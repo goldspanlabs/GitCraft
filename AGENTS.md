@@ -7,11 +7,14 @@ Guidance for coding agents working in this repository.
 GitCraft is a native macOS Git client. Git work happens in a Rust core; the UI is SwiftUI/AppKit.
 
 - `rust-core/` — Rust library (`gitcraft_core`). Git operations live here.
+  - `src/lib.rs`, `models.rs`, `status.rs`, `validation.rs`, `git_cli.rs`, `diff.rs`, `highlight.rs`, `watcher.rs` — core session, FFI models, CLI wrapper, status, diff, syntax highlighting, and watcher.
+  - `src/ops/` — mutating Git operations (`branches.rs`, `working.rs`, `sync.rs`, `tags_stash.rs`).
+  - `src/graph/` — commit graph traversal, lane layout, ref/branch/tag queries, and commit detail (`mod.rs`, `lanes.rs`, `refs.rs`, `detail.rs`).
   - `src/gitcraft_core.udl` — UniFFI interface definition. The Swift bindings are generated from it.
   - `src/bin/uniffi-bindgen` — binary used to generate the bindings.
-  - `tests/` — Rust integration tests.
+  - `tests/` — Rust integration tests (with shared helpers in `tests/common/mod.rs`).
 - `macos-app/` — Swift package for the app.
-  - `Sources/*.swift` — UI code (`AppState`, `CommitTableView`, `SidebarView`, `InspectorView`, and others).
+  - `Sources/` — UI and state organized by feature (`App/`, `State/`, `Graph/`, `Sidebar/`, `Inspector/`, `Sheets/`, `Components/`, `Settings/`).
   - `Sources/Generated/` — **generated, gitignored. Do not edit or commit.** Regenerate with `make bindings`.
   - `Tests/` — Swift unit tests. `UITests/` — XcodeGen project for UI tests.
 - `.githooks/` — local git hooks (see below).
