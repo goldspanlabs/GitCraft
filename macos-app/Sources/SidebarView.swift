@@ -9,8 +9,13 @@ struct SidebarView: View {
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
     @State private var collapsedFolderIDs: Set<String> = []
 
+    /// The default branch is pinned above the rest of Local Branches, so it's kept out of the tree.
     private var localBranches: [BranchInfo] {
-        tab.branches.filter { !$0.isRemote }
+        tab.branches.filter { !$0.isRemote && !$0.isDefault }
+    }
+
+    private var defaultLocalBranch: BranchInfo? {
+        tab.branches.first { !$0.isRemote && $0.isDefault }
     }
 
     private var remoteBranches: [BranchInfo] {
@@ -54,6 +59,14 @@ struct SidebarView: View {
                 if isLocalBranchesExpanded {
                     if let headOid = detachedHeadOid {
                         DetachedHeadRowView(tab: tab, oidHex: headOid)
+                    }
+                    if let pinned = defaultLocalBranch {
+                        LocalBranchRowView(
+                            tab: tab,
+                            branch: pinned,
+                            displayName: pinned.name,
+                            depth: 0
+                        )
                     }
                     ForEach(localBranchRows) { row in
                         switch row.kind {

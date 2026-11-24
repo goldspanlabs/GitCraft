@@ -544,6 +544,16 @@ pub fn list_branches(
         });
     let base_oid = base_ref.as_ref().and_then(|r| remote_oids.get(r)).copied();
 
+    // The local branch the sidebar pins first: the one origin's default branch names,
+    // else a local `main`, else `master`.
+    let default_local: Option<String> = base_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix("refs/remotes/origin/"))
+        .map(str::to_owned)
+        .into_iter()
+        .chain(["main", "master"].into_iter().map(str::to_owned))
+        .find(|candidate| local_entries.iter().any(|(name, ..)| name == candidate));
+
     for (name, full_ref, local_oid, is_head) in local_entries {
         let upstream_full = resolve_upstream_ref(&config, &name)
             .filter(|r| remote_oids.contains_key(r))
@@ -572,6 +582,7 @@ pub fn list_branches(
             && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref())
             && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
 
+        let is_default = default_local.as_deref() == Some(name.as_str());
         branches.push(BranchInfo {
             name,
             full_ref,
@@ -581,6 +592,7 @@ pub fn list_branches(
             ahead,
             behind,
             is_merged,
+            is_default,
         });
     }
 
@@ -594,6 +606,7 @@ pub fn list_branches(
             ahead: 0,
             behind: 0,
             is_merged: false,
+            is_default: false,
         });
     }
 
