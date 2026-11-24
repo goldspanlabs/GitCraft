@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Git operations offered from a commit's context menu.
+enum CommitAction {
+    case merge
+    case rebase
+    case reset(ResetMode)
+    case cherryPick
+    case revert
+}
+
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let graphRevision: UUID
@@ -14,6 +23,9 @@ struct CommitTableView: NSViewRepresentable {
     let onCreateBranchAtCommit: (String) -> Void
     let onCreateTagAtCommit: (String) -> Void
     let onCheckoutCommit: (String) -> Void
+    /// The checked-out branch's name; empty when HEAD is detached.
+    let currentBranch: String
+    let onCommitAction: (CommitAction, String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -86,6 +98,8 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
         coordinator.onCreateTagAtCommit = onCreateTagAtCommit
         coordinator.onCheckoutCommit = onCheckoutCommit
+        coordinator.currentBranch = currentBranch
+        coordinator.onCommitAction = onCommitAction
 
         if dataChanged {
             // Reload/restore is not a user selection: keep it from reaching the model, where
@@ -139,6 +153,8 @@ struct CommitTableView: NSViewRepresentable {
         var onCreateBranchAtCommit: (String) -> Void
         var onCreateTagAtCommit: (String) -> Void
         var onCheckoutCommit: (String) -> Void
+        var currentBranch = ""
+        var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
         var lastHandledScrollID: UUID?
         var isRestoringSelection = false
         weak var tableView: NSTableView?
@@ -173,25 +189,82 @@ struct CommitTableView: NSViewRepresentable {
             guard clickedRow > 0, (clickedRow - 1) < rows.count else { return }
             let commit = rows[clickedRow - 1]
 
-            let copyItem = NSMenuItem(title: "Copy Commit SHA (\(commit.shortOid))", action: #selector(handleCopyOid(_:)), keyEquivalent: "")
-            copyItem.target = self
-            copyItem.representedObject = commit.oidHex
-            menu.addItem(copyItem)
+            let oid = commit.oidHex
+            let branch = currentBranch
+            // Detached HEAD has no branch to merge into, rebase or reset.
+            let isDetached = branch.isEmpty || branch == "HEAD" || branch.hasPrefix("(")
 
-            let branchItem = NSMenuItem(title: "Create Branch Here…", action: #selector(handleCreateBranch(_:)), keyEquivalent: "")
-            branchItem.target = self
-            branchItem.representedObject = commit.oidHex
-            menu.addItem(branchItem)
+            // Acting on the checked-out branch.
+            if !isDetached {
+                addItem(to: menu, "Merge into '\(branch)'", #selector(handleMerge(_:)), oid)
+                addItem(to: menu, "Rebase '\(branch)' to Here…", #selector(handleRebase(_:)), oid)
 
-            let tagItem = NSMenuItem(title: "Create Tag Here…", action: #selector(handleCreateTag(_:)), keyEquivalent: "")
-            tagItem.target = self
-            tagItem.representedObject = commit.oidHex
-            menu.addItem(tagItem)
+                let resetItem = NSMenuItem(title: "Reset '\(branch)' to Here…", action: nil, keyEquivalent: "")
+                let resetMenu = NSMenu()
+                let modes: [(String, Int)] = [
+                    ("Soft — keep changes staged", 0),
+                    ("Mixed — keep changes unstaged", 1),
+                    ("Hard — discard uncommitted changes…", 2),
+                ]
+                for (title, tag) in modes {
+                    let item = NSMenuItem(title: title, action: #selector(handleReset(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = oid
+                    item.tag = tag
+                    resetMenu.addItem(item)
+                }
+                resetItem.submenu = resetMenu
+                menu.addItem(resetItem)
 
-            let checkoutItem = NSMenuItem(title: "Checkout Commit...", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
-            checkoutItem.target = self
-            checkoutItem.representedObject = commit.oidHex
-            menu.addItem(checkoutItem)
+                menu.addItem(.separator())
+            }
+
+            // Working with the commit itself.
+            addItem(to: menu, "Cherry Pick Commit", #selector(handleCherryPick(_:)), oid)
+            addItem(to: menu, "Revert Commit", #selector(handleRevert(_:)), oid)
+
+            menu.addItem(.separator())
+
+            // Creating references that point at the commit.
+            addItem(to: menu, "New Branch…", #selector(handleCreateBranch(_:)), oid)
+            addItem(to: menu, "New Tag…", #selector(handleCreateTag(_:)), oid)
+            addItem(to: menu, "Checkout Commit…", #selector(handleCheckoutCommit(_:)), oid)
+
+            menu.addItem(.separator())
+
+            addItem(to: menu, "Copy Commit SHA (\(commit.shortOid))", #selector(handleCopyOid(_:)), oid)
+        }
+
+        @discardableResult
+        private func addItem(to menu: NSMenu, _ title: String, _ action: Selector, _ oid: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = oid
+            menu.addItem(item)
+            return item
+        }
+
+        @objc private func handleMerge(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.merge, oid) }
+        }
+
+        @objc private func handleRebase(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.rebase, oid) }
+        }
+
+        @objc private func handleReset(_ sender: NSMenuItem) {
+            guard let oid = sender.representedObject as? String else { return }
+            let modes: [ResetMode] = [.soft, .mixed, .hard]
+            guard modes.indices.contains(sender.tag) else { return }
+            onCommitAction(.reset(modes[sender.tag]), oid)
+        }
+
+        @objc private func handleCherryPick(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.cherryPick, oid) }
+        }
+
+        @objc private func handleRevert(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.revert, oid) }
         }
 
         @objc private func handleCopyOid(_ sender: NSMenuItem) {

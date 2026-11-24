@@ -149,6 +149,16 @@ struct RepoDetailView: View {
                         },
                         onCheckoutCommit: { oid in
                             tab.requestCheckoutCommit(oid)
+                        },
+                        currentBranch: tab.currentBranch,
+                        onCommitAction: { action, oid in
+                            switch action {
+                            case .merge: tab.mergeCommit(oid)
+                            case .rebase: tab.rebaseOnto(oid)
+                            case let .reset(mode): tab.resetTo(oid, mode: mode)
+                            case .cherryPick: tab.cherryPick(oid)
+                            case .revert: tab.revertCommit(oid)
+                            }
                         }
                     )
 

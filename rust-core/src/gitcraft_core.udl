@@ -17,6 +17,12 @@ enum PullStrategy {
   "FastForwardOnly"
 };
 
+enum ResetMode {
+  "Soft",
+  "Mixed",
+  "Hard"
+};
+
 enum RefKind {
   "LocalBranch",
   "RemoteBranch",
@@ -198,6 +204,18 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void abort_merge();
+
+  [Throws=GitCraftError]
+  void rebase_onto(string commit);
+
+  [Throws=GitCraftError]
+  void reset_to(string commit, ResetMode mode);
+
+  [Throws=GitCraftError]
+  void cherry_pick(string commit);
+
+  [Throws=GitCraftError]
+  void revert_commit(string commit);
 
   [Throws=GitCraftError]
   sequence<DiffRow> diff();

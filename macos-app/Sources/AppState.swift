@@ -134,6 +134,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case abortMerge
         case abortRebase
         case dropStash(index: UInt32, name: String)
+        case resetHard(branch: String, commit: String)
 
         var id: String {
             switch self {
@@ -145,6 +146,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
+            case let .resetHard(_, commit): return "reset-hard-\(commit)"
             }
         }
 
@@ -159,6 +161,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortMerge: return "Abort in-progress merge?"
             case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
+            case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.prefix(7)) and discard changes?"
             }
         }
 
@@ -182,6 +185,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will stop the rebase and put your branch back as it was before the pull."
             case .dropStash:
                 return "The stashed changes will be removed. This can't be undone from GitCraft."
+            case .resetHard:
+                return "Uncommitted changes to tracked files will be discarded, and commits after this one will leave the branch. Discarded changes can't be recovered from GitCraft."
             }
         }
 
@@ -193,6 +198,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
+            case .resetHard: return "Reset"
             }
         }
     }
@@ -952,6 +958,42 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    /// Merges the commit `oid` into the checked-out branch.
+    func mergeCommit(_ oid: String) {
+        performMutation { session in
+            try session.mergeBranch(branchName: oid)
+        }
+    }
+
+    func rebaseOnto(_ oid: String) {
+        performMutation { session in
+            try session.rebaseOnto(commit: oid)
+        }
+    }
+
+    /// Hard resets go through the confirmation dialog; soft and mixed resets run directly.
+    func resetTo(_ oid: String, mode: ResetMode) {
+        if mode == .hard {
+            pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
+            return
+        }
+        performMutation { session in
+            try session.resetTo(commit: oid, mode: mode)
+        }
+    }
+
+    func cherryPick(_ oid: String) {
+        performMutation { session in
+            try session.cherryPick(commit: oid)
+        }
+    }
+
+    func revertCommit(_ oid: String) {
+        performMutation { session in
+            try session.revertCommit(commit: oid)
+        }
+    }
+
     func abortRebase() {
         performMutation { session in
             try session.abortRebase()
@@ -989,6 +1031,8 @@ final class RepoTab: ObservableObject, Identifiable {
             abortRebase()
         case let .dropStash(index, _):
             stashDrop(index)
+        case let .resetHard(_, commit):
+            resetTo(commit, mode: .hard)
         }
     }
 

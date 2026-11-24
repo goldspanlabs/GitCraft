@@ -57,6 +57,17 @@ pub enum PullStrategy {
     FastForwardOnly,
 }
 
+/// How far `reset_to` moves the branch and what happens to the working tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetMode {
+    /// Move the branch; keep all changes staged.
+    Soft,
+    /// Move the branch; keep changes in the working tree, unstaged.
+    Mixed,
+    /// Move the branch and discard all uncommitted changes.
+    Hard,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefKind {
     LocalBranch,
@@ -735,6 +746,55 @@ impl RepoSession {
             .lock()
             .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
         git_cli::mutate(&self.path, &["merge", "--abort"])?;
+        Ok(())
+    }
+
+    /// Rebases the checked-out branch onto `commit`.
+    pub fn rebase_onto(&self, commit: String) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let commit = validate_ref_arg(&commit)?;
+        git_cli::mutate(&self.path, &["rebase", &commit])?;
+        Ok(())
+    }
+
+    /// Moves the checked-out branch to `commit`, as `git reset --<mode>`.
+    pub fn reset_to(&self, commit: String, mode: ResetMode) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let commit = validate_ref_arg(&commit)?;
+        let flag = match mode {
+            ResetMode::Soft => "--soft",
+            ResetMode::Mixed => "--mixed",
+            ResetMode::Hard => "--hard",
+        };
+        git_cli::mutate(&self.path, &["reset", flag, &commit])?;
+        Ok(())
+    }
+
+    /// Applies `commit`'s changes on top of the checked-out branch.
+    pub fn cherry_pick(&self, commit: String) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let commit = validate_ref_arg(&commit)?;
+        git_cli::mutate(&self.path, &["cherry-pick", &commit])?;
+        Ok(())
+    }
+
+    /// Creates a commit that undoes `commit`, keeping git's default message.
+    pub fn revert_commit(&self, commit: String) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let commit = validate_ref_arg(&commit)?;
+        git_cli::mutate(&self.path, &["revert", "--no-edit", &commit])?;
         Ok(())
     }
 
