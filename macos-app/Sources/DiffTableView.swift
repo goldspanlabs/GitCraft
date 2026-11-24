@@ -18,6 +18,12 @@ struct DiffTableView: NSViewRepresentable {
 
         let table = NSTableView()
         table.headerView = nil
+        // The default `.inset` style pads the table (and tints rows) away from the edges.
+        table.style = .plain
+        scrollView.borderType = .noBorder
+        scrollView.scrollerInsets = NSEdgeInsetsZero
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsetsZero
         table.usesAutomaticRowHeights = false
         table.rowHeight = 20
         table.intercellSpacing = NSSize(width: 0, height: 0)
