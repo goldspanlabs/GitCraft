@@ -308,6 +308,12 @@ fn branch_merged_into_origin_default_is_flagged() {
     };
     assert!(merged("merged-feature"));
     assert!(!merged("wip"));
+
+    // brand-new branch at origin/main's tip with no work of its own
+    run_git(&clone, &["branch", "fresh", "main"]);
+    let branches = session.list_branches().unwrap();
+    let fresh = branches.iter().find(|b| b.name == "fresh").unwrap();
+    assert!(!fresh.is_merged);
     assert!(!merged("main"));
 }
 

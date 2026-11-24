@@ -537,6 +537,7 @@ pub fn list_branches(
             .is_some_and(|(_, base_name)| base_name == name);
         let is_merged = !is_head
             && !is_default_branch
+            && !is_untouched_new_branch(&repo, &full_ref)
             && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
 
         branches.push(BranchInfo {
@@ -616,6 +617,21 @@ fn resolve_upstream_ref(config: &gix::config::Snapshot<'_>, branch_name: &str) -
         .into_owned();
     let short_merge = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
     Some(format!("refs/remotes/{remote}/{short_merge}"))
+}
+
+/// True when the branch's reflog shows it was only ever created and never moved
+/// (no commits, resets, merges or pulls), so "merged" would be misleading.
+/// Without a reflog (e.g. fetched or cloned branches) we can't tell, so false.
+fn is_untouched_new_branch(repo: &gix::Repository, full_ref: &str) -> bool {
+    let Ok(log) = std::fs::read_to_string(repo.common_dir().join("logs").join(full_ref)) else {
+        return false;
+    };
+    let mut entries = log.lines().filter(|l| !l.trim().is_empty()).peekable();
+    entries.peek().is_some()
+        && entries.all(|l| {
+            l.split_once('\t')
+                .is_some_and(|(_, msg)| msg.starts_with("branch: Created from"))
+        })
 }
 
 /// True when every commit reachable from `tip` is already reachable from `base`.
