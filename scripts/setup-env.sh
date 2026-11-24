@@ -8,17 +8,44 @@ export PATH="$HOME/.local/bin:$PATH"
 
 PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
 
-if [ "$(uname -s)" = "Linux" ] && [ -f "$HOME/.bashrc" ]; then
-  sed -i '/case \$- in/,/esac/d' "$HOME/.bashrc" || true
-fi
-grep -qxF "$PATH_EXPORT" "$HOME/.bashrc" 2>/dev/null || echo "$PATH_EXPORT" >> "$HOME/.bashrc"
+prepend_line() {
+  local file="$1"
+  local line="$2"
+  if grep -qxF "$line" "$file" 2>/dev/null; then
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp "${file}.tmp.XXXXXX")"
+  trap 'rm -f "$tmp"' RETURN
+  printf '%s\n' "$line" > "$tmp"
+  if [ -f "$file" ]; then
+    cat "$file" >> "$tmp"
+  fi
+  cat "$tmp" > "$file"
+  rm -f "$tmp"
+  trap - RETURN
+}
 
-if [ "$(uname -s)" = "Darwin" ] && [ -f "$HOME/.zshrc" ]; then
-  grep -qxF "$PATH_EXPORT" "$HOME/.zshrc" 2>/dev/null || echo "$PATH_EXPORT" >> "$HOME/.zshrc"
+append_line() {
+  local file="$1"
+  local line="$2"
+  if grep -qxF "$line" "$file" 2>/dev/null; then
+    return 0
+  fi
+  if [ -s "$file" ] && [ -n "$(tail -c 1 "$file" 2>/dev/null || true)" ]; then
+    printf '\n' >> "$file"
+  fi
+  printf '%s\n' "$line" >> "$file"
+}
+
+prepend_line "$HOME/.bashrc" "$PATH_EXPORT"
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  append_line "$HOME/.zshrc" "$PATH_EXPORT"
 fi
 
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  grep -qxF "$PATH_EXPORT" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$PATH_EXPORT" >> "$CLAUDE_ENV_FILE"
+  append_line "$CLAUDE_ENV_FILE" "$PATH_EXPORT"
 fi
 
 if command -v rustup >/dev/null 2>&1; then
