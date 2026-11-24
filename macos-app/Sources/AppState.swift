@@ -1056,7 +1056,7 @@ extension Error {
 /// Splits an error message into a one-line summary for the banner and the full text for
 /// the details sheet.
 struct ErrorSummary: Equatable {
-    /// Banner text: the first non-empty line, cut to a readable length.
+    /// Banner text: the line that reports the error, cut to a readable length.
     let summary: String
     /// The whole message, shown in the details sheet.
     let full: String
@@ -1065,10 +1065,17 @@ struct ErrorSummary: Equatable {
 
     static let maxSummaryLength = 140
 
+    /// Lines such as "error: ..." or "fatal: ..." name the failure. Hook and step banners
+    /// ("pre-push: cargo clippy") come before it, so the first line alone can mislead.
+    private static func isErrorLine(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
+        return lowered.hasPrefix("error") || lowered.hasPrefix("fatal")
+    }
+
     init(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
-        let first = lines.first ?? trimmed
+        let first = lines.first(where: Self.isErrorLine) ?? lines.first ?? trimmed
         full = trimmed
         if first.count > Self.maxSummaryLength {
             summary = String(first.prefix(Self.maxSummaryLength)) + "…"
