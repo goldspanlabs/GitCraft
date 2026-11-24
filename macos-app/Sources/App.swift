@@ -221,7 +221,7 @@ struct RepoToolbarActionsView: View {
                 tab.toggleScopeToCurrentBranch()
             } label: {
                 TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
-                    ToolbarIconView(icon: .filter)
+                    ToolbarIconView(icon: tab.scopeToCurrentBranch ? .filterFilled : .filter)
                         .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
                 }
             }
