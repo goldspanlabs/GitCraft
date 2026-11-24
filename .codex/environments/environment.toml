@@ -1,0 +1,5 @@
+version = 1
+name = "GitCraft"
+
+[setup]
+script = "./scripts/setup-env.sh"
