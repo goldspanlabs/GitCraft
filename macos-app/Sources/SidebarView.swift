@@ -474,7 +474,9 @@ private struct WorktreeRowView: View {
         }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded {
-                tab.switchCheckout(to: worktree.path)
+                if !worktree.isPrunable {
+                    tab.switchCheckout(to: worktree.path)
+                }
             }
         )
         .nativeContextMenu { menuEntries }

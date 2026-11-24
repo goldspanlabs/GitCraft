@@ -1,0 +1,114 @@
+import Foundation
+import XCTest
+@testable import GitCraft
+
+final class WorktreeTabTests: XCTestCase {
+    @MainActor
+    func testOpeningViaSymlinkMatchesCanonicalWorktreePath() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let symlink = root.appendingPathComponent("repo-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: repo)
+
+        let tab = try RepoTab(url: symlink)
+        defer { tab.stopWatcher() }
+
+        XCTAssertEqual(tab.worktrees.count, 1)
+        XCTAssertEqual(tab.activeCheckoutPath, tab.worktrees[0].path)
+        XCTAssertEqual(tab.repoPath, tab.worktrees[0].path)
+        XCTAssertTrue(tab.contains(checkoutPath: symlink.path))
+    }
+
+    @MainActor
+    func testContainsMatchesPrimaryActiveAndSiblingWorktrees() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let wtA = root.appendingPathComponent("wt-a", isDirectory: true)
+        let wtB = root.appendingPathComponent("wt-b", isDirectory: true)
+        try git(["worktree", "add", "-b", "branch-a", wtA.path], in: repo)
+        try git(["worktree", "add", "-b", "branch-b", wtB.path], in: repo)
+
+        let tab = try RepoTab(url: wtA)
+        defer { tab.stopWatcher() }
+
+        XCTAssertTrue(tab.contains(checkoutPath: repo.path))
+        XCTAssertTrue(tab.contains(checkoutPath: wtA.path))
+        XCTAssertTrue(tab.contains(checkoutPath: wtB.path))
+    }
+
+    @MainActor
+    func testSwitchCheckoutClearsComposerStateAndIgnoresPrunable() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        let gone = root.appendingPathComponent("gone", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+        try git(["worktree", "add", "-b", "gone", gone.path], in: repo)
+        try FileManager.default.removeItem(at: gone)
+
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        let prunable = try XCTUnwrap(tab.worktrees.first { $0.isPrunable })
+        let startingPath = tab.activeCheckoutPath
+        tab.switchCheckout(to: prunable.path)
+        XCTAssertEqual(tab.activeCheckoutPath, startingPath)
+        XCTAssertNil(tab.errorMessage)
+
+        tab.commitSummary = "Draft summary"
+        tab.commitBody = "Draft body"
+        tab.skipHooks = true
+
+        let target = try XCTUnwrap(tab.worktrees.first { !$0.isMain && !$0.isPrunable })
+        tab.switchCheckout(to: target.path)
+
+        XCTAssertEqual(tab.activeCheckoutPath, target.path)
+        XCTAssertEqual(tab.commitSummary, "")
+        XCTAssertEqual(tab.commitBody, "")
+        XCTAssertFalse(tab.skipHooks)
+    }
+
+    private func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func makeRepo(at url: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try git(["init", "-b", "main"], in: url)
+        try git(["config", "user.name", "GitCraft Tests"], in: url)
+        try git(["config", "user.email", "tests@gitcraft.local"], in: url)
+        try "hello\n".write(
+            to: url.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try git(["add", "README.md"], in: url)
+        try git(["commit", "-m", "initial"], in: url)
+        return url
+    }
+
+    @discardableResult
+    private func git(_ arguments: [String], in directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed: \(output)")
+        return output
+    }
+}

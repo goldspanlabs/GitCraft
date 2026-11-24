@@ -235,3 +235,49 @@ fn prune_forgets_missing_folders_and_keeps_existing_ones() {
     assert!(after.iter().any(|w| w.branch.as_deref() == Some("kept")));
     assert!(kept.is_dir(), "prune never deletes existing folders");
 }
+
+#[test]
+fn linked_worktree_watcher_detects_commits_and_ref_changes() {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let repo = repo_with_commit();
+    let linked_parent = tempfile::tempdir().unwrap();
+    let linked = linked_parent.path().join("watched-wt");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/watch",
+            linked.to_str().unwrap(),
+        ],
+    );
+
+    let session = RepoSession::open(&linked).unwrap();
+    // Let the watcher thread attach and drain any startup events.
+    thread::sleep(Duration::from_millis(600));
+    let _ = session.take_dirty();
+    let _ = session.take_graph_dirty();
+
+    // Creating a commit with `--allow-empty` touches only the linked worktree's gitdir and
+    // the shared commondir (refs/heads/feature/watch), not the checkout's working tree.
+    run_git(&linked, &["commit", "--allow-empty", "-m", "empty commit"]);
+
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let mut graph_dirty = false;
+    while Instant::now() < deadline {
+        if session.take_graph_dirty() {
+            graph_dirty = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        graph_dirty,
+        "expected linked-worktree watcher to flag graph_dirty on commit/ref update"
+    );
+}

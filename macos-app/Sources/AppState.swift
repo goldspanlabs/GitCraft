@@ -63,13 +63,17 @@ final class WorkspaceState: ObservableObject {
     /// Opens `url` in a new tab, or brings its existing tab to the front.
     @discardableResult
     func openRepository(at url: URL) -> Bool {
-        let standardized = url.standardizedFileURL
-        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: standardized.path) }) {
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolved.path) }) {
             existing.reveal()
             return true
         }
         do {
-            let tab = try RepoTab(url: standardized)
+            let tab = try RepoTab(url: resolved)
+            if let existing = repoControllers.first(where: { $0.tab.repoPath == tab.repoPath }) {
+                existing.reveal()
+                return true
+            }
             openError = nil
             recordRecent(path: tab.repoPath)
             let controller = RepoWindowController(tab: tab, workspace: self)
@@ -80,7 +84,7 @@ final class WorkspaceState: ObservableObject {
             controller.showInTabs()
             return true
         } catch {
-            openError = "Unable to open \(standardized.lastPathComponent): \(error.displayMessage)"
+            openError = "Unable to open \(resolved.lastPathComponent): \(error.displayMessage)"
             return false
         }
     }
@@ -306,14 +310,23 @@ final class RepoTab: ObservableObject, Identifiable {
     private var pendingSearchReplacements = 0
     private var loadedDetailOid: String?
 
+    /// Resolves symlinks (such as `/var` → `/private/var` on macOS) so checkout paths
+    /// match the canonical paths returned by `git worktree list`.
+    static func canonicalPath(for path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     init(url: URL) throws {
-        let session = try RepoSession(path: url.path)
-        self.url = url
+        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+        let session = try RepoSession(path: canonical.path)
+        self.url = canonical
         self.session = session
-        self.activeCheckoutPath = url.path
+        self.activeCheckoutPath = canonical.path
+        let listed = (try? session.listWorktrees()) ?? []
+        self.worktrees = listed
         // Git lists the primary checkout first, so a tab opened on a linked worktree still
         // names the repository after its main folder.
-        self.repoPath = (try? session.listWorktrees().first?.path) ?? url.path
+        self.repoPath = listed.first?.path ?? canonical.path
     }
 
     /// Background fetch on the interval chosen in Settings (never when set to 0). Failures
@@ -394,31 +407,45 @@ final class RepoTab: ObservableObject, Identifiable {
         watcherTask = nil
     }
 
-    /// Whether `path` is one of this tab's checkouts.
+    /// Whether `path` is one of this tab's checkouts (primary, active, or a sibling worktree).
     func contains(checkoutPath path: String) -> Bool {
-        repoPath == path || activeCheckoutPath == path
+        let canonical = Self.canonicalPath(for: path)
+        return repoPath == canonical
+            || activeCheckoutPath == canonical
+            || worktrees.contains { $0.path == canonical }
     }
 
     /// Points this tab at another checkout of the same repository. Branches, tags, stashes and
     /// the graph are shared, so only the working state, the watchers and the selection change.
     func switchCheckout(to path: String) {
-        guard !isBusy, path != activeCheckoutPath else { return }
+        let canonical = Self.canonicalPath(for: path)
+        guard !isBusy, canonical != activeCheckoutPath else { return }
+        if worktrees.first(where: { $0.path == canonical })?.isPrunable == true { return }
         let next: RepoSession
         do {
-            next = try RepoSession(path: path)
+            next = try RepoSession(path: canonical)
         } catch {
-            errorMessage = error.displayMessage
+            showError(error)
             return
         }
         watcherTask?.cancel()
         autoFetchTask?.cancel()
+        revealTask?.cancel()
+        revealTask = nil
         session = next
-        activeCheckoutPath = path
+        activeCheckoutPath = canonical
         selectedCommit = nil
         commitDetail = nil
+        loadedDetailOid = nil
         diffRows = []
         selectedFilePath = nil
         selectedFileStaged = false
+        commitSummary = ""
+        commitBody = ""
+        amendCommit = false
+        skipHooks = false
+        pendingConfirmation = nil
+        errorMessage = nil
         startWatcher()
         refresh()
         onCheckoutChanged?()
@@ -483,16 +510,23 @@ final class RepoTab: ObservableObject, Identifiable {
         Task {
             do {
                 let status = try await Task.detached { try session.status() }.value
+                guard self.session === session else { return }
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
                 isMerging = status.isMerging
                 isRebasing = status.isRebasing
                 hasConflicts = status.hasConflicts
                 if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
                 if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
+                let activeDirty = UInt32(totalChangesCount)
+                if let index = worktrees.firstIndex(where: { $0.path == activeCheckoutPath }),
+                   worktrees[index].dirtyCount != activeDirty {
+                    worktrees[index].dirtyCount = activeDirty
+                }
                 if selectedCommit == nil {
                     loadWorkingDiffSelection()
                 }
             } catch {
+                guard self.session === session else { return }
                 showError(error)
             }
         }
@@ -530,6 +564,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     worktreesTask,
                     graphTask
                 )
+                guard self.session === session else { return }
                 currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
                 isMerging = status.isMerging
                 isRebasing = status.isRebasing
@@ -551,6 +586,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
+                guard self.session === session else { return }
                 showError(error)
             }
         }

@@ -244,11 +244,17 @@ impl RepoSession {
         }
         let sync_repo = gix::ThreadSafeRepository::open(&path)
             .map_err(|e| GitCraftError::message(e.to_string()))?;
+        let (git_dir, common_dir) = {
+            let repo = sync_repo.to_thread_local();
+            (repo.git_dir().to_owned(), repo.common_dir().to_owned())
+        };
         let dirty = Arc::new(AtomicBool::new(false));
         let graph_dirty = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         watcher::spawn_dirty_watcher(
             &path,
+            &git_dir,
+            &common_dir,
             Arc::clone(&dirty),
             Arc::clone(&graph_dirty),
             Arc::clone(&stopped),
@@ -646,10 +652,7 @@ impl RepoSession {
 
     /// Rejects paths git does not list as a worktree of this repository.
     fn require_listed_worktree(&self, path: &str) -> Result<(), GitCraftError> {
-        let listed = worktree::list(&self.path)?
-            .iter()
-            .any(|worktree| worktree.path == path);
-        if listed {
+        if worktree::contains_path(&self.path, path)? {
             Ok(())
         } else {
             Err(GitCraftError::message(format!(

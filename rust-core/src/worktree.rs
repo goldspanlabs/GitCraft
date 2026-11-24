@@ -114,13 +114,35 @@ fn dirty_count(checkout: &Path) -> u32 {
     .unwrap_or(0)
 }
 
+pub(crate) fn contains_path(repo: &Path, path: &str) -> Result<bool, GitCraftError> {
+    let output = git_cli::run(repo, &["worktree", "list", "--porcelain", "-z"])?;
+    Ok(parse_porcelain(&output)
+        .iter()
+        .any(|worktree| worktree.path == path))
+}
+
 pub(crate) fn list(repo: &Path) -> Result<Vec<WorktreeInfo>, GitCraftError> {
     let output = git_cli::run(repo, &["worktree", "list", "--porcelain", "-z"])?;
     let mut worktrees = parse_porcelain(&output);
-    for worktree in &mut worktrees {
+    let fill_dirty = |worktree: &mut WorktreeInfo| {
         let checkout = Path::new(&worktree.path);
         if !worktree.is_prunable && checkout.is_dir() {
             worktree.dirty_count = dirty_count(checkout);
+        }
+    };
+    if worktrees.len() <= 1 {
+        if let Some(worktree) = worktrees.first_mut() {
+            fill_dirty(worktree);
+        }
+    } else {
+        // Query worktrees concurrently in small batches so multi-worktree repos don't serialize
+        // `git status` calls or spawn unbounded subprocesses at once.
+        for batch in worktrees.chunks_mut(4) {
+            std::thread::scope(|scope| {
+                for worktree in batch {
+                    scope.spawn(move || fill_dirty(worktree));
+                }
+            });
         }
     }
     Ok(worktrees)
