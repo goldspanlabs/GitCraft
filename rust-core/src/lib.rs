@@ -700,6 +700,23 @@ impl RepoSession {
         Ok(())
     }
 
+    /// Deletes `remote/branch` on its remote with `git push <remote> --delete <branch>`.
+    /// The local remote-tracking ref is pruned by git as part of the push.
+    pub fn delete_remote_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| GitCraftError::message("mutation queue poisoned"))?;
+        let branch_name = validate_ref_arg(&branch_name)?;
+        let (remote, branch) = branch_name
+            .split_once('/')
+            .ok_or_else(|| GitCraftError::message("not a remote branch"))?;
+        let remote = validate_remote_arg(remote)?;
+        let branch = validate_ref_arg(branch)?;
+        git_cli::mutate(&self.path, &["push", &remote, "--delete", &branch])?;
+        Ok(())
+    }
+
     pub fn merge_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
         let _guard = self
             .mutation_lock

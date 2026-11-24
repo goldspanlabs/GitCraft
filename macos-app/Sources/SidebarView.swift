@@ -433,20 +433,20 @@ private struct LocalBranchRowView: View {
         )
         .contextMenu {
             if !branch.isHead {
-                Button("Checkout \(branch.name)") {
+                Button("Checkout...") {
                     tab.checkoutBranch(branch.name)
                 }
-                Button("Merge \(branch.name) into Current") {
+                Button("Merge into '\(tab.currentBranch)'") {
                     tab.mergeBranch(branch.name)
                 }
             }
-            Button("New Branch from \(branch.name)…") {
+            Button("New Branch...") {
                 tab.newBranchStartPoint = branch.name
                 tab.isShowingNewBranchSheet = true
             }
             if !branch.isHead {
                 Divider()
-                Button("Delete \(branch.name)…", role: .destructive) {
+                Button("Delete...", role: .destructive) {
                     tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
                 }
             }
@@ -474,8 +474,28 @@ private struct RemoteBranchRowView: View {
         }
         .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
         .contentShape(Rectangle())
+        // Same pattern as LocalBranchRowView: a count:1 tap next to a count:2 one
+        // delays the single tap, so the single tap is declared first and stays immediate.
         .onTapGesture {
             tab.scrollToCommit(oidHex: branch.targetOidHex)
+        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                tab.checkoutBranch(branch.name)
+            }
+        )
+        .contextMenu {
+            Button("Checkout...") {
+                tab.checkoutBranch(branch.name)
+            }
+            Button("New Branch...") {
+                tab.newBranchStartPoint = branch.name
+                tab.isShowingNewBranchSheet = true
+            }
+            Divider()
+            Button("Delete '\(branch.name)'", role: .destructive) {
+                tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
+            }
         }
     }
 }

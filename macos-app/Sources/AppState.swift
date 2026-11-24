@@ -128,6 +128,7 @@ final class RepoTab: ObservableObject, Identifiable {
     enum DestructiveAction: Identifiable {
         case discardFile(path: String)
         case deleteBranch(name: String, force: Bool)
+        case deleteRemoteBranch(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
         case abortMerge
         case abortRebase
@@ -137,6 +138,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case let .discardFile(path): return "discard-\(path)"
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
+            case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
@@ -148,6 +150,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case let .discardFile(path): return "Discard changes to \"\(path)\"?"
             case let .deleteBranch(name, _): return "Delete branch \"\(name)\"?"
+            case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
             case .abortMerge: return "Abort in-progress merge?"
@@ -162,6 +165,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will permanently revert your uncommitted changes to this file."
             case .deleteBranch:
                 return "This will delete the local branch reference."
+            case .deleteRemoteBranch:
+                return "This will delete the branch from the remote repository. The local branch of the same name, if any, is kept."
             case let .deleteTag(_, remote):
                 return remote
                     ? "This will delete the tag locally and push the deletion to the remote repository."
@@ -178,7 +183,7 @@ final class RepoTab: ObservableObject, Identifiable {
         var confirmLabel: String {
             switch self {
             case .discardFile: return "Discard"
-            case .deleteBranch, .deleteTag: return "Delete"
+            case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
@@ -847,6 +852,12 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    func deleteRemoteBranch(_ branchName: String) {
+        performMutation { session in
+            try session.deleteRemoteBranch(branchName: branchName)
+        }
+    }
+
     func mergeBranch(_ branchName: String) {
         performMutation { session in
             try session.mergeBranch(branchName: branchName)
@@ -878,6 +889,8 @@ final class RepoTab: ObservableObject, Identifiable {
             discardFile(path)
         case let .deleteBranch(name, force):
             deleteBranch(name, force: force)
+        case let .deleteRemoteBranch(name):
+            deleteRemoteBranch(name)
         case let .deleteTag(name, deleteRemote):
             deleteTag(name, deleteRemote: deleteRemote)
         case .abortMerge:

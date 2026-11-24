@@ -190,6 +190,9 @@ interface RepoSession {
   void delete_branch(string branch_name, boolean force);
 
   [Throws=GitCraftError]
+  void delete_remote_branch(string branch_name);
+
+  [Throws=GitCraftError]
   void merge_branch(string branch_name);
 
   [Throws=GitCraftError]
