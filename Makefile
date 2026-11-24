@@ -4,7 +4,9 @@ BUILD_DIR := build
 APP := $(BUILD_DIR)/GitCraft.app
 UNIFFI := $(RUST_DIR)/target/release/uniffi-bindgen
 
-.PHONY: all rust bindings swift bundle clean
+SWIFT_FLAGS := -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/gitcraft_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
+
+.PHONY: all rust bindings swift test-swift bundle clean
 
 all: bundle
 
@@ -12,10 +14,13 @@ rust:
 	cargo build --release --manifest-path $(RUST_DIR)/Cargo.toml
 
 bindings: rust
-	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$(APP_DIR)/Sources/Generated"
+	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/src/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$(APP_DIR)/Sources/Generated"
 
 swift: rust bindings
-	cd "$(APP_DIR)" && swift build -c release -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/gitcraft_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
+	cd "$(APP_DIR)" && swift build -c release $(SWIFT_FLAGS)
+
+test-swift: rust bindings
+	cd "$(APP_DIR)" && swift test $(SWIFT_FLAGS)
 
 bundle: swift
 	rm -rf $(APP) $(BUILD_DIR)/AppIcon.iconset

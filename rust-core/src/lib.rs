@@ -608,10 +608,6 @@ impl RepoSession {
     pub fn highlight(&self, text: &str, extension: &str) -> Vec<StyleSpan> {
         highlight::highlight(text, extension)
     }
-
-    pub fn watch(&self, events: std::sync::mpsc::Sender<()>) -> io::Result<()> {
-        watcher::watch(&self.path, events)
-    }
 }
 
 uniffi::include_scaffolding!("gitcraft_core");

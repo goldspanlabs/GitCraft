@@ -12,7 +12,13 @@ pub fn working_tree_file(
     path: Option<&str>,
     staged: bool,
 ) -> io::Result<Vec<DiffRow>> {
-    let mut args = vec!["diff", "--no-ext-diff", "--unified=3"];
+    // Paths are literal filenames, not globs: `notes[1].txt` must not match `notes1.txt`.
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--unified=3",
+    ];
     if staged {
         args.push("--cached");
     }
@@ -23,10 +29,23 @@ pub fn working_tree_file(
     let raw = git_cli::run(repo, &args)?;
     let ext = path.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
 
+    // An empty unstaged diff only means "untracked" if git doesn't know the
+    // path. A tracked file with no unstaged changes must yield no rows.
     if raw.trim().is_empty() && !staged {
         if let Some(rel_path) = path {
+            let is_tracked = git_cli::run(
+                repo,
+                &[
+                    "--literal-pathspecs",
+                    "ls-files",
+                    "--error-unmatch",
+                    "--",
+                    rel_path,
+                ],
+            )
+            .is_ok();
             let full_path = repo.join(rel_path);
-            if full_path.is_file() {
+            if !is_tracked && full_path.is_file() {
                 if let Ok(bytes) = std::fs::read(&full_path) {
                     if bytes.len() > 256 * 1024 || bytes.contains(&0) {
                         return Ok(vec![DiffRow {
