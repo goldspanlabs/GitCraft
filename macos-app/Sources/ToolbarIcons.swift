@@ -146,16 +146,19 @@ struct PhosphorIcon: View {
 
     private static var cache: [String: NSImage] = [:]
 
-    private var image: NSImage? {
+    /// The glyph as a template image, for AppKit views that cannot host a SwiftUI icon.
+    static func nsImage(for glyph: PhosphorGlyph) -> NSImage? {
         let path = glyph.path
-        if let hit = Self.cache[path] { return hit }
+        if let hit = cache[path] { return hit }
         let shade = glyph.shading.map { "<path fill=\"black\" opacity=\"0.4\" d=\"\($0)\"/>" } ?? ""
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\">\(shade)<path fill=\"black\" d=\"\(path)\"/></svg>"
         guard let data = svg.data(using: .utf8), let img = NSImage(data: data) else { return nil }
         img.isTemplate = true
-        Self.cache[path] = img
+        cache[path] = img
         return img
     }
+
+    private var image: NSImage? { Self.nsImage(for: glyph) }
 
     var body: some View {
         if let image {
