@@ -25,6 +25,11 @@ struct SidebarView: View {
         )
     }
 
+    /// The commit HEAD points at when HEAD is detached. The graph only carries a HEAD ref in that case.
+    private var detachedHeadOid: String? {
+        tab.commits.first { commit in commit.refs.contains { $0.kind == .head } }?.oidHex
+    }
+
     private var remoteBranchRows: [FlatBranchRow] {
         BranchTreeNode.buildFlattenedRows(
             from: remoteBranches,
@@ -47,6 +52,9 @@ struct SidebarView: View {
         List {
             Section(isExpanded: $isLocalBranchesExpanded) {
                 if isLocalBranchesExpanded {
+                    if let headOid = detachedHeadOid {
+                        DetachedHeadRowView(tab: tab, oidHex: headOid)
+                    }
                     ForEach(localBranchRows) { row in
                         switch row.kind {
                         case let .folder(name, folderID, isExpanded):
@@ -358,6 +366,30 @@ private struct BranchFolderRowView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             onToggle()
+        }
+    }
+}
+
+/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with no branch name.
+private struct DetachedHeadRowView: View {
+    @ObservedObject var tab: RepoTab
+    let oidHex: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .branch)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .center)
+
+            Text("HEAD (detached)")
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: oidHex)
         }
     }
 }
