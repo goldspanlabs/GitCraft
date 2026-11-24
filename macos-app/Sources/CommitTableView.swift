@@ -515,6 +515,8 @@ final class CommitRowCellView: NSTableCellView {
         } else {
             badgesStack.isHidden = false
             let badges = Array(commit.refs.prefix(4))
+            // Branch chips take the colour of the commit's graph lane.
+            let laneColor = GraphCellView.laneColor(for: commit.colorIdx)
             // "origin/main" -> the host behind the "origin" remote.
             let hostFor: (RefBadge) -> RemoteHost? = { badge in
                 badge.kind == .remoteBranch
@@ -537,12 +539,19 @@ final class CommitRowCellView: NSTableCellView {
                 }
                 if badge.kind == .remoteBranch, let local = mirrored.first(where: { $0.name == branchNameOf(badge) }) {
                     badgesStack.addArrangedSubview(
-                        RefPillView(badge: badge, host: hostFor(badge), iconOnly: true, colorFrom: local)
+                        RefPillView(badge: badge, host: hostFor(badge), iconOnly: true, laneColor: laneColor)
                     )
-                    badgesStack.addArrangedSubview(RefPillView(badge: local, showsUnpushedDot: commit.isUnpushed))
+                    badgesStack.addArrangedSubview(
+                        RefPillView(badge: local, showsUnpushedDot: commit.isUnpushed, laneColor: laneColor)
+                    )
                 } else {
                     badgesStack.addArrangedSubview(
-                        RefPillView(badge: badge, host: hostFor(badge), showsUnpushedDot: commit.isUnpushed)
+                        RefPillView(
+                            badge: badge,
+                            host: hostFor(badge),
+                            showsUnpushedDot: commit.isUnpushed,
+                            laneColor: laneColor
+                        )
                     )
                 }
             }
@@ -580,8 +589,9 @@ final class RefPillView: NSView {
     /// The untinted glyph; `applyColors` bakes the chip colour into `iconView.image`.
     private var templateIcon: NSImage?
     private let badge: RefBadge
-    /// The chip whose colours this chip uses. It is the chip itself unless `colorFrom` is set.
-    private let colorBadge: RefBadge
+    /// The graph lane colour of the commit this chip sits on. Used by branch chips only;
+    /// HEAD and tag chips keep fixed colours so they stand apart from the lanes.
+    private let laneColor: NSColor?
     private let host: RemoteHost?
 
     /// `showsUnpushedDot` swaps the checked-out branch's check mark for an orange dot.
@@ -591,10 +601,10 @@ final class RefPillView: NSView {
         host: RemoteHost? = nil,
         showsUnpushedDot: Bool = false,
         iconOnly: Bool = false,
-        colorFrom: RefBadge? = nil
+        laneColor: NSColor? = nil
     ) {
         self.badge = badge
-        self.colorBadge = colorFrom ?? badge
+        self.laneColor = laneColor
         self.host = host
         super.init(frame: .zero)
         wantsLayer = true
@@ -663,6 +673,26 @@ final class RefPillView: NSView {
                 iconView.heightAnchor.constraint(equalToConstant: 13),
                 label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             ])
+        } else if badge.kind == .tag {
+            // Tags lead with a tag glyph, set off by a thin divider like the host marks on remote chips.
+            templateIcon = PhosphorIcon.nsImage(for: .tag)
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(iconView)
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            divider.wantsLayer = true
+            addSubview(divider)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 12),
+                iconView.heightAnchor.constraint(equalToConstant: 12),
+                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+                divider.widthAnchor.constraint(equalToConstant: 1),
+                divider.topAnchor.constraint(equalTo: topAnchor),
+                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+            ])
         } else {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6).isActive = true
         }
@@ -703,11 +733,10 @@ final class RefPillView: NSView {
     private func applyColors() {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
-        let baseColor: NSColor = switch colorBadge.kind {
-        case .localBranch: .systemBlue
-        case .remoteBranch: .systemPurple
-        case .tag: .systemOrange
-        case .head: .systemGreen
+        let baseColor: NSColor = switch badge.kind {
+        case .localBranch, .remoteBranch: laneColor ?? .systemGray
+        case .tag: .systemBrown
+        case .head: .systemRed
         }
 
         // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
@@ -718,14 +747,14 @@ final class RefPillView: NSView {
 
         if isDark {
             let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
-            bgColor = darkBase.blended(withFraction: colorBadge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
+            bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
             // The current branch's chip text is noticeably brighter than other chips'.
-            fgColor = baseColor.blended(withFraction: colorBadge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
+            fgColor = baseColor.blended(withFraction: badge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
             borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
         } else {
-            bgColor = NSColor.white.blended(withFraction: colorBadge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
+            bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
             fgColor = baseColor.blended(withFraction: 0.45, of: .black) ?? baseColor
-            borderColor = baseColor.withAlphaComponent(colorBadge.isCurrent ? 0.85 : 0.55)
+            borderColor = baseColor.withAlphaComponent(badge.isCurrent ? 0.85 : 0.55)
         }
 
         layer?.backgroundColor = bgColor.cgColor
@@ -759,6 +788,11 @@ final class GraphCellView: NSView {
         .systemYellow,
         .systemIndigo,
     ]
+
+    /// The lane colour for a graph colour index. Branch chips reuse it so they match their lane.
+    static func laneColor(for idx: UInt8) -> NSColor {
+        palette[Int(idx) % palette.count]
+    }
 
     private var commit: CommitRow?
     private var hasIncomingLine = false
