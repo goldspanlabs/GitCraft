@@ -107,7 +107,8 @@ extension RepoTab {
         }
     }
 
-    func commitChanges() {
+    /// Commits the staged changes. The Commit menu's "Commit and Push" item passes `pushAfter: true`.
+    func commitChanges(pushAfter: Bool = false) {
         let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }
         let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,7 +136,7 @@ extension RepoTab {
             self?.commitBody = ""
             self?.amendCommit = false
             self?.skipHooks = false
-            if GitPreferences.pushOnCommit {
+            if pushAfter {
                 if rewritesPushedCommit {
                     self?.toast = Toast(
                         message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."

@@ -202,21 +202,55 @@ private struct WorkingChangesInspectorView: View {
                         }
                         .disabled(tab.totalChangesCount == 0 || tab.isBusy)
 
-                        // A disabled prominent button renders as a heavy grey slab, so fall back
-                        // to the regular bordered style until committing is possible.
-                        if canCommit {
-                            Button("Commit") {
+                        // One combo control, always drawn with both halves. When committing isn't
+                        // possible it turns grey and both halves are inert.
+                        HStack(spacing: 0) {
+                            // Padding and the hit shape live inside the label, so the whole
+                            // half is clickable, not just the text.
+                            Button {
                                 tab.commitChanges()
+                            } label: {
+                                Text("Commit")
+                                    .padding(.horizontal, 14)
+                                    .frame(maxHeight: .infinity)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.plain)
                             .keyboardShortcut(.return, modifiers: .command)
+                            .disabled(!canCommit)
                             .accessibilityIdentifier("commit-button")
-                        } else {
-                            Button("Commit") {}
-                                .buttonStyle(.bordered)
-                                .disabled(true)
-                                .accessibilityIdentifier("commit-button")
+
+                            Rectangle()
+                                .fill((canCommit ? Color.white : Color.secondary).opacity(0.35))
+                                .frame(width: 1)
+                                .padding(.vertical, 4)
+
+                            Menu {
+                                Button("Commit and Push") {
+                                    tab.commitChanges(pushAfter: true)
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 9)
+                                    .frame(maxHeight: .infinity)
+                                    .contentShape(Rectangle())
+                            }
+                            .menuStyle(.button)
+                            .menuIndicator(.hidden)
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                            .disabled(!canCommit)
+                            .help("More commit options")
+                            .accessibilityIdentifier("commit-menu")
                         }
+                        .foregroundStyle(canCommit ? Color.white : Color.secondary)
+                        .frame(height: 23)
+                        .background(
+                            canCommit ? Color.accentColor : Color.secondary.opacity(0.15),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .fixedSize()
                     }
                 }
                 .padding(10)
