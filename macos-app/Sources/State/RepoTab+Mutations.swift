@@ -353,20 +353,21 @@ extension RepoTab {
     ) {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
+        let resolvedPath = Self.resolvePath(trimmedPath, relativeTo: activeCheckoutPath)
         let trimmedBranch = branchName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalBranch = (trimmedBranch?.isEmpty == false) ? trimmedBranch : nil
         let trimmedStart = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalStart = (trimmedStart?.isEmpty == false) ? trimmedStart : nil
         performMutation({ session in
             try session.addWorktree(
-                path: trimmedPath,
+                path: resolvedPath,
                 branchName: finalBranch,
                 startPoint: finalStart,
                 detach: detach
             )
         }, onSuccess: { [weak self] in
             if switchAfterCreate {
-                self?.switchCheckout(to: trimmedPath)
+                self?.switchCheckout(to: resolvedPath)
             }
         })
     }

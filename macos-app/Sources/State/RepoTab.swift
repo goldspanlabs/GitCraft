@@ -251,13 +251,28 @@ final class RepoTab: ObservableObject, Identifiable {
         return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
+    /// Resolves a user-entered path (including `~` or relative paths) against `basePath` so
+    /// git commands and subsequent checkout switches refer to the exact same directory.
+    static func resolvePath(_ path: String, relativeTo basePath: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        let url: URL
+        if expanded.hasPrefix("/") {
+            url = URL(fileURLWithPath: expanded)
+        } else {
+            url = URL(fileURLWithPath: expanded, relativeTo: URL(fileURLWithPath: basePath, isDirectory: true))
+        }
+        return url.standardizedFileURL.path
+    }
+
     init(url: URL) throws {
         let canonical = Self.canonicalPath(for: url.path)
         let session = try RepoSession(path: canonical)
         self.url = URL(fileURLWithPath: canonical)
         self.session = session
         self.activeCheckoutPath = canonical
-        let listed = (try? session.listWorktrees()) ?? []
+        // Metadata-only lookup avoids running `git status` per checkout on the main actor;
+        // `refresh()` fills in dirty counts asynchronously.
+        let listed = (try? session.listWorktreeEntries()) ?? []
         self.worktrees = listed
         // Git lists the primary checkout first, so a tab opened on a linked worktree still
         // names the repository after its main folder.
@@ -422,12 +437,20 @@ final class RepoTab: ObservableObject, Identifiable {
         revealTask = nil
         session = next
         activeCheckoutPath = canonical
+        graphGeneration += 1
+        currentBranch = worktrees.first(where: { $0.path == canonical })?.branch ?? ""
+        isMerging = false
+        isRebasing = false
+        hasConflicts = false
+        stagedFiles = []
+        unstagedFiles = []
         selectedCommit = nil
         commitDetail = nil
         loadedDetailOid = nil
         diffRows = []
         selectedFilePath = nil
         selectedFileStaged = false
+        scrollRequest = ScrollRequest(oidHex: nil)
         commitSummary = ""
         commitBody = ""
         amendCommit = false

@@ -11,6 +11,11 @@ impl RepoSession {
         worktree::list(&self.path)
     }
 
+    /// Lists worktree metadata without querying `git status` per checkout.
+    pub fn list_worktree_entries(&self) -> Result<Vec<WorktreeInfo>, GitCraftError> {
+        worktree::list_entries(&self.path)
+    }
+
     /// Creates a linked worktree at `path`.
     ///
     /// - `detach == true`: checks out `start_point` (or `HEAD`) as a detached HEAD (`branch_name` must be `None`).

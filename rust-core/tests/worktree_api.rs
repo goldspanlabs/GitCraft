@@ -506,3 +506,30 @@ fn remove_worktree_refuses_primary_locked_and_unlisted_paths() {
     session.remove_worktree(locked_path, false).unwrap();
     assert!(!locked.exists());
 }
+
+#[test]
+fn list_worktree_entries_returns_metadata_without_dirty_counts() {
+    let repo = repo_with_commit();
+    fs::write(repo.path().join("README.md"), "modified\n").unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let linked = parent.path().join("dirty-wt");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "dirty-wt",
+            linked.to_str().unwrap(),
+        ],
+    );
+    fs::write(linked.join("new.txt"), "untracked\n").unwrap();
+
+    let session = RepoSession::open(repo.path()).unwrap();
+    let entries = session.list_worktree_entries().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries[0].is_main);
+    assert_eq!(entries[0].path, canonical(repo.path()));
+    assert_eq!(entries[1].path, canonical(&linked));
+    assert!(entries.iter().all(|w| w.dirty_count == 0));
+}

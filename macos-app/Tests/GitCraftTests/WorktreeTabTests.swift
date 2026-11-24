@@ -149,6 +149,72 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: activeWt.path))
     }
 
+    @MainActor
+    func testSwitchCheckoutClearsStaleStatusAndResetsTableSelection() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.stagedFiles = [FileChange(path: "a.txt", status: "M", staged: true)]
+        tab.unstagedFiles = [FileChange(path: "b.txt", status: "M", staged: false)]
+        tab.isMerging = true
+        tab.isRebasing = true
+        tab.hasConflicts = true
+        tab.scrollRequest = RepoTab.ScrollRequest(oidHex: "deadbeef")
+
+        let target = try XCTUnwrap(tab.worktrees.first { !$0.isMain })
+        tab.switchCheckout(to: target.path)
+
+        XCTAssertTrue(tab.stagedFiles.isEmpty)
+        XCTAssertTrue(tab.unstagedFiles.isEmpty)
+        XCTAssertFalse(tab.isMerging)
+        XCTAssertFalse(tab.isRebasing)
+        XCTAssertFalse(tab.hasConflicts)
+        XCTAssertEqual(tab.currentBranch, "linked")
+        XCTAssertNotNil(tab.scrollRequest)
+        XCTAssertNil(tab.scrollRequest?.oidHex)
+    }
+
+    @MainActor
+    func testAddWorktreeResolvesRelativePathAgainstActiveCheckout() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        let canonicalRoot = URL(fileURLWithPath: RepoTab.canonicalPath(for: root.path), isDirectory: true)
+        let expected = canonicalRoot.appendingPathComponent("relative-wt").path
+        XCTAssertEqual(
+            RepoTab.resolvePath("../relative-wt", relativeTo: tab.activeCheckoutPath),
+            expected
+        )
+
+        tab.addWorktree(
+            path: "../relative-wt",
+            branchName: "relative-branch",
+            startPoint: nil,
+            detach: false,
+            switchAfterCreate: true
+        )
+
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && tab.activeCheckoutPath != expected {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTAssertEqual(tab.activeCheckoutPath, expected)
+        XCTAssertNil(tab.errorMessage)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expected))
+    }
+
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)
