@@ -144,6 +144,8 @@ pub struct BranchInfo {
     pub ahead: u32,
     pub behind: u32,
     pub is_merged: bool,
+    /// The local branch pinned to the top of the sidebar: origin's default branch, else main or master.
+    pub is_default: bool,
 }
 
 #[derive(Clone, Debug)]

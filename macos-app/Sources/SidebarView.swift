@@ -9,8 +9,13 @@ struct SidebarView: View {
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
     @State private var collapsedFolderIDs: Set<String> = []
 
+    /// The default branch is pinned above the rest of Local Branches, so it's kept out of the tree.
     private var localBranches: [BranchInfo] {
-        tab.branches.filter { !$0.isRemote }
+        tab.branches.filter { !$0.isRemote && !$0.isDefault }
+    }
+
+    private var defaultLocalBranch: BranchInfo? {
+        tab.branches.first { !$0.isRemote && $0.isDefault }
     }
 
     private var remoteBranches: [BranchInfo] {
@@ -23,6 +28,11 @@ struct SidebarView: View {
             scope: "local",
             collapsedFolderIDs: collapsedFolderIDs
         )
+    }
+
+    /// The commit HEAD points at when HEAD is detached. The graph only carries a HEAD ref in that case.
+    private var detachedHeadOid: String? {
+        tab.commits.first { commit in commit.refs.contains { $0.kind == .head } }?.oidHex
     }
 
     private var remoteBranchRows: [FlatBranchRow] {
@@ -47,6 +57,17 @@ struct SidebarView: View {
         List {
             Section(isExpanded: $isLocalBranchesExpanded) {
                 if isLocalBranchesExpanded {
+                    if let headOid = detachedHeadOid {
+                        DetachedHeadRowView(tab: tab, oidHex: headOid)
+                    }
+                    if let pinned = defaultLocalBranch {
+                        LocalBranchRowView(
+                            tab: tab,
+                            branch: pinned,
+                            displayName: pinned.name,
+                            depth: 0
+                        )
+                    }
                     ForEach(localBranchRows) { row in
                         switch row.kind {
                         case let .folder(name, folderID, isExpanded):
@@ -358,6 +379,30 @@ private struct BranchFolderRowView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             onToggle()
+        }
+    }
+}
+
+/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with no branch name.
+private struct DetachedHeadRowView: View {
+    @ObservedObject var tab: RepoTab
+    let oidHex: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .branch)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .center)
+
+            Text("HEAD (detached)")
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: oidHex)
         }
     }
 }

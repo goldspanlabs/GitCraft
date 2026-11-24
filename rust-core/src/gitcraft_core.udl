@@ -94,6 +94,7 @@ dictionary BranchInfo {
   u32 ahead;
   u32 behind;
   boolean is_merged;
+  boolean is_default;
 };
 
 dictionary TagInfo {

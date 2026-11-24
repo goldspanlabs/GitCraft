@@ -12,7 +12,8 @@ final class BranchTreeTests: XCTestCase {
             targetOidHex: String(repeating: "a", count: 40),
             ahead: 0,
             behind: 0,
-            isMerged: false
+            isMerged: false,
+            isDefault: false
         )
     }
 

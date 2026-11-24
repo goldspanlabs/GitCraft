@@ -28,6 +28,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppearancePreference.apply(AppearancePreference(rawValue: saved) ?? .system)
 
         let workspace = WorkspaceState.shared
+        // UI tests open a fixture repository with `-UITestOpenRepository <path>` instead of
+        // driving the open panel. Normal launches never set this key.
+        if let path = UserDefaults.standard.string(forKey: "UITestOpenRepository"),
+           workspace.openRepository(at: URL(fileURLWithPath: path))
+        {
+            return
+        }
         if !workspace.restoreTabs() {
             workspace.openWelcome()
         }
