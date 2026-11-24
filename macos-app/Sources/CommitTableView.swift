@@ -289,6 +289,7 @@ struct CommitTableView: NSViewRepresentable {
 
 final class CommitRowCellView: NSTableCellView {
     private let graphView = GraphCellView()
+    private let unpushedDot = NSView()
     private let badgesStack = NSStackView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let avatarView = AvatarImageView()
@@ -296,6 +297,8 @@ final class CommitRowCellView: NSTableCellView {
     private let hashLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
+    /// Pushed rows start the badges 6pt after the graph; unpushed rows make room for the dot.
+    private var badgesLeading: NSLayoutConstraint!
 
     /// "Yesterday at 10:57 PM" for recent days, "Nov 22, 2026 at 6:38 PM" otherwise.
     private static let dateFormatter: DateFormatter = {
@@ -320,6 +323,11 @@ final class CommitRowCellView: NSTableCellView {
     private func setupViews() {
         graphView.translatesAutoresizingMaskIntoConstraints = false
         badgesStack.translatesAutoresizingMaskIntoConstraints = false
+        unpushedDot.translatesAutoresizingMaskIntoConstraints = false
+        unpushedDot.wantsLayer = true
+        unpushedDot.layer?.cornerRadius = 3.5
+        unpushedDot.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        unpushedDot.isHidden = true
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -350,6 +358,7 @@ final class CommitRowCellView: NSTableCellView {
         timeLabel.alignment = .left
 
         addSubview(graphView)
+        addSubview(unpushedDot)
         addSubview(badgesStack)
         addSubview(summaryLabel)
         addSubview(avatarView)
@@ -358,6 +367,7 @@ final class CommitRowCellView: NSTableCellView {
         addSubview(timeLabel)
 
         graphWidthConstraint = graphView.widthAnchor.constraint(equalToConstant: 24)
+        badgesLeading = badgesStack.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 6)
 
         NSLayoutConstraint.activate([
             graphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -365,7 +375,12 @@ final class CommitRowCellView: NSTableCellView {
             graphView.bottomAnchor.constraint(equalTo: bottomAnchor),
             graphWidthConstraint,
 
-            badgesStack.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 6),
+            unpushedDot.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 4),
+            unpushedDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            unpushedDot.widthAnchor.constraint(equalToConstant: 7),
+            unpushedDot.heightAnchor.constraint(equalToConstant: 7),
+
+            badgesLeading,
             badgesStack.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             summaryLabel.leadingAnchor.constraint(equalTo: badgesStack.trailingAnchor, constant: 6),
@@ -392,6 +407,8 @@ final class CommitRowCellView: NSTableCellView {
     }
 
     func configureWorkingChanges(fileCount: Int) {
+        unpushedDot.isHidden = true
+        badgesLeading.constant = 6
         graphWidthConstraint.constant = 24
         graphView.alphaValue = 1.0
         graphView.configureWorkingChanges()
@@ -434,8 +451,13 @@ final class CommitRowCellView: NSTableCellView {
             }
         }
 
+        unpushedDot.isHidden = !commit.isUnpushed
+        badgesLeading.constant = commit.isUnpushed ? 20 : 6
+
+        // The latest commit of the checked-out branch is bold.
+        let isHeadCommit = commit.refs.contains { $0.isCurrent }
         summaryLabel.stringValue = commit.summary
-        summaryLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
+        summaryLabel.font = .systemFont(ofSize: 12.5, weight: isHeadCommit ? .semibold : .regular)
         summaryLabel.textColor = commit.isRemoteOnly ? .secondaryLabelColor : .labelColor
 
         avatarView.isHidden = false

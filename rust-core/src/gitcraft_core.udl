@@ -70,6 +70,7 @@ dictionary CommitRow {
   sequence<GraphEdge> edges;
   sequence<RefBadge> refs;
   boolean is_remote_only;
+  boolean is_unpushed;
 };
 
 dictionary CommitDetail {

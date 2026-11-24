@@ -117,6 +117,8 @@ pub struct CommitRow {
     pub edges: Vec<GraphEdge>,
     pub refs: Vec<RefBadge>,
     pub is_remote_only: bool,
+    /// On the checked-out branch and not contained in any remote branch.
+    pub is_unpushed: bool,
 }
 
 #[derive(Clone, Debug)]

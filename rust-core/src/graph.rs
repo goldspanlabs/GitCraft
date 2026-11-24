@@ -117,6 +117,7 @@ fn graph_walk(
         }
     }
     let has_local_refs = !local_reachable.is_empty();
+    let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
 
     let query = search_query
         .map(|s| s.trim().to_lowercase())
@@ -211,6 +212,7 @@ fn graph_walk(
             &mut next_color,
         );
         row.is_remote_only = is_remote_only;
+        row.is_unpushed = unpushed.contains(&oid);
 
         let matches_query = match &query {
             None => true,
@@ -364,6 +366,7 @@ pub(crate) fn assign_commit_lane(
         edges,
         refs,
         is_remote_only: false,
+        is_unpushed: false,
     }
 }
 
@@ -731,6 +734,45 @@ fn is_fully_merged(repo: &gix::Repository, tip: gix::ObjectId, base: gix::Object
         .all()
         .map(|mut w| w.next().is_none())
         .unwrap_or(false)
+}
+
+/// Upper bound on how many unpushed commits we mark, so a never-pushed branch with a huge
+/// history doesn't cost a full walk on every graph query.
+const MAX_UNPUSHED_MARKED: usize = 5_000;
+
+/// Commits on the checked-out branch that no remote branch contains. Empty when HEAD is
+/// detached or the repository has no remote branches at all (otherwise everything would
+/// count as unpushed, which is just noise).
+fn unpushed_head_commits(
+    repo: &gix::Repository,
+    refs_by_oid: &HashMap<gix::ObjectId, Vec<RefBadge>>,
+) -> HashSet<gix::ObjectId> {
+    let remote_tips: Vec<gix::ObjectId> = refs_by_oid
+        .iter()
+        .filter(|(_, badges)| badges.iter().any(|b| b.kind == RefKind::RemoteBranch))
+        .map(|(oid, _)| *oid)
+        .collect();
+    if remote_tips.is_empty() {
+        return HashSet::new();
+    }
+    let Ok(head) = repo.head() else {
+        return HashSet::new();
+    };
+    if head.referent_name().is_none() {
+        return HashSet::new();
+    }
+    let Some(head_id) = head.id() else {
+        return HashSet::new();
+    };
+    repo.rev_walk([head_id.detach()])
+        .with_hidden(remote_tips)
+        .all()
+        .map(|walk| {
+            walk.filter_map(|entry| entry.ok().map(|info| info.id))
+                .take(MAX_UNPUSHED_MARKED)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn compute_ahead_behind(

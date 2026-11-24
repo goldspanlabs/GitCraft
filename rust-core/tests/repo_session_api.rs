@@ -1233,3 +1233,30 @@ fn graph_rows_carry_the_author_email() {
     assert_eq!(rows[0].author_email, "tester@gitcraft.local");
     assert_eq!(rows[0].author_name, "GitCraft Tester");
 }
+
+#[test]
+fn unpushed_commits_on_the_current_branch_are_marked() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    write(dir.path(), "x.txt", "1\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-qm", "local one"]);
+    write(dir.path(), "y.txt", "2\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-qm", "local two"]);
+
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    // Commits made within the same second have no fixed order, so compare by name.
+    let flag = |name: &str| rows.iter().find(|r| r.summary == name).unwrap().is_unpushed;
+    assert!(flag("local two"));
+    assert!(flag("local one"));
+    assert!(!flag("initial"));
+}
+
+#[test]
+fn nothing_is_marked_unpushed_without_remote_branches() {
+    let dir = init_repo_with_commit();
+    let rows = open(dir.path()).get_commit_graph(0, 10, None).unwrap();
+    assert!(rows.iter().all(|r| !r.is_unpushed));
+}
