@@ -280,6 +280,9 @@ interface RepoSession {
   string head_commit_message();
 
   [Throws=GitCraftError]
+  boolean head_is_pushed();
+
+  [Throws=GitCraftError]
   void fetch(boolean include_tags);
 
   [Throws=GitCraftError]
