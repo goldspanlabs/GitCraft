@@ -7,6 +7,11 @@ struct SettingsView: View {
     private var appearanceRaw = AppearancePreference.system.rawValue
 
     @AppStorage(showAvatarsStorageKey) private var showAvatars = true
+    @AppStorage(AutoFetchInterval.storageKey) private var autoFetchMinutes = 0
+    @AppStorage(GitPreferences.fetchIncludeTagsKey) private var fetchIncludeTags = false
+    @AppStorage(GitPreferences.pushOnCommitKey) private var pushOnCommit = false
+    @AppStorage(BranchSpaceReplacement.storageKey) private var spaceReplacementRaw = BranchSpaceReplacement.dash.rawValue
+    @AppStorage(CommitSortPreference.storageKey) private var commitSortRaw = CommitSortPreference.date.rawValue
     @AppStorage(PullStrategyPreference.storageKey) private var pullStrategyRaw = PullStrategyPreference.gitConfig.rawValue
 
     private var appearance: AppearancePreference {
@@ -49,11 +54,35 @@ struct SettingsView: View {
                 Text((PullStrategyPreference(rawValue: pullStrategyRaw) ?? .gitConfig).detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Picker("Fetch remotes", selection: $autoFetchMinutes) {
+                    ForEach(AutoFetchInterval.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                Toggle("Always include tags when fetching", isOn: $fetchIncludeTags)
+                Toggle("Push automatically after committing", isOn: $pushOnCommit)
+
+                Picker("Space in branch names", selection: $spaceReplacementRaw) {
+                    ForEach(BranchSpaceReplacement.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
             } header: {
                 Text("Git")
             }
 
             Section {
+                Picker("Sort commits", selection: $commitSortRaw) {
+                    ForEach(CommitSortPreference.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text((CommitSortPreference(rawValue: commitSortRaw) ?? .date).detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Show author avatars", isOn: $showAvatars)
                 Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address. When off, nothing is sent and initials are shown instead.")
                     .font(.caption)

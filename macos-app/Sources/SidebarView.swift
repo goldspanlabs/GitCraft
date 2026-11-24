@@ -775,7 +775,8 @@ struct NewBranchSheet: View {
     @ObservedObject var tab: RepoTab
     @Environment(\.dismiss) private var dismiss
     @State private var branchName = ""
-    @State private var checkout = true
+    // Remembered between uses of the dialog.
+    @AppStorage("createBranchCheckout") private var checkout = true
     @State private var localChanges: RepoTab.LocalChangesHandling = .stashAndReapply
     @State private var confirmDiscard = false
     @FocusState private var isBranchNameFocused: Bool
@@ -836,6 +837,13 @@ struct NewBranchSheet: View {
                                     .textFieldStyle(.plain)
                                     .font(.system(size: 13))
                                     .focused($isBranchNameFocused)
+                                    .onChange(of: branchName) { _, newValue in
+                                        // Git forbids spaces; swap them as the user types.
+                                        if let replacement = BranchSpaceReplacement.current.replacement,
+                                           newValue.contains(" ") {
+                                            branchName = newValue.replacingOccurrences(of: " ", with: replacement)
+                                        }
+                                    }
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)

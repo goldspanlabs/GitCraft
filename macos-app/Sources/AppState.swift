@@ -242,6 +242,9 @@ final class RepoTab: ObservableObject, Identifiable {
     private var hasMoreCommits = true
     private let pageSize: UInt32 = 500
     private var watcherTask: Task<Void, Never>?
+    private var autoFetchTask: Task<Void, Never>?
+    private var sortObserver: NSObjectProtocol?
+    private var lastCommitSort = CommitSortPreference.current
     private var revealTask: Task<Void, Never>?
     /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
     /// page fetches that started against the old list can detect they are stale.
@@ -256,7 +259,34 @@ final class RepoTab: ObservableObject, Identifiable {
         self.session = try RepoSession(path: url.path)
     }
 
+    /// Background fetch on the interval chosen in Settings (never when set to 0). Failures
+    /// such as being offline are ignored; manual Fetch still reports them.
+    private func startAutoFetch() {
+        autoFetchTask?.cancel()
+        let session = self.session
+        autoFetchTask = Task { [weak self] in
+            var lastFetch = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                if Task.isCancelled { break }
+                let minutes = AutoFetchInterval.currentMinutes
+                guard minutes > 0,
+                      Date().timeIntervalSince(lastFetch) >= Double(minutes) * 60,
+                      let self, !self.isBusy
+                else { continue }
+                lastFetch = Date()
+                let includeTags = GitPreferences.fetchIncludesTags
+                let fetched: Bool = await Task.detached {
+                    (try? session.fetch(includeTags: includeTags)) != nil
+                }.value
+                if fetched { self.refresh() }
+            }
+        }
+    }
+
     func startWatcher() {
+        startAutoFetch()
+        observeCommitSortChanges()
         watcherTask?.cancel()
         let session = self.session
         watcherTask = Task { [weak self] in
@@ -277,7 +307,32 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    /// Reloads the graph from the top when the sort order changes in Settings.
+    private func observeCommitSortChanges() {
+        guard sortObserver == nil else { return }
+        lastCommitSort = CommitSortPreference.current
+        sortObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let current = CommitSortPreference.current
+                guard current != self.lastCommitSort else { return }
+                self.lastCommitSort = current
+                self.updateSearch(self.searchQuery)
+            }
+        }
+    }
+
     func stopWatcher() {
+        autoFetchTask?.cancel()
+        autoFetchTask = nil
+        if let sortObserver {
+            NotificationCenter.default.removeObserver(sortObserver)
+            self.sortObserver = nil
+        }
         watcherTask?.cancel()
         watcherTask = nil
     }
@@ -294,6 +349,7 @@ final class RepoTab: ObservableObject, Identifiable {
         limit: UInt32,
         query: String?
     ) throws -> [CommitRow] {
+        session.setCommitSort(sort: CommitSortPreference.current.core)
         if scoped {
             return try session.getBranchGraph(offset: offset, limit: limit, searchQuery: query)
         }
@@ -713,7 +769,8 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func fetchRemote(_ name: String) {
-        performMutation { session in try session.fetchRemote(name: name) }
+        let includeTags = GitPreferences.fetchIncludesTags
+        performMutation { session in try session.fetchRemote(name: name, includeTags: includeTags) }
     }
 
     func commitChanges() {
@@ -727,6 +784,11 @@ final class RepoTab: ObservableObject, Identifiable {
         } onSuccess: { [weak self] in
             self?.commitSummary = ""
             self?.commitBody = ""
+            if GitPreferences.pushOnCommit {
+                // Hop to the next run-loop turn so this mutation finishes (and clears
+                // `isBusy`) before the push starts its own.
+                DispatchQueue.main.async { self?.runRemote(.push) }
+            }
         }
     }
 
@@ -882,9 +944,10 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func runRemote(_ operation: RemoteOperation) {
         let pullStrategy = PullStrategyPreference.current.core
+        let includeTags = GitPreferences.fetchIncludesTags
         performMutation { session in
             switch operation {
-            case .fetch: try session.fetch()
+            case .fetch: try session.fetch(includeTags: includeTags)
             case .pull: try session.pull(strategy: pullStrategy)
             case .push: try session.push()
             }

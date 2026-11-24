@@ -88,3 +88,103 @@ enum PullStrategyPreference: String, CaseIterable, Identifiable {
         UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .gitConfig
     }
 }
+
+/// How often GitCraft fetches in the background. Stored as minutes (0 = never).
+enum AutoFetchInterval: Int, CaseIterable, Identifiable {
+    case off = 0
+    case fiveMinutes = 5
+    case tenMinutes = 10
+    case thirtyMinutes = 30
+
+    static let storageKey = "autoFetchMinutes"
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "Never"
+        case .fiveMinutes: return "Every 5 minutes"
+        case .tenMinutes: return "Every 10 minutes"
+        case .thirtyMinutes: return "Every 30 minutes"
+        }
+    }
+
+    static var currentMinutes: Int {
+        UserDefaults.standard.integer(forKey: storageKey)
+    }
+}
+
+/// Git behaviour toggles shared by every repository window.
+enum GitPreferences {
+    static let fetchIncludeTagsKey = "fetchIncludeTags"
+    static let pushOnCommitKey = "pushOnCommit"
+
+    static var fetchIncludesTags: Bool { UserDefaults.standard.bool(forKey: fetchIncludeTagsKey) }
+    static var pushOnCommit: Bool { UserDefaults.standard.bool(forKey: pushOnCommitKey) }
+}
+
+/// Order of the commit graph. Persisted under `storageKey`.
+enum CommitSortPreference: String, CaseIterable, Identifiable {
+    case date
+    case topological
+
+    static let storageKey = "commitSort"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .date: return "By date"
+        case .topological: return "Topologically"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .date: return "Newest commits first, even when branches interleave."
+        case .topological: return "Keeps each line of history together, like git log --topo-order. Slower on very large repositories."
+        }
+    }
+
+    var core: CommitSort {
+        switch self {
+        case .date: return .byDate
+        case .topological: return .topological
+        }
+    }
+
+    static var current: CommitSortPreference {
+        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .date
+    }
+}
+
+/// What to type in place of a space in a branch name (git forbids spaces).
+enum BranchSpaceReplacement: String, CaseIterable, Identifiable {
+    case dash
+    case underscore
+    case keep
+
+    static let storageKey = "branchSpaceReplacement"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dash: return "- (dash)"
+        case .underscore: return "_ (underscore)"
+        case .keep: return "Keep spaces"
+        }
+    }
+
+    var replacement: String? {
+        switch self {
+        case .dash: return "-"
+        case .underscore: return "_"
+        case .keep: return nil
+        }
+    }
+
+    static var current: BranchSpaceReplacement {
+        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init(rawValue:)) ?? .dash
+    }
+}
