@@ -117,7 +117,16 @@ private struct WorkingChangesInspectorView: View {
                 // Commit Composer
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Commit summary…", text: $tab.commitSummary)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                        )
 
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $tab.commitBody)
