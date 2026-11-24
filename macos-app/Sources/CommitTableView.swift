@@ -529,8 +529,9 @@ final class CommitRowCellView: NSTableCellView {
             }
             // Hosted remote branches on the same commit as their local branch of the same name.
             // Each is drawn as its host icon chip followed by the local chip; the origin name chip is dropped.
+            // Searches only the capped `badges`, so a local chip cut off by the cap can't come back.
             let mirrored = badges.filter { $0.kind == .remoteBranch && hostFor($0)?.icon != nil }.compactMap { remote -> RefBadge? in
-                commit.refs.first { $0.kind == .localBranch && $0.name == branchNameOf(remote) }
+                badges.first { $0.kind == .localBranch && $0.name == branchNameOf(remote) }
             }
             let mirroredLocalNames = Set(mirrored.map(\.name))
             for badge in badges {

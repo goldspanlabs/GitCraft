@@ -852,6 +852,10 @@ final class RepoTab: ObservableObject, Identifiable {
         )
         let skip = skipHooks
         let amend = amendCommit
+        let session = self.session
+        // Amending a commit that is already on the remote would make the push a non-fast-forward,
+        // so it is left for the person to push by hand.
+        let rewritesPushedCommit = amend && ((try? session.headIsPushed()) ?? false)
 
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
@@ -865,9 +869,15 @@ final class RepoTab: ObservableObject, Identifiable {
             self?.amendCommit = false
             self?.skipHooks = false
             if pushAfter {
-                // Hop to the next run-loop turn so this mutation finishes (and clears
-                // `isBusy`) before the push starts its own.
-                DispatchQueue.main.async { self?.runRemote(.push) }
+                if rewritesPushedCommit {
+                    self?.toast = Toast(
+                        message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
+                    )
+                } else {
+                    // Hop to the next run-loop turn so this mutation finishes (and clears
+                    // `isBusy`) before the push starts its own.
+                    DispatchQueue.main.async { self?.runRemote(.push) }
+                }
             }
         }
     }
@@ -1010,6 +1020,12 @@ final class RepoTab: ObservableObject, Identifiable {
             pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
             return
         }
+        performReset(oid, mode: mode)
+    }
+
+    /// Runs the reset without asking again. The confirmed hard reset calls this directly,
+    /// because `resetTo` would re-arm the dialog.
+    private func performReset(_ oid: String, mode: ResetMode) {
         performMutation { session in
             try session.resetTo(commit: oid, mode: mode)
         }
@@ -1065,7 +1081,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case let .dropStash(index, _):
             stashDrop(index)
         case let .resetHard(_, commit):
-            resetTo(commit, mode: .hard)
+            performReset(commit, mode: .hard)
         }
     }
 
