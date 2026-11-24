@@ -67,9 +67,7 @@ fn short_branch_name(full: &str) -> &str {
 
 /// Tips and hidden commits for the "current branch vs base" view, or `None`
 /// when the full graph should be shown.
-fn branch_scope(
-    repo: &gix::Repository,
-) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
+fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
     let head = repo.head().ok()?;
     let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
     let head_id = head.id()?.detach();
@@ -483,8 +481,10 @@ pub fn list_branches(
             if name.ends_with("/HEAD") {
                 // e.g. refs/remotes/origin/HEAD -> refs/remotes/origin/main
                 if let gix::refs::TargetRef::Symbolic(target) = reference.target() {
-                    remote_head_targets
-                        .insert(full_name.clone(), target.as_bstr().to_str_lossy().into_owned());
+                    remote_head_targets.insert(
+                        full_name.clone(),
+                        target.as_bstr().to_str_lossy().into_owned(),
+                    );
                 }
                 continue;
             }

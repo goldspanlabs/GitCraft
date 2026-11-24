@@ -274,7 +274,11 @@ fn branch_merged_into_origin_default_is_flagged() {
     run_git(&remote_dir, &["init", "--bare", "-b", "main"]);
     run_git(
         base.path(),
-        &["clone", remote_dir.to_str().unwrap(), clone.to_str().unwrap()],
+        &[
+            "clone",
+            remote_dir.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
     );
     configure_git_identity(&clone);
     fs::write(clone.join("README.md"), "hi\n").unwrap();
@@ -288,7 +292,10 @@ fn branch_merged_into_origin_default_is_flagged() {
     run_git(&clone, &["add", "."]);
     run_git(&clone, &["commit", "-m", "merged work"]);
     run_git(&clone, &["checkout", "main"]);
-    run_git(&clone, &["merge", "--no-ff", "merged-feature", "-m", "merge"]);
+    run_git(
+        &clone,
+        &["merge", "--no-ff", "merged-feature", "-m", "merge"],
+    );
     run_git(&clone, &["push", "origin", "main"]);
 
     // unmerged: has a commit origin/main lacks
@@ -620,7 +627,10 @@ fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
     let w = work.path();
     run_git(w, &["init", "-b", "trunk"]);
     configure_git_identity(w);
-    run_git(w, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    run_git(
+        w,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
     commit_file(w, "r.txt", "root");
     run_git(w, &["push", "-u", "origin", "trunk"]);
     run_git(w, &["remote", "set-head", "origin", "trunk"]);
