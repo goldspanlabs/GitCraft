@@ -1,5 +1,37 @@
 import SwiftUI
 
+/// The commit description in a larger editor, for longer messages. Edits go straight to the
+/// composer's description, so closing the sheet keeps them.
+struct ExpandedDescriptionSheet: View {
+    @Binding var text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Extended description")
+                .font(.system(size: 13, weight: .semibold))
+            TextEditor(text: $text)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 420)
+    }
+}
+
 struct InspectorView: View {
     @ObservedObject var tab: RepoTab
 
@@ -15,6 +47,7 @@ struct InspectorView: View {
 private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
     @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
+    @State private var isExpandingDescription = false
 
     private var canCommit: Bool {
         GitPreferences.canCommit(
@@ -165,7 +198,23 @@ private struct WorkingChangesInspectorView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    .frame(height: 54)
+                    .frame(height: 96)
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            isExpandingDescription = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(5)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Expand description")
+                        .padding(3)
+                    }
+                    .sheet(isPresented: $isExpandingDescription) {
+                        ExpandedDescriptionSheet(text: $tab.commitBody)
+                    }
                     .background(Color(nsColor: .textBackgroundColor))
                     .cornerRadius(6)
                     .overlay(

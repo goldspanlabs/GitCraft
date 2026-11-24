@@ -119,7 +119,7 @@ struct RepoDetailView: View {
             }
 
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
-            PersistentVSplit(minTop: 200, minBottom: 270) {
+            PersistentVSplit(minTop: 200, minBottom: 312) {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,
