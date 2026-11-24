@@ -28,6 +28,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppearancePreference.apply(AppearancePreference(rawValue: saved) ?? .system)
 
         let workspace = WorkspaceState.shared
+        // UI tests open a fixture repository with `-UITestOpenRepository <path>` instead of
+        // driving the open panel. Normal launches never set this key.
+        if let path = UserDefaults.standard.string(forKey: "UITestOpenRepository"),
+           workspace.openRepository(at: URL(fileURLWithPath: path))
+        {
+            return
+        }
         if !workspace.restoreTabs() {
             workspace.openWelcome()
         }
@@ -91,12 +98,6 @@ struct RepoDetailView: View {
                 }
             }
 
-            if let error = tab.errorMessage {
-                ErrorBannerView(message: error) {
-                    tab.errorMessage = nil
-                }
-            }
-
             if tab.isRebasing {
                 OperationBanner(
                     title: tab.hasConflicts
@@ -118,7 +119,7 @@ struct RepoDetailView: View {
             }
 
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
-            PersistentVSplit(minTop: 200, minBottom: 210) {
+            PersistentVSplit(minTop: 200, minBottom: 312) {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,
@@ -141,7 +142,17 @@ struct RepoDetailView: View {
                             tab.isShowingNewTagSheet = true
                         },
                         onCheckoutCommit: { oid in
-                            tab.checkoutBranch(oid)
+                            tab.requestCheckoutCommit(oid)
+                        },
+                        currentBranch: tab.currentBranch,
+                        onCommitAction: { action, oid in
+                            switch action {
+                            case .merge: tab.requestMergeCommit(oid)
+                            case .rebase: tab.rebaseOnto(oid)
+                            case let .reset(mode): tab.resetTo(oid, mode: mode)
+                            case .cherryPick: tab.cherryPick(oid)
+                            case .revert: tab.revertCommit(oid)
+                            }
                         }
                     )
 
@@ -149,11 +160,36 @@ struct RepoDetailView: View {
                         EmptyHistoryHint()
                     }
                 }
+                .overlay(alignment: .top) {
+                    VStack(spacing: 6) {
+                        if let error = tab.errorMessage {
+                            ToastView(message: error, tint: .red) {
+                                tab.errorMessage = nil
+                            }
+                            .id(error)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        if let toast = tab.toast {
+                            ToastView(message: toast.message, autoDismissAfter: 4) {
+                                tab.toast = nil
+                            }
+                            .id(toast.id)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.top, 10)
+                }
+                .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
+                .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
             } bottom: {
                 InspectorView(tab: tab)
             }
         }
         .modifier(RepoSheets(tab: tab))
+        // Hairline under the toolbar: the title bar's own separator doesn't show here.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Divider()
+        }
     }
 }
 
@@ -210,7 +246,7 @@ struct RepoToolbarActionsView: View {
                 tab.toggleScopeToCurrentBranch()
             } label: {
                 TopBarIconLabel(title: tab.scopeToCurrentBranch ? "Branch" : "All") {
-                    ToolbarIconView(icon: .filter)
+                    ToolbarIconView(icon: tab.scopeToCurrentBranch ? .filterFilled : .filter)
                         .opacity(tab.scopeToCurrentBranch ? 1 : 0.55)
                 }
             }
@@ -233,6 +269,12 @@ private struct RepoSheets: ViewModifier {
         content
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
+        }
+        .sheet(isPresented: $tab.isShowingCheckoutCommitSheet) {
+            CheckoutCommitSheet(tab: tab)
+        }
+        .sheet(isPresented: $tab.isShowingMergeCommitSheet) {
+            MergeCommitSheet(tab: tab)
         }
         .sheet(isPresented: $tab.isShowingNewTagSheet) {
             NewTagSheet(tab: tab)
@@ -309,6 +351,63 @@ private struct OperationBanner: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.orange.opacity(0.14))
+    }
+}
+
+/// A brief note shown over the commit graph for a no-op result. It clears itself after a
+/// few seconds, or when the user closes it.
+struct ToastView: View {
+    let message: String
+    var tint: Color = .yellow
+    /// Clears the toast by itself after this many seconds; nil keeps it until closed.
+    var autoDismissAfter: Double?
+    let onDismiss: () -> Void
+    @State private var showingDetails = false
+
+    private var parts: ErrorSummary { ErrorSummary(message) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(tint)
+            Text(parts.summary)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if parts.hasDetails {
+                Button("Show Details…") { showingDetails = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: 560)
+        // Solid window colour with a light tint, so the toast reads as part of the window.
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6).fill(tint.opacity(0.14)))
+        )
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .sheet(isPresented: $showingDetails) {
+            ErrorDetailsSheet(text: parts.full)
+        }
+        .task(id: autoDismissAfter) {
+            guard let autoDismissAfter else { return }
+            try? await Task.sleep(for: .seconds(autoDismissAfter))
+            onDismiss()
+        }
     }
 }
 

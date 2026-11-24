@@ -118,9 +118,37 @@ enum AutoFetchInterval: Int, CaseIterable, Identifiable {
 enum GitPreferences {
     static let fetchIncludeTagsKey = "fetchIncludeTags"
     static let pushOnCommitKey = "pushOnCommit"
+    static let autoStageOnCommitKey = "autoStageOnCommit"
 
     static var fetchIncludesTags: Bool { UserDefaults.standard.bool(forKey: fetchIncludeTagsKey) }
     static var pushOnCommit: Bool { UserDefaults.standard.bool(forKey: pushOnCommitKey) }
+
+    /// On by default: when nothing is staged, committing stages every change first.
+    static var autoStageOnCommit: Bool {
+        UserDefaults.standard.object(forKey: autoStageOnCommitKey) as? Bool ?? true
+    }
+
+    /// Stage everything before committing only when the setting is on and nothing is staged.
+    /// Files staged by hand always win, so only those are committed.
+    static func shouldStageAll(autoStage: Bool, stagedCount: Int) -> Bool {
+        autoStage && stagedCount == 0
+    }
+
+    /// The Commit button needs a summary, something to commit, and no operation in progress.
+    /// With auto-staging on, unstaged changes count as something to commit. Amending can
+    /// reword HEAD without any new changes.
+    static func canCommit(
+        summary: String,
+        stagedCount: Int,
+        changedCount: Int,
+        autoStage: Bool,
+        isBusy: Bool,
+        amend: Bool = false
+    ) -> Bool {
+        let hasSummary = !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSomethingToCommit = stagedCount > 0 || (autoStage && changedCount > 0) || amend
+        return hasSummary && hasSomethingToCommit && !isBusy
+    }
 }
 
 /// Order of the commit graph. Persisted under `storageKey`.

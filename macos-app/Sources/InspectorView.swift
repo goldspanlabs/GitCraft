@@ -1,5 +1,37 @@
 import SwiftUI
 
+/// The commit description in a larger editor, for longer messages. Edits go straight to the
+/// composer's description, so closing the sheet keeps them.
+struct ExpandedDescriptionSheet: View {
+    @Binding var text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Extended description")
+                .font(.system(size: 13, weight: .semibold))
+            TextEditor(text: $text)
+                .font(.system(size: 13))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+            }
+        }
+        .padding(20)
+        .frame(width: 560, height: 420)
+    }
+}
+
 struct InspectorView: View {
     @ObservedObject var tab: RepoTab
 
@@ -14,11 +46,18 @@ struct InspectorView: View {
 
 private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
+    @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
+    @State private var isExpandingDescription = false
 
     private var canCommit: Bool {
-        !tab.stagedFiles.isEmpty
-            && !tab.commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !tab.isBusy
+        GitPreferences.canCommit(
+            summary: tab.commitSummary,
+            stagedCount: tab.stagedFiles.count,
+            changedCount: tab.totalChangesCount,
+            autoStage: autoStageOnCommit,
+            isBusy: tab.isBusy,
+            amend: tab.amendCommit
+        )
     }
 
     // This view has no tab strip, so a collapsed panel would have no way to reopen.
@@ -64,7 +103,7 @@ private struct WorkingChangesInspectorView: View {
                             }
                         }
 
-                        Divider().padding(.horizontal, 10)
+                        Divider()
 
                         // Unstaged section
                         VStack(alignment: .leading, spacing: 4) {
@@ -125,6 +164,15 @@ private struct WorkingChangesInspectorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Commit summary…", text: $tab.commitSummary)
                         .textFieldStyle(.plain)
+                        .lineLimit(1)
+                        .onChange(of: tab.commitSummary) { _, newValue in
+                            // Pasted text can carry line breaks; a summary is one line.
+                            if newValue.contains(where: \.isNewline) {
+                                tab.commitSummary = newValue.replacingOccurrences(
+                                    of: "\r\n|\n|\r", with: " ", options: .regularExpression
+                                )
+                            }
+                        }
                         .font(.system(size: 12))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 6)
@@ -134,6 +182,7 @@ private struct WorkingChangesInspectorView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
                         )
+                        .accessibilityIdentifier("commit-summary")
 
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $tab.commitBody)
@@ -149,7 +198,23 @@ private struct WorkingChangesInspectorView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    .frame(height: 54)
+                    .frame(height: 96)
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            isExpandingDescription = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(5)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Expand description")
+                        .padding(3)
+                    }
+                    .sheet(isPresented: $isExpandingDescription) {
+                        ExpandedDescriptionSheet(text: $tab.commitBody)
+                    }
                     .background(Color(nsColor: .textBackgroundColor))
                     .cornerRadius(6)
                     .overlay(
@@ -158,9 +223,15 @@ private struct WorkingChangesInspectorView: View {
                     )
 
                     HStack {
-                        Text("\(tab.stagedFiles.count) staged")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Toggle("Skip Hooks", isOn: $tab.skipHooks)
+                            .toggleStyle(.checkbox)
+                            .font(.system(size: 12))
+                        Toggle("Amend", isOn: Binding(
+                            get: { tab.amendCommit },
+                            set: { tab.setAmend($0) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 12))
                         Spacer()
                         Button("Stash…") {
                             tab.isShowingStashSheet = true
@@ -175,10 +246,12 @@ private struct WorkingChangesInspectorView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.return, modifiers: .command)
+                            .accessibilityIdentifier("commit-button")
                         } else {
                             Button("Commit") {}
                                 .buttonStyle(.bordered)
                                 .disabled(true)
+                                .accessibilityIdentifier("commit-button")
                         }
                     }
                 }

@@ -64,31 +64,16 @@ fn default_base(repo: &gix::Repository) -> Option<(String, gix::ObjectId)> {
     })
 }
 
-fn short_branch_name(full: &str) -> &str {
-    full.strip_prefix("refs/heads/")
-        .or_else(|| full.strip_prefix("refs/remotes/origin/"))
-        .unwrap_or(full)
-}
-
-/// Tips and hidden commits for the "current branch vs base" view, or `None`
-/// when the full graph should be shown.
+/// Tips and hidden commits for the branch view, or `None` when the full graph should be
+/// shown (detached HEAD, or no default branch to compare against). The view walks only from
+/// the checked-out branch, so it shows that branch's whole history and leaves out other
+/// branches. This holds on the default branch too.
 fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
     let head = repo.head().ok()?;
-    let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
+    head.referent_name()?;
     let head_id = head.id()?.detach();
-    let (base_ref, base_id) = default_base(repo)?;
-    if short_branch_name(&head_ref) == short_branch_name(&base_ref) || head_id == base_id {
-        return None;
-    }
-    // Hide everything below the fork point, but keep the fork commit itself.
-    let hidden = repo
-        .merge_base(head_id, base_id)
-        .ok()
-        .flatten()
-        .and_then(|mb| repo.find_commit(mb.detach()).ok())
-        .map(|c| c.parent_ids().map(|p| p.detach()).collect())
-        .unwrap_or_default();
-    Some((vec![head_id, base_id], hidden))
+    default_base(repo)?;
+    Some((vec![head_id], Vec::new()))
 }
 
 fn graph_walk(
@@ -544,6 +529,16 @@ pub fn list_branches(
         });
     let base_oid = base_ref.as_ref().and_then(|r| remote_oids.get(r)).copied();
 
+    // The local branch the sidebar pins first: the one origin's default branch names,
+    // else a local `main`, else `master`.
+    let default_local: Option<String> = base_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix("refs/remotes/origin/"))
+        .map(str::to_owned)
+        .into_iter()
+        .chain(["main", "master"].into_iter().map(str::to_owned))
+        .find(|candidate| local_entries.iter().any(|(name, ..)| name == candidate));
+
     for (name, full_ref, local_oid, is_head) in local_entries {
         let upstream_full = resolve_upstream_ref(&config, &name)
             .filter(|r| remote_oids.contains_key(r))
@@ -572,6 +567,7 @@ pub fn list_branches(
             && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref())
             && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
 
+        let is_default = default_local.as_deref() == Some(name.as_str());
         branches.push(BranchInfo {
             name,
             full_ref,
@@ -581,6 +577,7 @@ pub fn list_branches(
             ahead,
             behind,
             is_merged,
+            is_default,
         });
     }
 
@@ -594,6 +591,7 @@ pub fn list_branches(
             ahead: 0,
             behind: 0,
             is_merged: false,
+            is_default: false,
         });
     }
 

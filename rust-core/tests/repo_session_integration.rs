@@ -16,6 +16,10 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
         .env("GIT_COMMITTER_NAME", "GitCraft Tester")
         .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
+        // Fixed dates make commit hashes identical on every run, so hash-matching
+        // searches and sort ties behave the same each time.
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
         .output()
         .expect("failed to invoke git");
     assert!(
@@ -553,7 +557,7 @@ fn setup_branch_scope_repo(root: &Path) {
 }
 
 #[test]
-fn branch_graph_shows_current_branch_base_since_fork_and_fork_commit_only() {
+fn branch_graph_shows_only_the_checked_out_branch_history() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     setup_branch_scope_repo(root);
@@ -562,8 +566,8 @@ fn branch_graph_shows_current_branch_base_since_fork_and_fork_commit_only() {
     let scoped = session.get_branch_graph(0, 100, None).unwrap();
     assert_eq!(
         summaries(&scoped),
-        vec!["c3", "f1", "f2", "m1", "m2"],
-        "feature + main since fork + fork commit; no older history or other branches"
+        vec!["c1", "c2", "c3", "f1", "f2"],
+        "feature's whole history; no main-only or other-branch commits"
     );
 
     // Full graph is unchanged and still includes everything.
@@ -583,35 +587,54 @@ fn branch_graph_keeps_ref_badges_and_supports_search_and_paging() {
     let scoped = session.get_branch_graph(0, 100, None).unwrap();
     let f2 = scoped.iter().find(|r| r.summary == "f2").unwrap();
     assert!(f2.refs.iter().any(|b| b.name == "feature" && b.is_current));
-    let m2 = scoped.iter().find(|r| r.summary == "m2").unwrap();
-    assert!(m2.refs.iter().any(|b| b.name == "main"));
 
-    let hits = session.get_branch_graph(0, 100, Some("m1".into())).unwrap();
-    assert_eq!(summaries(&hits), vec!["m1"]);
-    // Search must not reach outside the scope.
-    assert!(session
-        .get_branch_graph(0, 100, Some("x1".into()))
-        .unwrap()
-        .is_empty());
+    // Search must not reach outside the scope: main-only and other-branch commits are absent.
+    for hidden in ["m1", "x1"] {
+        assert!(session
+            .get_branch_graph(0, 100, Some(hidden.into()))
+            .unwrap()
+            .is_empty());
+    }
+    // "c2" is also a hex string, so it can match other commits' hashes; only require the hit.
+    let hits = session.get_branch_graph(0, 100, Some("c2".into())).unwrap();
+    assert!(summaries(&hits).iter().any(|s| s == "c2"));
 
     let page1 = session.get_branch_graph(0, 2, None).unwrap();
     let page2 = session.get_branch_graph(2, 2, None).unwrap();
     let page3 = session.get_branch_graph(4, 2, None).unwrap();
     assert_eq!((page1.len(), page2.len(), page3.len()), (2, 2, 1));
-    let mut all: Vec<_> = page1.iter().chain(&page2).chain(&page3).collect();
-    all.dedup_by_key(|r| r.oid_hex.clone());
+    let mut all: Vec<_> = page1
+        .iter()
+        .chain(&page2)
+        .chain(&page3)
+        .map(|r| r.oid_hex.clone())
+        .collect();
+    all.sort();
+    all.dedup();
     assert_eq!(all.len(), 5);
 }
 
 #[test]
-fn branch_graph_falls_back_to_full_graph_on_default_branch_detached_head_or_no_base() {
+fn branch_graph_on_default_branch_shows_only_its_own_history() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     setup_branch_scope_repo(root);
     let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
 
+    // On main: its history only, without feature's or other's commits.
     run_git(root, &["checkout", "main"]);
-    assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
+    assert_eq!(
+        summaries(&session.get_branch_graph(0, 100, None).unwrap()),
+        vec!["c1", "c2", "c3", "m1", "m2"]
+    );
+}
+
+#[test]
+fn branch_graph_falls_back_to_full_graph_on_detached_head_or_no_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    setup_branch_scope_repo(root);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
 
     run_git(root, &["checkout", "--detach", "feature"]);
     assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
@@ -624,8 +647,8 @@ fn branch_graph_falls_back_to_full_graph_on_default_branch_detached_head_or_no_b
 
 #[test]
 fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
-    // Branch already merged into main (fast-forward): scope is the branch tip
-    // plus whatever main has added since.
+    // Branch already merged into main (fast-forward): the branch's own history,
+    // which main also contains, but main's newer commit "c" is left out.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     run_git(root, &["init", "-b", "main"]);
@@ -640,7 +663,7 @@ fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
     let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
     assert_eq!(
         summaries(&session.get_branch_graph(0, 100, None).unwrap()),
-        vec!["b", "c"]
+        vec!["a", "b"]
     );
 
     // Base resolved from origin/HEAD even though it is not named main/master,
@@ -666,6 +689,6 @@ fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
     let session = RepoSession::new(w.to_string_lossy().into_owned()).unwrap();
     assert_eq!(
         summaries(&session.get_branch_graph(0, 100, None).unwrap()),
-        vec!["root", "t1", "u1"]
+        vec!["root", "t1"]
     );
 }

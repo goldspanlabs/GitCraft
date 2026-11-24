@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Git operations offered from a commit's context menu.
+enum CommitAction {
+    case merge
+    case rebase
+    case reset(ResetMode)
+    case cherryPick
+    case revert
+}
+
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let graphRevision: UUID
@@ -14,6 +23,9 @@ struct CommitTableView: NSViewRepresentable {
     let onCreateBranchAtCommit: (String) -> Void
     let onCreateTagAtCommit: (String) -> Void
     let onCheckoutCommit: (String) -> Void
+    /// The checked-out branch's name; empty when HEAD is detached.
+    let currentBranch: String
+    let onCommitAction: (CommitAction, String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -86,6 +98,8 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
         coordinator.onCreateTagAtCommit = onCreateTagAtCommit
         coordinator.onCheckoutCommit = onCheckoutCommit
+        coordinator.currentBranch = currentBranch
+        coordinator.onCommitAction = onCommitAction
 
         if dataChanged {
             // Reload/restore is not a user selection: keep it from reaching the model, where
@@ -139,6 +153,8 @@ struct CommitTableView: NSViewRepresentable {
         var onCreateBranchAtCommit: (String) -> Void
         var onCreateTagAtCommit: (String) -> Void
         var onCheckoutCommit: (String) -> Void
+        var currentBranch = ""
+        var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
         var lastHandledScrollID: UUID?
         var isRestoringSelection = false
         weak var tableView: NSTableView?
@@ -173,25 +189,82 @@ struct CommitTableView: NSViewRepresentable {
             guard clickedRow > 0, (clickedRow - 1) < rows.count else { return }
             let commit = rows[clickedRow - 1]
 
-            let copyItem = NSMenuItem(title: "Copy Commit SHA (\(commit.shortOid))", action: #selector(handleCopyOid(_:)), keyEquivalent: "")
-            copyItem.target = self
-            copyItem.representedObject = commit.oidHex
-            menu.addItem(copyItem)
+            let oid = commit.oidHex
+            let branch = currentBranch
+            // Detached HEAD has no branch to merge into, rebase or reset.
+            let isDetached = branch.isEmpty || branch == "HEAD" || branch.hasPrefix("(")
 
-            let branchItem = NSMenuItem(title: "Create Branch Here…", action: #selector(handleCreateBranch(_:)), keyEquivalent: "")
-            branchItem.target = self
-            branchItem.representedObject = commit.oidHex
-            menu.addItem(branchItem)
+            // Acting on the checked-out branch.
+            if !isDetached {
+                addItem(to: menu, "Merge into '\(branch)'", #selector(handleMerge(_:)), oid)
+                addItem(to: menu, "Rebase '\(branch)' to Here…", #selector(handleRebase(_:)), oid)
 
-            let tagItem = NSMenuItem(title: "Create Tag Here…", action: #selector(handleCreateTag(_:)), keyEquivalent: "")
-            tagItem.target = self
-            tagItem.representedObject = commit.oidHex
-            menu.addItem(tagItem)
+                let resetItem = NSMenuItem(title: "Reset '\(branch)' to Here…", action: nil, keyEquivalent: "")
+                let resetMenu = NSMenu()
+                let modes: [(String, Int)] = [
+                    ("Soft — keep changes staged", 0),
+                    ("Mixed — keep changes unstaged", 1),
+                    ("Hard — discard uncommitted changes…", 2),
+                ]
+                for (title, tag) in modes {
+                    let item = NSMenuItem(title: title, action: #selector(handleReset(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = oid
+                    item.tag = tag
+                    resetMenu.addItem(item)
+                }
+                resetItem.submenu = resetMenu
+                menu.addItem(resetItem)
 
-            let checkoutItem = NSMenuItem(title: "Checkout Commit (Detached)", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
-            checkoutItem.target = self
-            checkoutItem.representedObject = commit.oidHex
-            menu.addItem(checkoutItem)
+                menu.addItem(.separator())
+            }
+
+            // Working with the commit itself.
+            addItem(to: menu, "Cherry Pick Commit", #selector(handleCherryPick(_:)), oid)
+            addItem(to: menu, "Revert Commit", #selector(handleRevert(_:)), oid)
+
+            menu.addItem(.separator())
+
+            // Creating references that point at the commit.
+            addItem(to: menu, "New Branch…", #selector(handleCreateBranch(_:)), oid)
+            addItem(to: menu, "New Tag…", #selector(handleCreateTag(_:)), oid)
+            addItem(to: menu, "Checkout Commit…", #selector(handleCheckoutCommit(_:)), oid)
+
+            menu.addItem(.separator())
+
+            addItem(to: menu, "Copy Commit SHA (\(commit.shortOid))", #selector(handleCopyOid(_:)), oid)
+        }
+
+        @discardableResult
+        private func addItem(to menu: NSMenu, _ title: String, _ action: Selector, _ oid: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = oid
+            menu.addItem(item)
+            return item
+        }
+
+        @objc private func handleMerge(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.merge, oid) }
+        }
+
+        @objc private func handleRebase(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.rebase, oid) }
+        }
+
+        @objc private func handleReset(_ sender: NSMenuItem) {
+            guard let oid = sender.representedObject as? String else { return }
+            let modes: [ResetMode] = [.soft, .mixed, .hard]
+            guard modes.indices.contains(sender.tag) else { return }
+            onCommitAction(.reset(modes[sender.tag]), oid)
+        }
+
+        @objc private func handleCherryPick(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.cherryPick, oid) }
+        }
+
+        @objc private func handleRevert(_ sender: NSMenuItem) {
+            if let oid = sender.representedObject as? String { onCommitAction(.revert, oid) }
         }
 
         @objc private func handleCopyOid(_ sender: NSMenuItem) {
@@ -295,7 +368,6 @@ struct CommitTableView: NSViewRepresentable {
 
 final class CommitRowCellView: NSTableCellView {
     private let graphView = GraphCellView()
-    private let unpushedDot = NSView()
     private let badgesStack = NSStackView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let avatarView = AvatarImageView()
@@ -303,8 +375,6 @@ final class CommitRowCellView: NSTableCellView {
     private let hashLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
-    /// Pushed rows start the badges 6pt after the graph; unpushed rows make room for the dot.
-    private var badgesLeading: NSLayoutConstraint!
 
     /// "Yesterday at 10:57 PM" for recent days, "Nov 22, 2026 at 6:38 PM" otherwise.
     private static let dateFormatter: DateFormatter = {
@@ -329,11 +399,6 @@ final class CommitRowCellView: NSTableCellView {
     private func setupViews() {
         graphView.translatesAutoresizingMaskIntoConstraints = false
         badgesStack.translatesAutoresizingMaskIntoConstraints = false
-        unpushedDot.translatesAutoresizingMaskIntoConstraints = false
-        unpushedDot.wantsLayer = true
-        unpushedDot.layer?.cornerRadius = 3.5
-        unpushedDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-        unpushedDot.isHidden = true
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -364,7 +429,6 @@ final class CommitRowCellView: NSTableCellView {
         timeLabel.alignment = .left
 
         addSubview(graphView)
-        addSubview(unpushedDot)
         addSubview(badgesStack)
         addSubview(summaryLabel)
         addSubview(avatarView)
@@ -373,7 +437,6 @@ final class CommitRowCellView: NSTableCellView {
         addSubview(timeLabel)
 
         graphWidthConstraint = graphView.widthAnchor.constraint(equalToConstant: 24)
-        badgesLeading = badgesStack.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 6)
 
         NSLayoutConstraint.activate([
             graphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -381,12 +444,7 @@ final class CommitRowCellView: NSTableCellView {
             graphView.bottomAnchor.constraint(equalTo: bottomAnchor),
             graphWidthConstraint,
 
-            unpushedDot.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 4),
-            unpushedDot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            unpushedDot.widthAnchor.constraint(equalToConstant: 7),
-            unpushedDot.heightAnchor.constraint(equalToConstant: 7),
-
-            badgesLeading,
+            badgesStack.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 6),
             badgesStack.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             summaryLabel.leadingAnchor.constraint(equalTo: badgesStack.trailingAnchor, constant: 6),
@@ -413,8 +471,6 @@ final class CommitRowCellView: NSTableCellView {
     }
 
     func configureWorkingChanges(fileCount: Int) {
-        unpushedDot.isHidden = true
-        badgesLeading.constant = 6
         graphWidthConstraint.constant = 24
         graphView.alphaValue = 1.0
         graphView.configureWorkingChanges()
@@ -445,7 +501,8 @@ final class CommitRowCellView: NSTableCellView {
     ) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
-        graphView.alphaValue = commit.isRemoteOnly ? 0.65 : 1.0
+        // Remote-only rows dim their text, not the graph lines.
+        graphView.alphaValue = 1.0
         graphView.configure(
             commit: commit,
             hasIncomingLine: hasIncomingLine,
@@ -457,17 +514,49 @@ final class CommitRowCellView: NSTableCellView {
             badgesStack.isHidden = true
         } else {
             badgesStack.isHidden = false
-            for badge in commit.refs.prefix(4) {
-                // "origin/main" -> the host behind the "origin" remote.
-                let host: RemoteHost? = badge.kind == .remoteBranch
+            let badges = Array(commit.refs.prefix(4))
+            // Branch chips take the colour of the commit's graph lane.
+            let laneColor = GraphCellView.laneColor(for: commit.colorIdx)
+            // "origin/main" -> the host behind the "origin" remote.
+            let hostFor: (RefBadge) -> RemoteHost? = { badge in
+                badge.kind == .remoteBranch
                     ? badge.name.split(separator: "/", maxSplits: 1).first.flatMap { remoteHosts[String($0)] } ?? .other
                     : nil
-                badgesStack.addArrangedSubview(RefPillView(badge: badge, host: host))
+            }
+            // "origin/main" -> "main".
+            let branchNameOf: (RefBadge) -> String = { badge in
+                String(badge.name.split(separator: "/", maxSplits: 1).last ?? "")
+            }
+            // Hosted remote branches on the same commit as their local branch of the same name.
+            // Each is drawn as its host icon chip followed by the local chip; the origin name chip is dropped.
+            // Searches only the capped `badges`, so a local chip cut off by the cap can't come back.
+            let mirrored = badges.filter { $0.kind == .remoteBranch && hostFor($0)?.icon != nil }.compactMap { remote -> RefBadge? in
+                badges.first { $0.kind == .localBranch && $0.name == branchNameOf(remote) }
+            }
+            let mirroredLocalNames = Set(mirrored.map(\.name))
+            for badge in badges {
+                if badge.kind == .localBranch, mirroredLocalNames.contains(badge.name) {
+                    continue // drawn right after its remote's icon chip
+                }
+                if badge.kind == .remoteBranch, let local = mirrored.first(where: { $0.name == branchNameOf(badge) }) {
+                    badgesStack.addArrangedSubview(
+                        RefPillView(badge: badge, host: hostFor(badge), iconOnly: true, laneColor: laneColor)
+                    )
+                    badgesStack.addArrangedSubview(
+                        RefPillView(badge: local, showsUnpushedDot: commit.isUnpushed, laneColor: laneColor)
+                    )
+                } else {
+                    badgesStack.addArrangedSubview(
+                        RefPillView(
+                            badge: badge,
+                            host: hostFor(badge),
+                            showsUnpushedDot: commit.isUnpushed,
+                            laneColor: laneColor
+                        )
+                    )
+                }
             }
         }
-
-        unpushedDot.isHidden = !commit.isUnpushed
-        badgesLeading.constant = commit.isUnpushed ? 20 : 6
 
         // The latest commit of the checked-out branch is bold.
         let isHeadCommit = commit.refs.contains { $0.isCurrent }
@@ -501,10 +590,22 @@ final class RefPillView: NSView {
     /// The untinted glyph; `applyColors` bakes the chip colour into `iconView.image`.
     private var templateIcon: NSImage?
     private let badge: RefBadge
+    /// The graph lane colour of the commit this chip sits on. Used by branch chips only;
+    /// HEAD and tag chips keep fixed colours so they stand apart from the lanes.
+    private let laneColor: NSColor?
     private let host: RemoteHost?
 
-    init(badge: RefBadge, host: RemoteHost? = nil) {
+    /// `showsUnpushedDot` swaps the checked-out branch's check mark for an orange dot.
+    /// `iconOnly` draws just the host mark, for a remote branch whose name is shown in a chip beside it.
+    init(
+        badge: RefBadge,
+        host: RemoteHost? = nil,
+        showsUnpushedDot: Bool = false,
+        iconOnly: Bool = false,
+        laneColor: NSColor? = nil
+    ) {
         self.badge = badge
+        self.laneColor = laneColor
         self.host = host
         super.init(frame: .zero)
         wantsLayer = true
@@ -515,26 +616,49 @@ final class RefPillView: NSView {
         label.font = .systemFont(ofSize: 11.5, weight: badge.isCurrent ? .bold : .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(label)
+        if !iconOnly { addSubview(label) }
         if let host, let icon = host.icon {
             // Remote chips lead with the hosting service's mark, set off by a thin divider.
             templateIcon = icon
             iconView.imageScaling = .scaleProportionallyUpOrDown
             iconView.translatesAutoresizingMaskIntoConstraints = false
-            divider.translatesAutoresizingMaskIntoConstraints = false
-            divider.wantsLayer = true
             addSubview(iconView)
-            addSubview(divider)
-            NSLayoutConstraint.activate([
+            var constraints: [NSLayoutConstraint] = [
                 iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
                 iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
                 iconView.widthAnchor.constraint(equalToConstant: 14),
                 iconView.heightAnchor.constraint(equalToConstant: 14),
-                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-                divider.widthAnchor.constraint(equalToConstant: 1),
-                divider.topAnchor.constraint(equalTo: topAnchor),
-                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
-                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+            ]
+            if iconOnly {
+                // Icon-only chip: the name sits in its own chip beside it.
+                constraints.append(iconView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6))
+            } else {
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                divider.wantsLayer = true
+                addSubview(divider)
+                constraints += [
+                    divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+                    divider.widthAnchor.constraint(equalToConstant: 1),
+                    divider.topAnchor.constraint(equalTo: topAnchor),
+                    divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                    label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+                ]
+            }
+            NSLayoutConstraint.activate(constraints)
+        } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head, showsUnpushedDot {
+            // Unpushed commits: the orange dot takes the check mark's place, same 13pt slot.
+            let dot = NSView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 3.5
+            dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            addSubview(dot)
+            NSLayoutConstraint.activate([
+                dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+                dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+                dot.widthAnchor.constraint(equalToConstant: 7),
+                dot.heightAnchor.constraint(equalToConstant: 7),
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 23),
             ])
         } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head {
             // The checked-out branch gets a check mark in front of its name.
@@ -550,14 +674,36 @@ final class RefPillView: NSView {
                 iconView.heightAnchor.constraint(equalToConstant: 13),
                 label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             ])
+        } else if badge.kind == .tag {
+            // Tags lead with a tag glyph, set off by a thin divider like the host marks on remote chips.
+            templateIcon = PhosphorIcon.nsImage(for: .tag)
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(iconView)
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            divider.wantsLayer = true
+            addSubview(divider)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 12),
+                iconView.heightAnchor.constraint(equalToConstant: 12),
+                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+                divider.widthAnchor.constraint(equalToConstant: 1),
+                divider.topAnchor.constraint(equalTo: topAnchor),
+                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+            ])
         } else {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6).isActive = true
         }
-        NSLayoutConstraint.activate([
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-        ])
+        if !iconOnly {
+            NSLayoutConstraint.activate([
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+                label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            ])
+        }
 
         applyColors()
     }
@@ -589,10 +735,9 @@ final class RefPillView: NSView {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
         let baseColor: NSColor = switch badge.kind {
-        case .localBranch: .systemBlue
-        case .remoteBranch: .systemPurple
-        case .tag: .systemOrange
-        case .head: .systemGreen
+        case .localBranch, .remoteBranch: laneColor ?? .systemGray
+        case .tag: .systemBrown
+        case .head: .systemRed
         }
 
         // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
@@ -645,6 +790,11 @@ final class GraphCellView: NSView {
         .systemIndigo,
     ]
 
+    /// The lane colour for a graph colour index. Branch chips reuse it so they match their lane.
+    static func laneColor(for idx: UInt8) -> NSColor {
+        palette[Int(idx) % palette.count]
+    }
+
     private var commit: CommitRow?
     private var hasIncomingLine = false
     private var isWorkingChanges = false
@@ -654,6 +804,11 @@ final class GraphCellView: NSView {
 
     static func width(forLanes lanes: Int) -> CGFloat {
         leftPadding * 2 + CGFloat(max(1, lanes)) * laneWidth
+    }
+
+    /// Horizontal centre of a lane, measured from the graph view's leading edge.
+    static func centerX(forLane lane: Int) -> CGFloat {
+        leftPadding + CGFloat(lane) * laneWidth + laneWidth / 2
     }
 
     override func viewDidChangeEffectiveAppearance() {

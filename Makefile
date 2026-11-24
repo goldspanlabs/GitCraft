@@ -6,7 +6,7 @@ UNIFFI := $(RUST_DIR)/target/release/uniffi-bindgen
 
 SWIFT_FLAGS := -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/gitcraft_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
 
-.PHONY: all rust bindings swift test-swift bundle clean
+.PHONY: all rust bindings swift test-swift ui-tests bundle clean
 
 all: bundle
 
@@ -21,6 +21,10 @@ swift: rust bindings
 
 test-swift: rust bindings
 	cd "$(APP_DIR)" && swift test $(SWIFT_FLAGS)
+
+ui-tests: bundle
+	cd $(APP_DIR)/UITests && xcodegen generate --spec project.yml --project .
+	TEST_RUNNER_GITCRAFT_APP_PATH=$(CURDIR)/$(APP) xcodebuild test -project $(APP_DIR)/UITests/GitCraftUITests.xcodeproj -scheme GitCraftUITests -destination 'platform=macOS'
 
 bundle: swift
 	rm -rf $(APP) $(BUILD_DIR)/AppIcon.iconset
@@ -56,6 +60,8 @@ bundle: swift
 		iconutil -c icns $(BUILD_DIR)/AppIcon.iconset -o $(APP)/Contents/Resources/AppIcon.icns; \
 		rm -rf $(BUILD_DIR)/AppIcon.iconset; \
 	fi
+	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Light-1024.png $(APP)/Contents/Resources/AppIcon-Light.png
+	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png $(APP)/Contents/Resources/AppIcon-Dark.png
 	codesign --force --deep --sign - $(APP)
 
 clean:

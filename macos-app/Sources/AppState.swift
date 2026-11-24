@@ -129,19 +129,25 @@ final class RepoTab: ObservableObject, Identifiable {
     enum DestructiveAction: Identifiable {
         case discardFile(path: String)
         case deleteBranch(name: String, force: Bool)
+        case forceDeleteBranch(name: String)
+        case deleteRemoteBranch(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
         case abortMerge
         case abortRebase
         case dropStash(index: UInt32, name: String)
+        case resetHard(branch: String, commit: String)
 
         var id: String {
             switch self {
             case let .discardFile(path): return "discard-\(path)"
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
+            case let .forceDeleteBranch(name): return "force-del-branch-\(name)"
+            case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
+            case let .resetHard(_, commit): return "reset-hard-\(commit)"
             }
         }
 
@@ -149,11 +155,14 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case let .discardFile(path): return "Discard changes to \"\(path)\"?"
             case let .deleteBranch(name, _): return "Delete branch \"\(name)\"?"
+            case let .forceDeleteBranch(name): return "Branch \"\(name)\" isn't merged"
+            case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
             case .abortMerge: return "Abort in-progress merge?"
             case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
+            case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.prefix(7)) and discard changes?"
             }
         }
 
@@ -163,6 +172,10 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will permanently revert your uncommitted changes to this file."
             case .deleteBranch:
                 return "This will delete the local branch reference."
+            case .forceDeleteBranch:
+                return "It has commits that aren't in the checked-out branch. Deleting it removes the branch name, and those commits are lost unless they exist elsewhere. Git can often recover them from the reflog for a while."
+            case .deleteRemoteBranch:
+                return "This will delete the branch from the remote repository. The local branch of the same name, if any, is kept."
             case let .deleteTag(_, remote):
                 return remote
                     ? "This will delete the tag locally and push the deletion to the remote repository."
@@ -173,16 +186,20 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will stop the rebase and put your branch back as it was before the pull."
             case .dropStash:
                 return "The stashed changes will be removed. This can't be undone from GitCraft."
+            case .resetHard:
+                return "Uncommitted changes to tracked files will be discarded, and commits after this one will leave the branch. Discarded changes can't be recovered from GitCraft."
             }
         }
 
         var confirmLabel: String {
             switch self {
             case .discardFile: return "Discard"
-            case .deleteBranch, .deleteTag: return "Delete"
+            case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
+            case .forceDeleteBranch: return "Force Delete"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
+            case .resetHard: return "Reset"
             }
         }
     }
@@ -219,12 +236,38 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published private(set) var scrollRequest: ScrollRequest?
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
+
+    /// A brief note over the commit graph for a no-op result, which isn't a failure.
+    @Published var toast: Toast?
+
+    struct Toast: Identifiable {
+        let id = UUID()
+        let message: String
+    }
+
+    /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
+    func showError(_ error: Error) {
+        if error.isWarning {
+            toast = Toast(message: error.displayMessage)
+        } else {
+            errorMessage = error.displayMessage
+        }
+    }
+
     @Published var pendingConfirmation: DestructiveAction?
     @Published var searchQuery = ""
     @Published var commitSummary = ""
     @Published var commitBody = ""
+    /// Commit with `--no-verify`, so pre-commit and commit-msg hooks don't run.
+    @Published var skipHooks = false
+    /// Rewrite HEAD's commit instead of making a new one.
+    @Published private(set) var amendCommit = false
     @Published var isShowingNewBranchSheet = false
     @Published var newBranchStartPoint: String?
+    @Published var isShowingCheckoutCommitSheet = false
+    @Published var checkoutCommitOid: String?
+    @Published var isShowingMergeCommitSheet = false
+    @Published var mergeCommitOid: String?
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
@@ -450,7 +493,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -508,7 +551,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -539,7 +582,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -565,7 +608,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -629,11 +672,18 @@ final class RepoTab: ObservableObject, Identifiable {
                 graphRevision = UUID()
                 limit = min(limit * 2, 64_000)
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
                 return
             }
         }
         if Task.isCancelled { return }
+        if scopeToCurrentBranch {
+            // Outside the Branch view (e.g. another branch picked in the sidebar): switch to
+            // All, which reloads the list from the top, then look for the commit again.
+            toggleScopeToCurrentBranch()
+            revealTask = Task { await self.revealCommit(oidHex: oidHex) }
+            return
+        }
         // Not reachable in the current graph (e.g. hidden by the search filter): don't
         // leave the panes showing an unrelated commit.
         errorMessage = "That commit isn't in the current commit list."
@@ -721,7 +771,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = Self.displayRows(rows)
                 }
             } catch {
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -741,7 +791,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
                 if loadedDetailOid == oid { loadedDetailOid = nil }
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -766,7 +816,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     diffRows = []
                     loadedDetailOid = nil
                 }
-                errorMessage = error.displayMessage
+                showError(error)
             }
         }
     }
@@ -838,21 +888,95 @@ final class RepoTab: ObservableObject, Identifiable {
         performMutation { session in try session.fetchRemote(name: name, includeTags: includeTags) }
     }
 
+    /// Turns Amend on or off. Turning it on fills an empty message with HEAD's message.
+    func setAmend(_ on: Bool) {
+        amendCommit = on
+        guard on, commitSummary.isEmpty, commitBody.isEmpty else { return }
+        let session = self.session
+        Task {
+            guard let message = try? await Task.detached { try session.headCommitMessage() }.value,
+                  self.amendCommit, self.commitSummary.isEmpty, self.commitBody.isEmpty else { return }
+            let lines = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            self.commitSummary = String(lines.first ?? "")
+            self.commitBody = lines.count > 1
+                ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+        }
+    }
+
     func commitChanges() {
         let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }
         let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullMessage = body.isEmpty ? summary : "\(summary)\n\n\(body)"
+        // Hand-picked staging wins: auto-staging only fills in when nothing is staged.
+        let autoStage = GitPreferences.shouldStageAll(
+            autoStage: GitPreferences.autoStageOnCommit,
+            stagedCount: stagedFiles.count
+        )
+        let skip = skipHooks
+        let amend = amendCommit
+        let session = self.session
+        // Amending a commit that is already on the remote would make the push a non-fast-forward,
+        // so it is left for the person to push by hand.
+        let rewritesPushedCommit = amend && ((try? session.headIsPushed()) ?? false)
 
+        // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
-            try session.commit(message: fullMessage)
+            if autoStage {
+                try session.stageAll()
+            }
+            try session.commitWithOptions(message: fullMessage, skipHooks: skip, amend: amend)
         } onSuccess: { [weak self] in
             self?.commitSummary = ""
             self?.commitBody = ""
+            self?.amendCommit = false
+            self?.skipHooks = false
             if GitPreferences.pushOnCommit {
-                // Hop to the next run-loop turn so this mutation finishes (and clears
-                // `isBusy`) before the push starts its own.
-                DispatchQueue.main.async { self?.runRemote(.push) }
+                if rewritesPushedCommit {
+                    self?.toast = Toast(
+                        message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
+                    )
+                } else {
+                    // Hop to the next run-loop turn so this mutation finishes (and clears
+                    // `isBusy`) before the push starts its own.
+                    DispatchQueue.main.async { self?.runRemote(.push) }
+                }
+            }
+        }
+    }
+
+    /// Opens the Checkout Commit sheet for `oid`. Checking out a commit detaches HEAD, as the sheet says.
+    func requestCheckoutCommit(_ oid: String) {
+        checkoutCommitOid = oid
+        isShowingCheckoutCommitSheet = true
+    }
+
+    /// Detached checkout of `oid`, handling local changes the same way creating a branch does.
+    func checkoutCommit(_ oid: String, localChanges: LocalChangesHandling = .doNotChange) {
+        let hasLocalChanges = totalChangesCount > 0
+        performMutation { session in
+            if hasLocalChanges {
+                switch localChanges {
+                case .doNotChange:
+                    try session.checkoutBranch(branchName: oid)
+                case .stashAndReapply:
+                    try session.stashPush(message: "Auto-stash before checking out \(oid.prefix(7))", includeUntracked: true)
+                    do {
+                        try session.checkoutBranch(branchName: oid)
+                    } catch {
+                        try? session.stashPop(index: 0)
+                        throw error
+                    }
+                    try session.stashPop(index: 0)
+                case .discard:
+                    for file in try session.status().files {
+                        try session.discardFile(path: file)
+                    }
+                    try session.checkoutBranch(branchName: oid)
+                }
+            } else {
+                try session.checkoutBranch(branchName: oid)
             }
         }
     }
@@ -907,14 +1031,79 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func deleteBranch(_ branchName: String, force: Bool) {
-        performMutation { session in
+        performMutation({ session in
             try session.deleteBranch(branchName: branchName, force: force)
+        }, onFailure: { [weak self] error in
+            // A safe delete refused because the branch has unmerged commits: ask before forcing.
+            guard !force, error.displayMessage.contains("is not fully merged") else { return false }
+            self?.pendingConfirmation = .forceDeleteBranch(name: branchName)
+            return true
+        })
+    }
+
+    func deleteRemoteBranch(_ branchName: String) {
+        performMutation { session in
+            try session.deleteRemoteBranch(branchName: branchName)
         }
     }
 
     func mergeBranch(_ branchName: String) {
         performMutation { session in
             try session.mergeBranch(branchName: branchName)
+        }
+    }
+
+    /// Opens the Merge sheet for `oid`.
+    func requestMergeCommit(_ oid: String) {
+        mergeCommitOid = oid
+        isShowingMergeCommitSheet = true
+    }
+
+    /// Merges `oid` into the checked-out branch, joined as `mergeType` says.
+    func mergeCommit(_ oid: String, mergeType: MergeType) {
+        performMutation { session in
+            try session.mergeCommit(commit: oid, mergeType: mergeType)
+        }
+    }
+
+    /// Whether merging `oid` would conflict, or nil if git couldn't say.
+    func checkMergeConflicts(_ oid: String) async -> Bool? {
+        let session = self.session
+        return try? await Task.detached { try session.mergeHasConflicts(commit: oid) }.value
+    }
+
+    func rebaseOnto(_ oid: String) {
+        performMutation { session in
+            try session.rebaseOnto(commit: oid)
+        }
+    }
+
+    /// Hard resets go through the confirmation dialog; soft and mixed resets run directly.
+    func resetTo(_ oid: String, mode: ResetMode) {
+        if mode == .hard {
+            pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
+            return
+        }
+        performReset(oid, mode: mode)
+    }
+
+    /// Runs the reset without asking again. The confirmed hard reset calls this directly,
+    /// because `resetTo` would re-arm the dialog.
+    private func performReset(_ oid: String, mode: ResetMode) {
+        performMutation { session in
+            try session.resetTo(commit: oid, mode: mode)
+        }
+    }
+
+    func cherryPick(_ oid: String) {
+        performMutation { session in
+            try session.cherryPick(commit: oid)
+        }
+    }
+
+    func revertCommit(_ oid: String) {
+        performMutation { session in
+            try session.revertCommit(commit: oid)
         }
     }
 
@@ -943,6 +1132,10 @@ final class RepoTab: ObservableObject, Identifiable {
             discardFile(path)
         case let .deleteBranch(name, force):
             deleteBranch(name, force: force)
+        case let .forceDeleteBranch(name):
+            deleteBranch(name, force: true)
+        case let .deleteRemoteBranch(name):
+            deleteRemoteBranch(name)
         case let .deleteTag(name, deleteRemote):
             deleteTag(name, deleteRemote: deleteRemote)
         case .abortMerge:
@@ -951,6 +1144,8 @@ final class RepoTab: ObservableObject, Identifiable {
             abortRebase()
         case let .dropStash(index, _):
             stashDrop(index)
+        case let .resetHard(_, commit):
+            performReset(commit, mode: .hard)
         }
     }
 
@@ -1024,9 +1219,12 @@ final class RepoTab: ObservableObject, Identifiable {
         NSPasteboard.general.setString(oid, forType: .string)
     }
 
+    /// Runs `work` off the main thread, then refreshes. `onFailure` gets the first chance to
+    /// handle an error; returning true means it did, so the error banner is skipped.
     private func performMutation(
         _ work: @escaping @Sendable (RepoSession) throws -> Void,
-        onSuccess: (@MainActor () -> Void)? = nil
+        onSuccess: (@MainActor () -> Void)? = nil,
+        onFailure: (@MainActor (Error) -> Bool)? = nil
     ) {
         let session = self.session
         isBusy = true
@@ -1040,7 +1238,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 onSuccess?()
                 refresh()
             } catch {
-                errorMessage = error.displayMessage
+                if let onFailure, onFailure(error) { return }
+                showError(error)
             }
         }
     }
@@ -1053,18 +1252,24 @@ extension Error {
     var displayMessage: String {
         if let error = self as? GitCraftError {
             switch error {
-            case let .Message(msg):
+            case let .Message(msg), let .Warning(msg):
                 return msg.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
         return localizedDescription
+    }
+
+    /// True for core errors that report a no-op rather than a failure.
+    var isWarning: Bool {
+        if let error = self as? GitCraftError, case .Warning = error { return true }
+        return false
     }
 }
 
 /// Splits an error message into a one-line summary for the banner and the full text for
 /// the details sheet.
 struct ErrorSummary: Equatable {
-    /// Banner text: the first non-empty line, cut to a readable length.
+    /// Banner text: the line that reports the error, cut to a readable length.
     let summary: String
     /// The whole message, shown in the details sheet.
     let full: String
@@ -1073,10 +1278,17 @@ struct ErrorSummary: Equatable {
 
     static let maxSummaryLength = 140
 
+    /// Lines such as "error: ..." or "fatal: ..." name the failure. Hook and step banners
+    /// ("pre-push: cargo clippy") come before it, so the first line alone can mislead.
+    private static func isErrorLine(_ line: String) -> Bool {
+        let lowered = line.trimmingCharacters(in: .whitespaces).lowercased()
+        return lowered.hasPrefix("error") || lowered.hasPrefix("fatal")
+    }
+
     init(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
-        let first = lines.first ?? trimmed
+        let first = lines.first(where: Self.isErrorLine) ?? lines.first ?? trimmed
         full = trimmed
         if first.count > Self.maxSummaryLength {
             summary = String(first.prefix(Self.maxSummaryLength)) + "…"

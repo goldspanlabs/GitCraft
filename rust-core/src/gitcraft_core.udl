@@ -3,6 +3,7 @@ namespace gitcraft_core {};
 [Error]
 interface GitCraftError {
   Message(string msg);
+  Warning(string msg);
 };
 
 enum CommitSort {
@@ -15,6 +16,19 @@ enum PullStrategy {
   "Merge",
   "Rebase",
   "FastForwardOnly"
+};
+
+enum ResetMode {
+  "Soft",
+  "Mixed",
+  "Hard"
+};
+
+enum MergeType {
+  "Default",
+  "NoFastForward",
+  "FastForwardOnly",
+  "Squash"
 };
 
 enum RefKind {
@@ -94,6 +108,7 @@ dictionary BranchInfo {
   u32 ahead;
   u32 behind;
   boolean is_merged;
+  boolean is_default;
 };
 
 dictionary WorktreeInfo {
@@ -214,10 +229,31 @@ interface RepoSession {
   void delete_branch(string branch_name, boolean force);
 
   [Throws=GitCraftError]
+  void delete_remote_branch(string branch_name);
+
+  [Throws=GitCraftError]
   void merge_branch(string branch_name);
 
   [Throws=GitCraftError]
   void abort_merge();
+
+  [Throws=GitCraftError]
+  void merge_commit(string commit, MergeType merge_type);
+
+  [Throws=GitCraftError]
+  boolean merge_has_conflicts(string commit);
+
+  [Throws=GitCraftError]
+  void rebase_onto(string commit);
+
+  [Throws=GitCraftError]
+  void reset_to(string commit, ResetMode mode);
+
+  [Throws=GitCraftError]
+  void cherry_pick(string commit);
+
+  [Throws=GitCraftError]
+  void revert_commit(string commit);
 
   [Throws=GitCraftError]
   sequence<DiffRow> diff();
@@ -260,6 +296,15 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void commit(string message);
+
+  [Throws=GitCraftError]
+  void commit_with_options(string message, boolean skip_hooks, boolean amend);
+
+  [Throws=GitCraftError]
+  string head_commit_message();
+
+  [Throws=GitCraftError]
+  boolean head_is_pushed();
 
   [Throws=GitCraftError]
   void fetch(boolean include_tags);

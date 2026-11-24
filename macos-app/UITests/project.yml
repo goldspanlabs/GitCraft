@@ -1,0 +1,31 @@
+# UI test project, generated with XcodeGen (`xcodegen generate --spec macos-app/UITests/project.yml`).
+# SwiftPM cannot build XCUITest bundles, so the tests live in this small Xcode project. The
+# app itself is built by `make` and passed to the tests as GITCRAFT_APP_PATH.
+name: GitCraftUITests
+options:
+  bundleIdPrefix: dev.gitcraft
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  GitCraftUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - GitCraftUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.gitcraft.GitCraftUITests
+schemes:
+  GitCraftUITests:
+    build:
+      targets:
+        GitCraftUITests: all
+    test:
+      targets:
+        - GitCraftUITests

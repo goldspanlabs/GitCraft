@@ -11,8 +11,13 @@ struct SidebarView: View {
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
     @State private var collapsedFolderIDs: Set<String> = []
 
+    /// The default branch is pinned above the rest of Local Branches, so it's kept out of the tree.
     private var localBranches: [BranchInfo] {
-        tab.branches.filter { !$0.isRemote }
+        tab.branches.filter { !$0.isRemote && !$0.isDefault }
+    }
+
+    private var defaultLocalBranch: BranchInfo? {
+        tab.branches.first { !$0.isRemote && $0.isDefault }
     }
 
     private var remoteBranches: [BranchInfo] {
@@ -25,6 +30,11 @@ struct SidebarView: View {
             scope: "local",
             collapsedFolderIDs: collapsedFolderIDs
         )
+    }
+
+    /// The commit HEAD points at when HEAD is detached. The graph only carries a HEAD ref in that case.
+    private var detachedHeadOid: String? {
+        tab.commits.first { commit in commit.refs.contains { $0.kind == .head } }?.oidHex
     }
 
     private var remoteBranchRows: [FlatBranchRow] {
@@ -49,6 +59,17 @@ struct SidebarView: View {
         List {
             Section(isExpanded: $isLocalBranchesExpanded) {
                 if isLocalBranchesExpanded {
+                    if let headOid = detachedHeadOid {
+                        DetachedHeadRowView(tab: tab, oidHex: headOid)
+                    }
+                    if let pinned = defaultLocalBranch {
+                        LocalBranchRowView(
+                            tab: tab,
+                            branch: pinned,
+                            displayName: pinned.name,
+                            depth: 0
+                        )
+                    }
                     ForEach(localBranchRows) { row in
                         switch row.kind {
                         case let .folder(name, folderID, isExpanded):
@@ -79,8 +100,7 @@ struct SidebarView: View {
                 }
             }
 
-            do {
-                Section(isExpanded: $isWorktreesExpanded) {
+            Section(isExpanded: $isWorktreesExpanded) {
                 if isWorktreesExpanded {
                     ForEach(tab.worktrees, id: \.path) { worktree in
                         WorktreeRowView(tab: tab, worktree: worktree)
@@ -97,7 +117,8 @@ struct SidebarView: View {
                 }
             }
 
-            Section(isExpanded: $isRemotesExpanded) {
+            do {
+                Section(isExpanded: $isRemotesExpanded) {
                     if isRemotesExpanded {
                         if tab.remotes.isEmpty {
                             Text("No remotes")
@@ -171,17 +192,16 @@ struct SidebarView: View {
                             .onTapGesture {
                                 tab.scrollToCommit(oidHex: tag.targetOidHex)
                             }
-                            .contextMenu {
-                                Button("Push \(tag.name) to origin") {
+                            .nativeContextMenu {
+                                [.item("Push \(tag.name) to origin") {
                                     tab.pushTag(tag.name)
-                                }
-                                Divider()
-                                Button("Delete \(tag.name) (Local)…", role: .destructive) {
+                                }, .separator,
+                                 .item("Delete \(tag.name) (Local)…") {
                                     tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: false)
-                                }
-                                Button("Delete \(tag.name) (Local & Remote)…", role: .destructive) {
+                                 },
+                                 .item("Delete \(tag.name) (Local & Remote)…") {
                                     tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: true)
-                                }
+                                 }]
                             }
                         }
                     }
@@ -219,17 +239,15 @@ struct SidebarView: View {
                                 Spacer()
                             }
                             .contentShape(Rectangle())
-                            .contextMenu {
-                                Button("Pop \(stash.name)") {
+                            .nativeContextMenu {
+                                [.item("Pop \(stash.name)") {
                                     tab.stashPop(stash.index)
-                                }
-                                Button("Apply \(stash.name)") {
+                                }, .item("Apply \(stash.name)") {
                                     tab.stashApply(stash.index)
-                                }
-                                Divider()
-                                Button("Drop \(stash.name)…", role: .destructive) {
+                                }, .separator,
+                                 .item("Drop \(stash.name)…") {
                                     tab.pendingConfirmation = .dropStash(index: stash.index, name: stash.name)
-                                }
+                                 }]
                             }
                         }
                     }
@@ -459,35 +477,59 @@ private struct WorktreeRowView: View {
                 tab.switchCheckout(to: worktree.path)
             }
         )
-        .contextMenu {
-            if !isActive {
-                Button("Switch to Worktree") {
-                    tab.switchCheckout(to: worktree.path)
-                }
-                .disabled(tab.isBusy || worktree.isPrunable)
+        .nativeContextMenu { menuEntries }
+    }
+
+    private var menuEntries: [HeaderMenuEntry] {
+        var entries: [HeaderMenuEntry] = []
+        if !isActive {
+            entries.append(.item("Switch to Worktree", enabled: !tab.isBusy && !worktree.isPrunable) {
+                tab.switchCheckout(to: worktree.path)
+            })
+        }
+        entries.append(.item("Reveal in Finder", enabled: !worktree.isPrunable) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree.path)])
+        })
+        entries.append(.item("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(worktree.path, forType: .string)
+        })
+        if !worktree.isMain {
+            entries.append(.separator)
+            if worktree.isLocked {
+                entries.append(.item("Unlock Worktree", enabled: !tab.isBusy) {
+                    tab.unlockWorktree(worktree.path)
+                })
+            } else {
+                entries.append(.item("Lock Worktree", enabled: !tab.isBusy && !worktree.isPrunable) {
+                    tab.lockWorktree(worktree.path)
+                })
             }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree.path)])
-            }
-            .disabled(worktree.isPrunable)
-            Button("Copy Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(worktree.path, forType: .string)
-            }
-            if !worktree.isMain {
-                Divider()
-                if worktree.isLocked {
-                    Button("Unlock Worktree") {
-                        tab.unlockWorktree(worktree.path)
-                    }
-                    .disabled(tab.isBusy)
-                } else {
-                    Button("Lock Worktree") {
-                        tab.lockWorktree(worktree.path)
-                    }
-                    .disabled(tab.isBusy || worktree.isPrunable)
-                }
-            }
+        }
+        return entries
+    }
+}
+
+/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with no branch name.
+private struct DetachedHeadRowView: View {
+    @ObservedObject var tab: RepoTab
+    let oidHex: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .branch)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .center)
+
+            Text("HEAD (detached)")
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: oidHex)
         }
     }
 }
@@ -561,26 +603,30 @@ private struct LocalBranchRowView: View {
                 tab.checkoutBranch(branch.name)
             }
         )
-        .contextMenu {
-            if !branch.isHead {
-                Button("Checkout \(branch.name)") {
-                    tab.checkoutBranch(branch.name)
-                }
-                Button("Merge \(branch.name) into Current") {
-                    tab.mergeBranch(branch.name)
-                }
-            }
-            Button("New Branch from \(branch.name)…") {
-                tab.newBranchStartPoint = branch.name
-                tab.isShowingNewBranchSheet = true
-            }
-            if !branch.isHead {
-                Divider()
-                Button("Delete \(branch.name)…", role: .destructive) {
-                    tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
-                }
-            }
+        .nativeContextMenu { menuEntries }
+    }
+
+    private var menuEntries: [HeaderMenuEntry] {
+        var entries: [HeaderMenuEntry] = []
+        if !branch.isHead {
+            entries.append(.item("Checkout...") {
+                tab.checkoutBranch(branch.name)
+            })
+            entries.append(.item("Merge into '\(tab.currentBranch)'") {
+                tab.mergeBranch(branch.name)
+            })
         }
+        entries.append(.item("New Branch...") {
+            tab.newBranchStartPoint = branch.name
+            tab.isShowingNewBranchSheet = true
+        })
+        if !branch.isHead {
+            entries.append(.separator)
+            entries.append(.item("Delete...") {
+                tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
+            })
+        }
+        return entries
     }
 }
 
@@ -604,9 +650,35 @@ private struct RemoteBranchRowView: View {
         }
         .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
         .contentShape(Rectangle())
+        // Same pattern as LocalBranchRowView: a count:1 tap next to a count:2 one
+        // delays the single tap, so the single tap is declared first and stays immediate.
         .onTapGesture {
             tab.scrollToCommit(oidHex: branch.targetOidHex)
         }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                tab.checkoutBranch(branch.name)
+            }
+        )
+        .nativeContextMenu {
+            [.item("Checkout...") {
+                tab.checkoutBranch(branch.name)
+            }, .item("New Branch...") {
+                tab.newBranchStartPoint = branch.name
+                tab.isShowingNewBranchSheet = true
+            }, .separator,
+             .item("Delete '\(branch.name)'") {
+                tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
+             }]
+        }
+    }
+}
+
+extension View {
+    /// Right-click menu built on `NSMenu` rather than `.contextMenu`, so macOS does not
+    /// append its "Ask Siri" item to text rows. Left-clicks and double-clicks pass through.
+    func nativeContextMenu(_ entries: @escaping () -> [HeaderMenuEntry]) -> some View {
+        overlay(RightClickMenuArea(entries: entries))
     }
 }
 
@@ -904,6 +976,7 @@ struct NewStashSheet: View {
 struct NewBranchSheet: View {
     @ObservedObject var tab: RepoTab
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var branchName = ""
     // Remembered between uses of the dialog.
     @AppStorage("createBranchCheckout") private var checkout = true
@@ -924,7 +997,7 @@ struct NewBranchSheet: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AppIconImage.image(for: colorScheme))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 64, height: 64)
@@ -1067,6 +1140,263 @@ struct NewBranchSheet: View {
             localChanges: localChanges
         )
         dismiss()
+    }
+}
+
+/// The app icon matching the appearance: the light icon in light mode, the dark one in dark mode.
+enum AppIconImage {
+    static func image(for scheme: ColorScheme) -> NSImage {
+        let name = scheme == .dark ? "AppIcon-Dark" : "AppIcon-Light"
+        if let url = Bundle.main.url(forResource: name, withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return NSApp.applicationIconImage
+    }
+}
+
+/// Checks a commit out detached, after asking what to do with local changes.
+struct CheckoutCommitSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var localChanges: RepoTab.LocalChangesHandling = .doNotChange
+    @State private var confirmDiscard = false
+
+    private var commit: CommitRow? {
+        tab.commits.first { $0.oidHex == tab.checkoutCommitOid }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            Image(nsImage: AppIconImage.image(for: colorScheme))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 64, height: 64)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Checkout Commit")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Checkout a particular commit. Repository will be in detached HEAD state")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Commit to checkout:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .gridColumnAlignment(.trailing)
+
+                        HStack(spacing: 6) {
+                            Text(commit?.shortOid ?? String((tab.checkoutCommitOid ?? "").prefix(7)))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text(commit?.summary ?? "")
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow(alignment: .top) {
+                        Text("Local changes:")
+                            .font(.system(size: 13))
+
+                        Picker("", selection: $localChanges) {
+                            Text("Don't change")
+                                .tag(RepoTab.LocalChangesHandling.doNotChange)
+                            Text("Stash and reapply")
+                                .tag(RepoTab.LocalChangesHandling.stashAndReapply)
+                            Text("Discard")
+                                .tag(RepoTab.LocalChangesHandling.discard)
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                    }
+                }
+                .padding(.top, 2)
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.large)
+
+                    Button("Checkout") {
+                        if localChanges == .discard && tab.totalChangesCount > 0 {
+                            confirmDiscard = true
+                        } else {
+                            checkoutNow()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+                    .disabled(tab.checkoutCommitOid == nil)
+                }
+                .padding(.top, 6)
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 20)
+        .confirmationDialog(
+            "Discard all local changes?",
+            isPresented: $confirmDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes and Checkout", role: .destructive) {
+                checkoutNow()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently reverts \(tab.totalChangesCount) changed file(s) and deletes untracked files. It can't be undone.")
+        }
+    }
+
+    private func checkoutNow() {
+        if let oid = tab.checkoutCommitOid {
+            tab.checkoutCommit(oid, localChanges: localChanges)
+        }
+        dismiss()
+    }
+}
+
+/// Merge a commit into the checked-out branch, with the merge type and a conflict preview.
+struct MergeCommitSheet: View {
+    @ObservedObject var tab: RepoTab
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var mergeType: MergeType = .default
+    /// nil until the check finishes, or when git couldn't run it.
+    @State private var hasConflicts: Bool?
+    @State private var conflictCheckFinished = false
+
+    private var commit: CommitRow? {
+        tab.commits.first { $0.oidHex == tab.mergeCommitOid }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Merge")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Merge a commit into the checked-out branch")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Merge:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .gridColumnAlignment(.trailing)
+                        HStack(spacing: 6) {
+                            Text(commit?.shortOid ?? String((tab.mergeCommitOid ?? "").prefix(7)))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text(commit?.summary ?? "")
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow {
+                        Text("Into:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                        Text(tab.currentBranch)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 330, alignment: .leading)
+                    }
+
+                    GridRow(alignment: .top) {
+                        Text("Merge Type:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("", selection: $mergeType) {
+                                Text("Default (fast-forward if possible)").tag(MergeType.default)
+                                Text("No fast-forward (always create a merge commit)").tag(MergeType.noFastForward)
+                                Text("Fast-forward only").tag(MergeType.fastForwardOnly)
+                                Text("Squash (stage the changes, don't commit)").tag(MergeType.squash)
+                            }
+                            .labelsHidden()
+                            .frame(width: 330, alignment: .leading)
+
+                            if mergeType == .squash {
+                                Text("The changes are staged. Commit them yourself.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+
+                conflictStatus
+                    .font(.system(size: 12))
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.large)
+
+                    Button("Merge") {
+                        if let oid = tab.mergeCommitOid {
+                            tab.mergeCommit(oid, mergeType: mergeType)
+                        }
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+                    .disabled(tab.mergeCommitOid == nil)
+                }
+                .padding(.top, 6)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 20)
+        .task(id: tab.mergeCommitOid) {
+            guard let oid = tab.mergeCommitOid else { return }
+            hasConflicts = await tab.checkMergeConflicts(oid)
+            conflictCheckFinished = true
+        }
+    }
+
+    @ViewBuilder
+    private var conflictStatus: some View {
+        if !conflictCheckFinished {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking for conflicts…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if hasConflicts == true {
+            Label("Merge will have conflicts to resolve", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } else if hasConflicts == false {
+            Label("Merge can be done without conflicts", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
     }
 }
 

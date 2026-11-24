@@ -16,6 +16,20 @@ final class ErrorSummaryTests: XCTestCase {
         XCTAssertTrue(summary.full.contains("+new"))
     }
 
+    func testErrorLineWinsOverAStepBannerAbove() {
+        // The pre-push hook prints its step name first; the failure is the error line.
+        let output = "pre-push: cargo clippy\n    Checking gitcraft-core\nerror: function `f` is never used\n  --> src/graph.rs:67:4\n"
+        let summary = ErrorSummary(output)
+        XCTAssertEqual(summary.summary, "error: function `f` is never used")
+        XCTAssertTrue(summary.hasDetails)
+        XCTAssertTrue(summary.full.hasPrefix("pre-push: cargo clippy"))
+    }
+
+    func testFatalLineIsPreferredToo() {
+        let summary = ErrorSummary("Enumerating objects\nfatal: unable to access remote\n")
+        XCTAssertEqual(summary.summary, "fatal: unable to access remote")
+    }
+
     func testLeadingBlankLinesAreSkipped() {
         let summary = ErrorSummary("\n\n  failed to push\nremote: rejected")
         XCTAssertEqual(summary.summary, "failed to push")

@@ -3,3 +3,4 @@ macos-app/.build/
 build/
 DerivedData/
 macos-app/Sources/Generated/
+macos-app/UITests/*.xcodeproj/

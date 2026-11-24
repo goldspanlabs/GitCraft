@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(AutoFetchInterval.storageKey) private var autoFetchMinutes = 0
     @AppStorage(GitPreferences.fetchIncludeTagsKey) private var fetchIncludeTags = false
     @AppStorage(GitPreferences.pushOnCommitKey) private var pushOnCommit = false
+    @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
     @AppStorage(BranchSpaceReplacement.storageKey) private var spaceReplacementRaw = BranchSpaceReplacement.dash.rawValue
     @AppStorage(CommitSortPreference.storageKey) private var commitSortRaw = CommitSortPreference.date.rawValue
     @AppStorage(PullStrategyPreference.storageKey) private var pullStrategyRaw = PullStrategyPreference.gitConfig.rawValue
@@ -62,6 +63,10 @@ struct SettingsView: View {
                 }
                 Toggle("Always include tags when fetching", isOn: $fetchIncludeTags)
                 Toggle("Push automatically after committing", isOn: $pushOnCommit)
+                Toggle("Stage all changes when committing", isOn: $autoStageOnCommit)
+                Text("When on and nothing is staged, Commit stages every change first. Files you stage yourself are always committed alone.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Picker("Space in branch names", selection: $spaceReplacementRaw) {
                     ForEach(BranchSpaceReplacement.allCases) { option in

@@ -14,6 +14,9 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "tester@gitcraft.local")
         .env("GIT_COMMITTER_NAME", "GitCraft Tester")
         .env("GIT_COMMITTER_EMAIL", "tester@gitcraft.local")
+        // Fixed dates make commit hashes identical on every run.
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
         .output()
         .expect("failed to invoke git");
     assert!(
@@ -400,12 +403,70 @@ fn commit_records_staged_changes_with_message() {
 }
 
 #[test]
+fn commit_skip_hooks_bypasses_a_failing_pre_commit_hook() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let hook = dir.path().join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+
+    write(dir.path(), "a.txt", "alpha v2\n");
+    session.stage("a.txt".into()).unwrap();
+    assert!(session
+        .commit_with_options("blocked".into(), false, false)
+        .is_err());
+    session
+        .commit_with_options("skipped".into(), true, false)
+        .unwrap();
+
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert_eq!(rows[0].summary, "skipped");
+}
+
+#[test]
+fn commit_amend_rewrites_head_without_adding_a_commit() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    write(dir.path(), "a.txt", "alpha v2\n");
+    session.stage("a.txt".into()).unwrap();
+    session.commit("update alpha".into()).unwrap();
+    let before = session.get_commit_graph(0, 10, None).unwrap().len();
+
+    assert_eq!(session.head_commit_message().unwrap(), "update alpha");
+    session
+        .commit_with_options("update alpha, reworded".into(), false, true)
+        .unwrap();
+
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert_eq!(rows.len(), before);
+    assert_eq!(rows[0].summary, "update alpha, reworded");
+}
+
+#[test]
 fn commit_detail_for_unknown_oid_is_an_error() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());
     assert!(session
         .get_commit_detail("0000000000000000000000000000000000000001".into())
         .is_err());
+}
+
+#[test]
+fn head_is_pushed_tracks_whether_head_reached_a_remote() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    // Nothing has been pushed yet.
+    assert!(!session.head_is_pushed().unwrap());
+
+    session.push().unwrap();
+    assert!(session.head_is_pushed().unwrap());
+
+    write(dir.path(), "c.txt", "charlie\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "local only"]);
+    assert!(!session.head_is_pushed().unwrap());
 }
 
 // --------------------------------------------------------------- discard ---

@@ -7,6 +7,7 @@ enum ToolbarActionIcon {
     case push
     case stash
     case filter
+    case filterFilled
     case chevronDown
 }
 
@@ -47,6 +48,13 @@ struct ToolbarIconView: View {
             // phosphor regular/funnel
             SVGIconView(svg: """
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><path fill="black" d="M230.6,49.53A15.81,15.81,0,0,0,216,40H40A16,16,0,0,0,28.19,66.76l.08.09L96,139.17V216a16,16,0,0,0,24.87,13.32l32-21.34A16,16,0,0,0,160,194.66V139.17l67.74-72.32.08-.09A15.8,15.8,0,0,0,230.6,49.53ZM40,56h0Zm106.18,74.58A8,8,0,0,0,144,136v58.66L112,216V136a8,8,0,0,0-2.16-5.47L40,56H216Z"/></svg>
+            """)
+            .frame(width: 19, height: 19)
+
+        case .filterFilled:
+            // phosphor fill/funnel: the outer outline with the interior left solid
+            SVGIconView(svg: """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><path fill="black" d="M230.6,49.53A15.81,15.81,0,0,0,216,40H40A16,16,0,0,0,28.19,66.76l.08.09L96,139.17V216a16,16,0,0,0,24.87,13.32l32-21.34A16,16,0,0,0,160,194.66V139.17l67.74-72.32.08-.09A15.8,15.8,0,0,0,230.6,49.53Z"/></svg>
             """)
             .frame(width: 19, height: 19)
 
@@ -138,16 +146,19 @@ struct PhosphorIcon: View {
 
     private static var cache: [String: NSImage] = [:]
 
-    private var image: NSImage? {
+    /// The glyph as a template image, for AppKit views that cannot host a SwiftUI icon.
+    static func nsImage(for glyph: PhosphorGlyph) -> NSImage? {
         let path = glyph.path
-        if let hit = Self.cache[path] { return hit }
+        if let hit = cache[path] { return hit }
         let shade = glyph.shading.map { "<path fill=\"black\" opacity=\"0.4\" d=\"\($0)\"/>" } ?? ""
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\">\(shade)<path fill=\"black\" d=\"\(path)\"/></svg>"
         guard let data = svg.data(using: .utf8), let img = NSImage(data: data) else { return nil }
         img.isTemplate = true
-        Self.cache[path] = img
+        cache[path] = img
         return img
     }
+
+    private var image: NSImage? { Self.nsImage(for: glyph) }
 
     var body: some View {
         if let image {
