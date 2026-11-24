@@ -266,6 +266,89 @@ fn mock_bare_remote_fetch_pull_push_and_ahead_behind() {
 }
 
 #[test]
+fn branch_merged_into_origin_default_is_flagged() {
+    let base = tempfile::tempdir().unwrap();
+    let remote_dir = base.path().join("remote.git");
+    let clone = base.path().join("clone");
+    fs::create_dir_all(&remote_dir).unwrap();
+    run_git(&remote_dir, &["init", "--bare", "-b", "main"]);
+    run_git(
+        base.path(),
+        &[
+            "clone",
+            remote_dir.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    configure_git_identity(&clone);
+    fs::write(clone.join("README.md"), "hi\n").unwrap();
+    run_git(&clone, &["add", "."]);
+    run_git(&clone, &["commit", "-m", "Initial"]);
+    run_git(&clone, &["push", "-u", "origin", "main"]);
+
+    // merged: feature commit lands on main and is pushed
+    run_git(&clone, &["checkout", "-b", "merged-feature"]);
+    fs::write(clone.join("m.txt"), "m\n").unwrap();
+    run_git(&clone, &["add", "."]);
+    run_git(&clone, &["commit", "-m", "merged work"]);
+    run_git(&clone, &["checkout", "main"]);
+    run_git(
+        &clone,
+        &["merge", "--no-ff", "merged-feature", "-m", "merge"],
+    );
+    run_git(&clone, &["push", "origin", "main"]);
+
+    // unmerged: has a commit origin/main lacks
+    run_git(&clone, &["checkout", "-b", "wip"]);
+    fs::write(clone.join("w.txt"), "w\n").unwrap();
+    run_git(&clone, &["add", "."]);
+    run_git(&clone, &["commit", "-m", "wip"]);
+    // Detach HEAD so neither `wip` nor `main` is skipped by the is_head guard.
+    run_git(&clone, &["checkout", "--detach"]);
+
+    let session = RepoSession::new(clone.to_string_lossy().into_owned()).unwrap();
+    let branches = session.list_branches().unwrap();
+    let merged = |n: &str| {
+        branches
+            .iter()
+            .find(|b| !b.is_remote && b.name == n)
+            .unwrap()
+            .is_merged
+    };
+    assert!(merged("merged-feature"));
+    assert!(!merged("wip"));
+
+    // tracking branch of a remote feature that was later merged into origin/main
+    run_git(&clone, &["checkout", "-q", "-b", "topic", "main"]);
+    fs::write(clone.join("t.txt"), "t\n").unwrap();
+    run_git(&clone, &["add", "."]);
+    run_git(&clone, &["commit", "-m", "topic work"]);
+    run_git(&clone, &["push", "origin", "topic"]);
+    run_git(&clone, &["checkout", "-q", "main"]);
+    run_git(&clone, &["branch", "-D", "topic"]);
+    run_git(&clone, &["checkout", "-q", "-b", "topic", "origin/topic"]);
+    run_git(&clone, &["checkout", "-q", "main"]);
+    run_git(
+        &clone,
+        &["merge", "--no-ff", "origin/topic", "-m", "merge topic"],
+    );
+    run_git(&clone, &["push", "origin", "main"]);
+    run_git(&clone, &["checkout", "--detach"]);
+
+    // brand-new branch at origin/main's tip with no work of its own
+    run_git(&clone, &["branch", "fresh", "main"]);
+    let branches = session.list_branches().unwrap();
+    let fresh = branches.iter().find(|b| b.name == "fresh").unwrap();
+    assert!(!fresh.is_merged);
+    let topic = branches
+        .iter()
+        .find(|b| !b.is_remote && b.name == "topic")
+        .unwrap();
+    assert!(topic.is_merged);
+    assert!(!merged("main"));
+}
+
+#[test]
 fn file_watcher_sets_dirty_flag_on_worktree_change() {
     let dir = tempfile::tempdir().unwrap();
     run_git(dir.path(), &["init", "-b", "main"]);
@@ -568,7 +651,10 @@ fn branch_graph_handles_merged_branch_root_fork_and_origin_head_base() {
     let w = work.path();
     run_git(w, &["init", "-b", "trunk"]);
     configure_git_identity(w);
-    run_git(w, &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    run_git(
+        w,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
     commit_file(w, "r.txt", "root");
     run_git(w, &["push", "-u", "origin", "trunk"]);
     run_git(w, &["remote", "set-head", "origin", "trunk"]);

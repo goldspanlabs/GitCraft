@@ -417,6 +417,17 @@ private struct LocalBranchRowView: View {
 
             Spacer()
 
+            if branch.isMerged {
+                Text("merged")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.green.opacity(0.15))
+                    .clipShape(Capsule())
+                    .help("Fully merged into origin's default branch")
+            }
+
             if branch.ahead > 0 || branch.behind > 0 {
                 HStack(spacing: 4) {
                     if branch.ahead > 0 {

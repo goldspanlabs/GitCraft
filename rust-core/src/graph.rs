@@ -67,9 +67,7 @@ fn short_branch_name(full: &str) -> &str {
 
 /// Tips and hidden commits for the "current branch vs base" view, or `None`
 /// when the full graph should be shown.
-fn branch_scope(
-    repo: &gix::Repository,
-) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
+fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
     let head = repo.head().ok()?;
     let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
     let head_id = head.id()?.detach();
@@ -464,6 +462,7 @@ pub fn list_branches(
         .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let mut remote_oids: HashMap<String, gix::ObjectId> = HashMap::new();
+    let mut remote_head_targets: HashMap<String, String> = HashMap::new();
     let mut local_entries: Vec<(String, String, gix::ObjectId, bool)> = Vec::new();
     let mut remote_entries: Vec<(String, String, gix::ObjectId)> = Vec::new();
 
@@ -480,6 +479,13 @@ pub fn list_branches(
             }
         } else if let Some(name) = full_name.strip_prefix("refs/remotes/") {
             if name.ends_with("/HEAD") {
+                // e.g. refs/remotes/origin/HEAD -> refs/remotes/origin/main
+                if let gix::refs::TargetRef::Symbolic(target) = reference.target() {
+                    remote_head_targets.insert(
+                        full_name.clone(),
+                        target.as_bstr().to_str_lossy().into_owned(),
+                    );
+                }
                 continue;
             }
             if let Ok(peeled) = reference.into_fully_peeled_id() {
@@ -492,6 +498,19 @@ pub fn list_branches(
 
     let config = repo.config_snapshot();
     let mut branches = Vec::with_capacity(local_entries.len() + remote_entries.len());
+
+    // Branches are "merged" when fully contained in origin's default branch.
+    let base_ref = remote_head_targets
+        .get("refs/remotes/origin/HEAD")
+        .cloned()
+        .filter(|r| remote_oids.contains_key(r))
+        .or_else(|| {
+            ["refs/remotes/origin/main", "refs/remotes/origin/master"]
+                .into_iter()
+                .find(|r| remote_oids.contains_key(*r))
+                .map(str::to_owned)
+        });
+    let base_oid = base_ref.as_ref().and_then(|r| remote_oids.get(r)).copied();
 
     for (name, full_ref, local_oid, is_head) in local_entries {
         let upstream_full = resolve_upstream_ref(&config, &name)
@@ -511,6 +530,16 @@ pub fn list_branches(
             (0, 0)
         };
 
+        // The default branch itself is trivially "merged"; don't flag it.
+        let is_default_branch = base_ref
+            .as_deref()
+            .and_then(|r| r.strip_prefix("refs/remotes/origin/"))
+            .is_some_and(|base_name| base_name == name);
+        let is_merged = !is_head
+            && !is_default_branch
+            && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref())
+            && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
+
         branches.push(BranchInfo {
             name,
             full_ref,
@@ -519,6 +548,7 @@ pub fn list_branches(
             target_oid_hex: local_oid.to_hex().to_string(),
             ahead,
             behind,
+            is_merged,
         });
     }
 
@@ -531,6 +561,7 @@ pub fn list_branches(
             target_oid_hex: oid.to_hex().to_string(),
             ahead: 0,
             behind: 0,
+            is_merged: false,
         });
     }
 
@@ -586,6 +617,58 @@ fn resolve_upstream_ref(config: &gix::config::Snapshot<'_>, branch_name: &str) -
         .into_owned();
     let short_merge = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
     Some(format!("refs/remotes/{remote}/{short_merge}"))
+}
+
+/// True when the branch's reflog shows it was only ever created and never moved
+/// (no commits, resets, merges or pulls), so "merged" would be misleading.
+///
+/// Branches created from a remote-tracking ref other than the default branch
+/// (e.g. `git checkout -b topic origin/topic`) are not exempt: they carry the
+/// remote's feature commits, which may since have been merged.
+/// Without a reflog (e.g. fetched or cloned branches) we can't tell, so false.
+fn is_untouched_new_branch(
+    repo: &gix::Repository,
+    full_ref: &str,
+    remote_oids: &HashMap<String, gix::ObjectId>,
+    base_ref: Option<&str>,
+) -> bool {
+    use std::io::{BufRead, BufReader};
+
+    let Ok(file) = std::fs::File::open(repo.common_dir().join("logs").join(full_ref)) else {
+        return false;
+    };
+    let mut seen_entry = false;
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { return false };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some(source) = line
+            .split_once('\t')
+            .and_then(|(_, msg)| msg.strip_prefix("branch: Created from "))
+        else {
+            // First non-creation entry: the branch has moved, stop reading.
+            return false;
+        };
+        let remote_ref = format!("refs/remotes/{}", source.trim());
+        if remote_oids.contains_key(&remote_ref) && Some(remote_ref.as_str()) != base_ref {
+            return false;
+        }
+        seen_entry = true;
+    }
+    seen_entry
+}
+
+/// True when every commit reachable from `tip` is already reachable from `base`.
+fn is_fully_merged(repo: &gix::Repository, tip: gix::ObjectId, base: gix::ObjectId) -> bool {
+    if tip == base {
+        return true;
+    }
+    repo.rev_walk([tip])
+        .with_hidden([base])
+        .all()
+        .map(|mut w| w.next().is_none())
+        .unwrap_or(false)
 }
 
 fn compute_ahead_behind(
