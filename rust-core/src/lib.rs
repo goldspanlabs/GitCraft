@@ -119,6 +119,7 @@ pub struct BranchInfo {
     pub target_oid_hex: String,
     pub ahead: u32,
     pub behind: u32,
+    pub is_merged: bool,
 }
 
 #[derive(Clone, Debug)]
