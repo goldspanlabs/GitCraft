@@ -411,7 +411,7 @@ private struct LocalBranchRowView: View {
                         Text("↓\(branch.behind)")
                     }
                 }
-                .font(.caption2.monospacedDigit())
+                .font(branch.isHead ? .caption2.weight(.bold).monospacedDigit() : .caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
