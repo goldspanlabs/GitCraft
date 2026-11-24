@@ -161,6 +161,10 @@ struct RepoDetailView: View {
             }
         }
         .modifier(RepoSheets(tab: tab))
+        // Hairline under the toolbar: the title bar's own separator doesn't show here.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Divider()
+        }
     }
 }
 
