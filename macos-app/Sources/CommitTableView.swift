@@ -506,11 +506,11 @@ final class RefPillView: NSView {
         self.host = host
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = 5
         layer?.borderWidth = 1
 
         label.stringValue = badge.name
-        label.font = .systemFont(ofSize: 10.5, weight: badge.isCurrent ? .semibold : .medium)
+        label.font = .systemFont(ofSize: 11.5, weight: badge.isCurrent ? .bold : .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(label)
@@ -524,23 +524,37 @@ final class RefPillView: NSView {
             addSubview(iconView)
             addSubview(divider)
             NSLayoutConstraint.activate([
-                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
                 iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-                iconView.widthAnchor.constraint(equalToConstant: 12),
-                iconView.heightAnchor.constraint(equalToConstant: 12),
-                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
+                iconView.widthAnchor.constraint(equalToConstant: 14),
+                iconView.heightAnchor.constraint(equalToConstant: 14),
+                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
                 divider.widthAnchor.constraint(equalToConstant: 1),
                 divider.topAnchor.constraint(equalTo: topAnchor),
                 divider.bottomAnchor.constraint(equalTo: bottomAnchor),
-                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 5),
+                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+            ])
+        } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head {
+            // The checked-out branch gets a check mark in front of its name.
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+            iconView.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
+                .withSymbolConfiguration(config)
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(iconView)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 13),
+                iconView.heightAnchor.constraint(equalToConstant: 13),
+                label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             ])
         } else {
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5).isActive = true
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6).isActive = true
         }
         NSLayoutConstraint.activate([
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
         ])
 
         applyColors()
@@ -576,7 +590,8 @@ final class RefPillView: NSView {
         if isDark {
             let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
             bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
-            fgColor = baseColor.blended(withFraction: 0.45, of: .white) ?? baseColor
+            // The current branch's chip text is noticeably brighter than other chips'.
+            fgColor = baseColor.blended(withFraction: badge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
             borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
         } else {
             bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
