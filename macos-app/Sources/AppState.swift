@@ -5,19 +5,26 @@ enum RemoteOperation {
     case fetch, pull, push
 }
 
+/// App-wide state shared by every repository window. Each repository lives in its own
+/// window; macOS groups those windows into native tabs (see `WindowTabs`).
 @MainActor
 final class WorkspaceState: ObservableObject {
-    @Published var tabs: [RepoTab] = []
-    @Published var selectedTabID: UUID?
     @Published var recentPaths: [String] = []
     @Published var openError: String?
+
+    /// Set to true by the app delegate when quitting, so windows closing during
+    /// shutdown don't erase the saved list of open repositories.
+    static var isTerminating = false
 
     private static let recentKey = "recentRepositories"
     private static let openTabsKey = "openRepositoryTabs"
 
-    var activeTab: RepoTab? {
-        tabs.first(where: { $0.id == selectedTabID })
-    }
+    private var openWindow: ((URL) -> Void)?
+    /// Repositories that already have a window.
+    private var openURLs: [URL] = []
+    /// Tabs created by `openRepository` that their new window hasn't claimed yet.
+    private var pendingTabs: [URL: RepoTab] = [:]
+    private var didRestore = false
 
     init() {
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
@@ -28,65 +35,105 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
-    func restoreTabs() {
-        let saved = UserDefaults.standard.stringArray(forKey: Self.openTabsKey) ?? []
-        for path in saved where FileManager.default.fileExists(atPath: path) {
-            openRepository(at: URL(fileURLWithPath: path), persist: false)
-        }
+    /// Gives the workspace a way to open a repository window. Any view or command that
+    /// can open repositories calls this with its `openWindow` action first.
+    func install(openWindow: OpenWindowAction) {
+        self.openWindow = { openWindow(value: $0) }
     }
 
-    func chooseRepository() {
+    /// Reopens the repositories that were open when the app last quit.
+    /// Returns true if it opened any.
+    func restoreTabsIfNeeded() -> Bool {
+        guard !didRestore else { return false }
+        didRestore = true
+        let saved = UserDefaults.standard.stringArray(forKey: Self.openTabsKey) ?? []
+        var opened = false
+        for path in saved where FileManager.default.fileExists(atPath: path) {
+            if openRepository(at: URL(fileURLWithPath: path)) { opened = true }
+        }
+        return opened
+    }
+
+    @discardableResult
+    func chooseRepository() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Open Repository"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        openRepository(at: url)
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        return openRepository(at: url)
     }
 
-    func openRepository(at url: URL, persist: Bool = true) {
+    /// Opens `url` in a new tab, or brings its existing tab to the front.
+    @discardableResult
+    func openRepository(at url: URL) -> Bool {
         let standardized = url.standardizedFileURL
-        if let existing = tabs.first(where: { $0.url.standardizedFileURL == standardized }) {
-            selectedTabID = existing.id
-            return
+        guard let openWindow else {
+            openError = "Unable to open \(standardized.lastPathComponent): no window available."
+            return false
         }
-
+        if pendingTabs[standardized] != nil {
+            return true // its window is already on the way
+        }
+        if openURLs.contains(standardized) {
+            openWindow(standardized) // SwiftUI focuses the window that already shows this value
+            return true
+        }
         do {
-            let tab = try RepoTab(url: standardized)
-            tabs.append(tab)
-            selectedTabID = tab.id
+            // Create the tab here so a non-repository folder fails in the window the user
+            // is looking at, rather than in a new empty tab.
+            pendingTabs[standardized] = try RepoTab(url: standardized)
             openError = nil
             recordRecent(path: standardized.path)
-            if persist {
-                saveOpenTabs()
-            }
-            tab.startWatcher()
-            tab.refresh()
+            openWindow(standardized)
+            return true
         } catch {
             openError = "Unable to open \(standardized.lastPathComponent): \(error.localizedDescription)"
+            return false
         }
     }
 
-    func closeTab(_ id: UUID) {
-        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let removed = tabs.remove(at: idx)
-        removed.stopWatcher()
+    func hasNoPendingTab(for url: URL) -> Bool {
+        pendingTabs[url.standardizedFileURL] == nil
+    }
 
-        if selectedTabID == id {
-            if tabs.isEmpty {
-                selectedTabID = nil
-            } else {
-                let nextIdx = min(idx, tabs.count - 1)
-                selectedTabID = tabs[nextIdx].id
+    /// True if a window already shows this repository.
+    func isOpen(_ url: URL) -> Bool {
+        openURLs.contains(url.standardizedFileURL)
+    }
+
+    /// Called by a repository window as it appears. Returns the tab it should display.
+    func claimTab(for url: URL) -> RepoTab? {
+        let standardized = url.standardizedFileURL
+        let tab: RepoTab
+        if let pending = pendingTabs.removeValue(forKey: standardized) {
+            tab = pending
+        } else {
+            // Window restored by macOS without going through `openRepository`.
+            do {
+                tab = try RepoTab(url: standardized)
+            } catch {
+                openError = "Unable to open \(standardized.lastPathComponent): \(error.localizedDescription)"
+                return nil
             }
+            recordRecent(path: standardized.path)
+        }
+        if !openURLs.contains(standardized) {
+            openURLs.append(standardized)
         }
         saveOpenTabs()
+        tab.startWatcher()
+        tab.refresh()
+        return tab
     }
 
-    func closeActiveTab() {
-        if let id = selectedTabID {
-            closeTab(id)
+    /// Called when a repository window closes.
+    func releaseTab(_ tab: RepoTab) {
+        tab.stopWatcher()
+        openURLs.removeAll { $0 == tab.url.standardizedFileURL }
+        if !Self.isTerminating {
+            saveOpenTabs()
         }
     }
 
@@ -101,8 +148,7 @@ final class WorkspaceState: ObservableObject {
     }
 
     private func saveOpenTabs() {
-        let paths = tabs.map { $0.url.path }
-        UserDefaults.standard.set(paths, forKey: Self.openTabsKey)
+        UserDefaults.standard.set(openURLs.map(\.path), forKey: Self.openTabsKey)
     }
 }
 

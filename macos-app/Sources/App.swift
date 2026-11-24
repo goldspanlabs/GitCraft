@@ -3,31 +3,19 @@ import SwiftUI
 
 @main
 struct GitCraftApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspace = WorkspaceState()
 
     var body: some Scene {
-        WindowGroup("GitCraft") {
-            RootView()
+        // One window per repository; macOS groups them into native tabs. A window with
+        // no value (what the tab bar's "+" button opens) shows the welcome screen.
+        WindowGroup("GitCraft", for: URL.self) { $url in
+            RepoWindowView(url: url)
                 .environmentObject(workspace)
                 .frame(minWidth: 1040, minHeight: 680)
-                .onAppear {
-                    workspace.restoreTabs()
-                }
         }
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Open Repository…", action: workspace.chooseRepository)
-                    .keyboardShortcut("o", modifiers: .command)
-                Button("New Repository Tab…", action: workspace.chooseRepository)
-                    .keyboardShortcut("t", modifiers: .command)
-                Button("Close Tab", action: workspace.closeActiveTab)
-                    .keyboardShortcut("w", modifiers: .command)
-                    .disabled(workspace.selectedTabID == nil)
-                Divider()
-                Button("Refresh", action: { workspace.activeTab?.refresh() })
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(workspace.activeTab == nil)
-            }
+            RepoCommands(workspace: workspace)
         }
 
         // Adds "GitCraft ▸ Settings…" (⌘,) to the macOS application menu.
@@ -37,8 +25,62 @@ struct GitCraftApp: App {
     }
 }
 
-struct RootView: View {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
+        // GitCraft restores its own open repositories (see `WorkspaceState.restoreTabsIfNeeded`).
+        // Letting macOS restore the windows too opens every repository twice.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+    }
+
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        WorkspaceState.isTerminating = true
+        return .terminateNow
+    }
+}
+
+private struct ActiveRepoTabKey: FocusedValueKey {
+    typealias Value = RepoTab
+}
+
+extension FocusedValues {
+    var activeRepoTab: RepoTab? {
+        get { self[ActiveRepoTabKey.self] }
+        set { self[ActiveRepoTabKey.self] = newValue }
+    }
+}
+
+struct RepoCommands: Commands {
+    let workspace: WorkspaceState
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.activeRepoTab) private var activeTab
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open Repository…") {
+                workspace.install(openWindow: openWindow)
+                workspace.chooseRepository()
+            }
+            .keyboardShortcut("o", modifiers: .command)
+            Button("New Repository Tab…") {
+                workspace.install(openWindow: openWindow)
+                workspace.chooseRepository()
+            }
+            .keyboardShortcut("t", modifiers: .command)
+            Divider()
+            Button("Refresh") { activeTab?.refresh() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(activeTab == nil)
+        }
+    }
+}
+
+/// Content of every window: a repository when `url` is set, otherwise the welcome screen.
+struct RepoWindowView: View {
+    let url: URL?
     @EnvironmentObject private var workspace: WorkspaceState
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(AppearancePreference.storageKey)
     private var appearanceRaw = AppearancePreference.system.rawValue
 
@@ -48,25 +90,87 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if let activeTab = workspace.activeTab {
-                RepoWorkspaceView(workspace: workspace, tab: activeTab)
-                    .id(activeTab.id)
+            if let url {
+                RepositoryWindowContent(url: url)
             } else {
-                VStack(spacing: 0) {
-                    if let error = workspace.openError {
-                        ErrorBanner(message: error) {
-                            workspace.openError = nil
-                        }
-                    }
-                    WelcomeView(workspace: workspace)
-                }
+                WelcomeWindowContent()
             }
         }
         .preferredColorScheme(appearance.colorScheme)
         // Applies the saved appearance at launch. Changes made in Settings are applied
-        // by `SettingsView` itself, so this still works if the main window is closed.
+        // by `SettingsView` itself, so this still works if no repository window is open.
         .onAppear {
+            workspace.install(openWindow: openWindow)
             AppearancePreference.apply(appearance)
+        }
+    }
+}
+
+private struct RepositoryWindowContent: View {
+    let url: URL
+    @EnvironmentObject private var workspace: WorkspaceState
+    @StateObject private var binding = RepoWindowBinding()
+    @State private var tab: RepoTab?
+
+    var body: some View {
+        Group {
+            if let tab {
+                RepoWorkspaceView(workspace: workspace, tab: tab)
+                    .focusedSceneValue(\.activeRepoTab, tab)
+            } else {
+                VStack(spacing: 0) {
+                    if let error = workspace.openError {
+                        ErrorBanner(message: error) { workspace.openError = nil }
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .background(WindowAccessor { binding.attach(window: $0) })
+        .onAppear {
+            guard tab == nil else { return }
+            // A second window for a repository that's already open (macOS restoring a
+            // window that GitCraft's own restore also opened) just closes itself.
+            if workspace.isOpen(url) && workspace.hasNoPendingTab(for: url) {
+                binding.closeWindow()
+                return
+            }
+            guard let claimed = workspace.claimTab(for: url) else { return }
+            tab = claimed
+            binding.bind(tab: claimed) { workspace.releaseTab($0) }
+        }
+    }
+}
+
+private struct WelcomeWindowContent: View {
+    @EnvironmentObject private var workspace: WorkspaceState
+    @Environment(\.openWindow) private var openWindow
+    @StateObject private var holder = WindowHolder()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let error = workspace.openError {
+                ErrorBanner(message: error) { workspace.openError = nil }
+            }
+            WelcomeView(workspace: workspace) {
+                // The repository opens in its own tab; this welcome tab is done.
+                holder.window?.close()
+            }
+        }
+        .background(WindowAccessor { [holder] window in
+            holder.window = window
+            window.title = "Repository Manager"
+            WindowTabs.joinRepositoryTabs(window)
+        })
+        .onAppear {
+            // Child views appear before their parents, so install here rather than relying
+            // on `RepoWindowView` having done it already.
+            workspace.install(openWindow: openWindow)
+            // At launch, bring back the repositories that were open last time.
+            if workspace.restoreTabsIfNeeded() {
+                // Give the restored repository windows time to appear (and join tabs) first.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { holder.window?.close() }
+            }
         }
     }
 }
@@ -77,88 +181,79 @@ struct RepoWorkspaceView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var searchText = ""
 
+    @ViewBuilder
+    private var detail: some View {
+        VStack(spacing: 0) {
+            if let error = workspace.openError {
+                ErrorBanner(message: error) {
+                    workspace.openError = nil
+                }
+            }
+
+            if let error = tab.errorMessage {
+                ErrorBanner(message: error) {
+                    tab.errorMessage = nil
+                }
+            }
+
+            if tab.isMerging || tab.hasConflicts {
+                MergeBanner(hasConflicts: tab.hasConflicts) {
+                    tab.pendingConfirmation = .abortMerge
+                }
+            }
+
+            // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
+            VSplitView {
+                ZStack(alignment: .bottom) {
+                    CommitTableView(
+                        rows: tab.commits,
+                        graphRevision: tab.graphRevision,
+                        workingChangesCount: tab.totalChangesCount,
+                        scrollRequest: tab.scrollRequest,
+                        onLoadMore: { tab.loadMoreCommits() },
+                        onSelectCommit: { tab.selectCommitFromTable($0) },
+                        onCopyOid: { tab.copyOid($0) },
+                        onCreateBranchAtCommit: { oid in
+                            tab.newBranchStartPoint = oid
+                            tab.isShowingNewBranchSheet = true
+                        },
+                        onCreateTagAtCommit: { oid in
+                            tab.newTagTarget = oid
+                            tab.isShowingNewTagSheet = true
+                        },
+                        onCheckoutCommit: { oid in
+                            tab.checkoutBranch(oid)
+                        }
+                    )
+
+                    if tab.commits.isEmpty && tab.searchQuery.isEmpty {
+                        EmptyHistoryHint()
+                    }
+                }
+                .frame(minHeight: 200)
+
+                InspectorView(tab: tab)
+                    .frame(minHeight: 210, idealHeight: 290)
+            }
+        }
+        // Hidden shortcut for Cmd+Shift+S sidebar toggle
+        .background(
+            Button("") {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+                }
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .opacity(0)
+        )
+    }
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(tab: tab)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
-            VStack(spacing: 0) {
-                TabBarView(workspace: workspace)
-                Divider()
-
-                if let error = workspace.openError {
-                    ErrorBanner(message: error) {
-                        workspace.openError = nil
-                    }
-                }
-
-                if let error = tab.errorMessage {
-                    ErrorBanner(message: error) {
-                        tab.errorMessage = nil
-                    }
-                }
-
-                if tab.isMerging || tab.hasConflicts {
-                    MergeBanner(hasConflicts: tab.hasConflicts) {
-                        tab.pendingConfirmation = .abortMerge
-                    }
-                }
-
-                // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
-                VSplitView {
-                    ZStack(alignment: .bottom) {
-                        CommitTableView(
-                            rows: tab.commits,
-                            graphRevision: tab.graphRevision,
-                            workingChangesCount: tab.totalChangesCount,
-                            scrollRequest: tab.scrollRequest,
-                            onLoadMore: { tab.loadMoreCommits() },
-                            onSelectCommit: { tab.selectCommitFromTable($0) },
-                            onCopyOid: { tab.copyOid($0) },
-                            onCreateBranchAtCommit: { oid in
-                                tab.newBranchStartPoint = oid
-                                tab.isShowingNewBranchSheet = true
-                            },
-                            onCreateTagAtCommit: { oid in
-                                tab.newTagTarget = oid
-                                tab.isShowingNewTagSheet = true
-                            },
-                            onCheckoutCommit: { oid in
-                                tab.checkoutBranch(oid)
-                            }
-                        )
-
-                        if tab.commits.isEmpty && tab.searchQuery.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "sparkles")
-                                    .foregroundStyle(.secondary)
-                                Text("No commits yet — stage your files below and make your first commit.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.regularMaterial)
-                            .cornerRadius(8)
-                            .padding(.bottom, 14)
-                        }
-                    }
-                    .frame(minHeight: 200)
-
-                    InspectorView(tab: tab)
-                        .frame(minHeight: 210, idealHeight: 290)
-                }
-            }
-            // Hidden shortcut for Cmd+Shift+S sidebar toggle
-            .background(
-                Button("") {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-                    }
-                }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .opacity(0)
-            )
+            detail
         }
         .navigationTitle(tab.name)
         .navigationSubtitle(tab.currentBranch)
@@ -170,7 +265,9 @@ struct RepoWorkspaceView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
-                    Button(action: workspace.chooseRepository) {
+                    Button {
+                        workspace.chooseRepository()
+                    } label: {
                         TopBarIconLabel(title: "Quick Launch") {
                             ToolbarIconView(icon: .quickLaunch)
                         }
@@ -242,6 +339,19 @@ struct RepoWorkspaceView: View {
                 .background(ToolbarPillRemovalView())
             }
         }
+        .modifier(RepoSheets(tab: tab))
+        .onAppear {
+            searchText = tab.searchQuery
+        }
+    }
+}
+
+/// Sheets and the destructive-action dialog for a repository window.
+private struct RepoSheets: ViewModifier {
+    @ObservedObject var tab: RepoTab
+
+    func body(content: Content) -> some View {
+        content
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
         }
@@ -271,9 +381,23 @@ struct RepoWorkspaceView: View {
         } message: { action in
             Text(action.message)
         }
-        .onAppear {
-            searchText = tab.searchQuery
+    }
+}
+
+private struct EmptyHistoryHint: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.secondary)
+            Text("No commits yet — stage your files below and make your first commit.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .cornerRadius(8)
+        .padding(.bottom, 14)
     }
 }
 
