@@ -537,7 +537,7 @@ pub fn list_branches(
             .is_some_and(|base_name| base_name == name);
         let is_merged = !is_head
             && !is_default_branch
-            && !is_untouched_new_branch(&repo, &full_ref)
+            && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref())
             && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
 
         branches.push(BranchInfo {
@@ -621,17 +621,42 @@ fn resolve_upstream_ref(config: &gix::config::Snapshot<'_>, branch_name: &str) -
 
 /// True when the branch's reflog shows it was only ever created and never moved
 /// (no commits, resets, merges or pulls), so "merged" would be misleading.
+///
+/// Branches created from a remote-tracking ref other than the default branch
+/// (e.g. `git checkout -b topic origin/topic`) are not exempt: they carry the
+/// remote's feature commits, which may since have been merged.
 /// Without a reflog (e.g. fetched or cloned branches) we can't tell, so false.
-fn is_untouched_new_branch(repo: &gix::Repository, full_ref: &str) -> bool {
-    let Ok(log) = std::fs::read_to_string(repo.common_dir().join("logs").join(full_ref)) else {
+fn is_untouched_new_branch(
+    repo: &gix::Repository,
+    full_ref: &str,
+    remote_oids: &HashMap<String, gix::ObjectId>,
+    base_ref: Option<&str>,
+) -> bool {
+    use std::io::{BufRead, BufReader};
+
+    let Ok(file) = std::fs::File::open(repo.common_dir().join("logs").join(full_ref)) else {
         return false;
     };
-    let mut entries = log.lines().filter(|l| !l.trim().is_empty()).peekable();
-    entries.peek().is_some()
-        && entries.all(|l| {
-            l.split_once('\t')
-                .is_some_and(|(_, msg)| msg.starts_with("branch: Created from"))
-        })
+    let mut seen_entry = false;
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { return false };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some(source) = line
+            .split_once('\t')
+            .and_then(|(_, msg)| msg.strip_prefix("branch: Created from "))
+        else {
+            // First non-creation entry: the branch has moved, stop reading.
+            return false;
+        };
+        let remote_ref = format!("refs/remotes/{}", source.trim());
+        if remote_oids.contains_key(&remote_ref) && Some(remote_ref.as_str()) != base_ref {
+            return false;
+        }
+        seen_entry = true;
+    }
+    seen_entry
 }
 
 /// True when every commit reachable from `tip` is already reachable from `base`.

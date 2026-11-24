@@ -318,11 +318,33 @@ fn branch_merged_into_origin_default_is_flagged() {
     assert!(merged("merged-feature"));
     assert!(!merged("wip"));
 
+    // tracking branch of a remote feature that was later merged into origin/main
+    run_git(&clone, &["checkout", "-q", "-b", "topic", "main"]);
+    fs::write(clone.join("t.txt"), "t\n").unwrap();
+    run_git(&clone, &["add", "."]);
+    run_git(&clone, &["commit", "-m", "topic work"]);
+    run_git(&clone, &["push", "origin", "topic"]);
+    run_git(&clone, &["checkout", "-q", "main"]);
+    run_git(&clone, &["branch", "-D", "topic"]);
+    run_git(&clone, &["checkout", "-q", "-b", "topic", "origin/topic"]);
+    run_git(&clone, &["checkout", "-q", "main"]);
+    run_git(
+        &clone,
+        &["merge", "--no-ff", "origin/topic", "-m", "merge topic"],
+    );
+    run_git(&clone, &["push", "origin", "main"]);
+    run_git(&clone, &["checkout", "--detach"]);
+
     // brand-new branch at origin/main's tip with no work of its own
     run_git(&clone, &["branch", "fresh", "main"]);
     let branches = session.list_branches().unwrap();
     let fresh = branches.iter().find(|b| b.name == "fresh").unwrap();
     assert!(!fresh.is_merged);
+    let topic = branches
+        .iter()
+        .find(|b| !b.is_remote && b.name == "topic")
+        .unwrap();
+    assert!(topic.is_merged);
     assert!(!merged("main"));
 }
 
