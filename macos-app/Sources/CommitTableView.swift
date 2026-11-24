@@ -440,14 +440,37 @@ final class CommitRowCellView: NSTableCellView {
             badgesStack.isHidden = true
         } else {
             badgesStack.isHidden = false
-            for badge in commit.refs.prefix(4) {
-                // "origin/main" -> the host behind the "origin" remote.
-                let host: RemoteHost? = badge.kind == .remoteBranch
+            let badges = Array(commit.refs.prefix(4))
+            // "origin/main" -> the host behind the "origin" remote.
+            let hostFor: (RefBadge) -> RemoteHost? = { badge in
+                badge.kind == .remoteBranch
                     ? badge.name.split(separator: "/", maxSplits: 1).first.flatMap { remoteHosts[String($0)] } ?? .other
                     : nil
-                badgesStack.addArrangedSubview(
-                    RefPillView(badge: badge, host: host, showsUnpushedDot: commit.isUnpushed)
-                )
+            }
+            // "origin/main" -> "main".
+            let branchNameOf: (RefBadge) -> String = { badge in
+                String(badge.name.split(separator: "/", maxSplits: 1).last ?? "")
+            }
+            // Hosted remote branches on the same commit as their local branch of the same name.
+            // Each is drawn as its host icon chip followed by the local chip; the origin name chip is dropped.
+            let mirrored = badges.filter { $0.kind == .remoteBranch && hostFor($0)?.icon != nil }.compactMap { remote -> RefBadge? in
+                commit.refs.first { $0.kind == .localBranch && $0.name == branchNameOf(remote) }
+            }
+            let mirroredLocalNames = Set(mirrored.map(\.name))
+            for badge in badges {
+                if badge.kind == .localBranch, mirroredLocalNames.contains(badge.name) {
+                    continue // drawn right after its remote's icon chip
+                }
+                if badge.kind == .remoteBranch, let local = mirrored.first(where: { $0.name == branchNameOf(badge) }) {
+                    badgesStack.addArrangedSubview(
+                        RefPillView(badge: badge, host: hostFor(badge), iconOnly: true, colorFrom: local)
+                    )
+                    badgesStack.addArrangedSubview(RefPillView(badge: local, showsUnpushedDot: commit.isUnpushed))
+                } else {
+                    badgesStack.addArrangedSubview(
+                        RefPillView(badge: badge, host: hostFor(badge), showsUnpushedDot: commit.isUnpushed)
+                    )
+                }
             }
         }
 
@@ -483,11 +506,21 @@ final class RefPillView: NSView {
     /// The untinted glyph; `applyColors` bakes the chip colour into `iconView.image`.
     private var templateIcon: NSImage?
     private let badge: RefBadge
+    /// The chip whose colours this chip uses. It is the chip itself unless `colorFrom` is set.
+    private let colorBadge: RefBadge
     private let host: RemoteHost?
 
     /// `showsUnpushedDot` swaps the checked-out branch's check mark for an orange dot.
-    init(badge: RefBadge, host: RemoteHost? = nil, showsUnpushedDot: Bool = false) {
+    /// `iconOnly` draws just the host mark, for a remote branch whose name is shown in a chip beside it.
+    init(
+        badge: RefBadge,
+        host: RemoteHost? = nil,
+        showsUnpushedDot: Bool = false,
+        iconOnly: Bool = false,
+        colorFrom: RefBadge? = nil
+    ) {
         self.badge = badge
+        self.colorBadge = colorFrom ?? badge
         self.host = host
         super.init(frame: .zero)
         wantsLayer = true
@@ -498,27 +531,35 @@ final class RefPillView: NSView {
         label.font = .systemFont(ofSize: 11.5, weight: badge.isCurrent ? .bold : .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(label)
+        if !iconOnly { addSubview(label) }
         if let host, let icon = host.icon {
             // Remote chips lead with the hosting service's mark, set off by a thin divider.
             templateIcon = icon
             iconView.imageScaling = .scaleProportionallyUpOrDown
             iconView.translatesAutoresizingMaskIntoConstraints = false
-            divider.translatesAutoresizingMaskIntoConstraints = false
-            divider.wantsLayer = true
             addSubview(iconView)
-            addSubview(divider)
-            NSLayoutConstraint.activate([
+            var constraints: [NSLayoutConstraint] = [
                 iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
                 iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
                 iconView.widthAnchor.constraint(equalToConstant: 14),
                 iconView.heightAnchor.constraint(equalToConstant: 14),
-                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-                divider.widthAnchor.constraint(equalToConstant: 1),
-                divider.topAnchor.constraint(equalTo: topAnchor),
-                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
-                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
-            ])
+            ]
+            if iconOnly {
+                // Icon-only chip: the name sits in its own chip beside it.
+                constraints.append(iconView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6))
+            } else {
+                divider.translatesAutoresizingMaskIntoConstraints = false
+                divider.wantsLayer = true
+                addSubview(divider)
+                constraints += [
+                    divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+                    divider.widthAnchor.constraint(equalToConstant: 1),
+                    divider.topAnchor.constraint(equalTo: topAnchor),
+                    divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                    label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 6),
+                ]
+            }
+            NSLayoutConstraint.activate(constraints)
         } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head, showsUnpushedDot {
             // Unpushed commits: the orange dot takes the check mark's place, same 13pt slot.
             let dot = NSView()
@@ -551,11 +592,13 @@ final class RefPillView: NSView {
         } else {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6).isActive = true
         }
-        NSLayoutConstraint.activate([
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-        ])
+        if !iconOnly {
+            NSLayoutConstraint.activate([
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+                label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            ])
+        }
 
         applyColors()
     }
@@ -586,7 +629,7 @@ final class RefPillView: NSView {
     private func applyColors() {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
-        let baseColor: NSColor = switch badge.kind {
+        let baseColor: NSColor = switch colorBadge.kind {
         case .localBranch: .systemBlue
         case .remoteBranch: .systemPurple
         case .tag: .systemOrange
@@ -601,14 +644,14 @@ final class RefPillView: NSView {
 
         if isDark {
             let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
-            bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
+            bgColor = darkBase.blended(withFraction: colorBadge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
             // The current branch's chip text is noticeably brighter than other chips'.
-            fgColor = baseColor.blended(withFraction: badge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
+            fgColor = baseColor.blended(withFraction: colorBadge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
             borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
         } else {
-            bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
+            bgColor = NSColor.white.blended(withFraction: colorBadge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
             fgColor = baseColor.blended(withFraction: 0.45, of: .black) ?? baseColor
-            borderColor = baseColor.withAlphaComponent(badge.isCurrent ? 0.85 : 0.55)
+            borderColor = baseColor.withAlphaComponent(colorBadge.isCurrent ? 0.85 : 0.55)
         }
 
         layer?.backgroundColor = bgColor.cgColor
