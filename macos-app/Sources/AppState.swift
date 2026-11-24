@@ -839,7 +839,8 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
-    func commitChanges() {
+    /// Commits the staged changes. The Commit menu's "Commit and Push" item passes `pushAfter: true`.
+    func commitChanges(pushAfter: Bool = false) {
         let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }
         let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -863,7 +864,7 @@ final class RepoTab: ObservableObject, Identifiable {
             self?.commitBody = ""
             self?.amendCommit = false
             self?.skipHooks = false
-            if GitPreferences.pushOnCommit {
+            if pushAfter {
                 // Hop to the next run-loop turn so this mutation finishes (and clears
                 // `isBusy`) before the push starts its own.
                 DispatchQueue.main.async { self?.runRemote(.push) }

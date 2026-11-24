@@ -117,11 +117,9 @@ enum AutoFetchInterval: Int, CaseIterable, Identifiable {
 /// Git behaviour toggles shared by every repository window.
 enum GitPreferences {
     static let fetchIncludeTagsKey = "fetchIncludeTags"
-    static let pushOnCommitKey = "pushOnCommit"
     static let autoStageOnCommitKey = "autoStageOnCommit"
 
     static var fetchIncludesTags: Bool { UserDefaults.standard.bool(forKey: fetchIncludeTagsKey) }
-    static var pushOnCommit: Bool { UserDefaults.standard.bool(forKey: pushOnCommitKey) }
 
     /// On by default: when nothing is staged, committing stages every change first.
     static var autoStageOnCommit: Bool {
