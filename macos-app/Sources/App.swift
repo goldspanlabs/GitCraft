@@ -124,6 +124,10 @@ struct RepoDetailView: View {
                         rows: tab.commits,
                         graphRevision: tab.graphRevision,
                         workingChangesCount: tab.totalChangesCount,
+                        remoteHosts: Dictionary(
+                            tab.remotes.map { ($0.name, RemoteHost(url: $0.fetchUrl)) },
+                            uniquingKeysWith: { first, _ in first }
+                        ),
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
                         onSelectCommit: { tab.selectCommitFromTable($0) },

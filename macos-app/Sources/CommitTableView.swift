@@ -5,6 +5,8 @@ struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let graphRevision: UUID
     let workingChangesCount: Int
+    /// Hosting service per remote name, for the icon on remote-branch chips.
+    let remoteHosts: [String: RemoteHost]
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
     let onSelectCommit: (CommitRow?) -> Void
@@ -66,6 +68,7 @@ struct CommitTableView: NSViewRepresentable {
         let coordinator = context.coordinator
         let dataChanged = coordinator.lastGraphRevision != graphRevision
             || coordinator.workingChangesCount != workingChangesCount
+            || coordinator.remoteHosts != remoteHosts
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowBefore = table.selectedRow
@@ -76,6 +79,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.lastGraphRevision = graphRevision
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
+        coordinator.remoteHosts = remoteHosts
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
         coordinator.onCopyOid = onCopyOid
@@ -127,6 +131,7 @@ struct CommitTableView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var rows: [CommitRow]
         var workingChangesCount: Int
+        var remoteHosts: [String: RemoteHost] = [:]
         var lastGraphRevision: UUID?
         var onLoadMore: () -> Void
         var onSelectCommit: (CommitRow?) -> Void
@@ -259,7 +264,8 @@ struct CommitTableView: NSViewRepresentable {
                 cell.configure(
                     commit: commit,
                     hasIncomingLine: hasIncomingLine,
-                    connectsToWorkingChanges: connectsToWorkingChanges
+                    connectsToWorkingChanges: connectsToWorkingChanges,
+                    remoteHosts: remoteHosts
                 )
             }
             return cell
@@ -326,7 +332,7 @@ final class CommitRowCellView: NSTableCellView {
         unpushedDot.translatesAutoresizingMaskIntoConstraints = false
         unpushedDot.wantsLayer = true
         unpushedDot.layer?.cornerRadius = 3.5
-        unpushedDot.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        unpushedDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
         unpushedDot.isHidden = true
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
         avatarView.translatesAutoresizingMaskIntoConstraints = false
@@ -431,7 +437,12 @@ final class CommitRowCellView: NSTableCellView {
         avatarView.clear()
     }
 
-    func configure(commit: CommitRow, hasIncomingLine: Bool, connectsToWorkingChanges: Bool = false) {
+    func configure(
+        commit: CommitRow,
+        hasIncomingLine: Bool,
+        connectsToWorkingChanges: Bool = false,
+        remoteHosts: [String: RemoteHost] = [:]
+    ) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
         graphView.alphaValue = commit.isRemoteOnly ? 0.65 : 1.0
@@ -447,7 +458,11 @@ final class CommitRowCellView: NSTableCellView {
         } else {
             badgesStack.isHidden = false
             for badge in commit.refs.prefix(4) {
-                badgesStack.addArrangedSubview(RefPillView(badge: badge))
+                // "origin/main" -> the host behind the "origin" remote.
+                let host: RemoteHost? = badge.kind == .remoteBranch
+                    ? badge.name.split(separator: "/", maxSplits: 1).first.flatMap { remoteHosts[String($0)] } ?? .other
+                    : nil
+                badgesStack.addArrangedSubview(RefPillView(badge: badge, host: host))
             }
         }
 
@@ -457,17 +472,23 @@ final class CommitRowCellView: NSTableCellView {
         // The latest commit of the checked-out branch is bold.
         let isHeadCommit = commit.refs.contains { $0.isCurrent }
         summaryLabel.stringValue = commit.summary
-        summaryLabel.font = .systemFont(ofSize: 12.5, weight: isHeadCommit ? .semibold : .regular)
+        summaryLabel.font = .systemFont(ofSize: 12.5, weight: isHeadCommit ? .bold : .regular)
         summaryLabel.textColor = commit.isRemoteOnly ? .secondaryLabelColor : .labelColor
 
         avatarView.isHidden = false
         avatarView.configure(name: commit.authorName, email: commit.authorEmail)
         authorLabel.stringValue = commit.authorName
         let secondary: NSColor = commit.isRemoteOnly ? .tertiaryLabelColor : .secondaryLabelColor
-        authorLabel.textColor = secondary
+        // The head commit's other columns match its summary: bold, in the primary text colour.
+        let columnColor: NSColor = isHeadCommit ? .labelColor : secondary
+        authorLabel.textColor = columnColor
         hashLabel.stringValue = commit.shortOid
-        hashLabel.textColor = secondary
-        timeLabel.textColor = secondary
+        hashLabel.textColor = columnColor
+        timeLabel.textColor = columnColor
+        let columnWeight: NSFont.Weight = isHeadCommit ? .bold : .regular
+        authorLabel.font = .systemFont(ofSize: 11.5, weight: columnWeight)
+        hashLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: columnWeight)
+        timeLabel.font = .systemFont(ofSize: 11.5, weight: columnWeight)
         let date = Date(timeIntervalSince1970: TimeInterval(commit.timestamp))
         timeLabel.stringValue = Self.dateFormatter.string(from: date)
     }
@@ -475,10 +496,14 @@ final class CommitRowCellView: NSTableCellView {
 
 final class RefPillView: NSView {
     private let label = NSTextField(labelWithString: "")
+    private let iconView = NSImageView()
+    private let divider = NSView()
     private let badge: RefBadge
+    private let host: RemoteHost?
 
-    init(badge: RefBadge) {
+    init(badge: RefBadge, host: RemoteHost? = nil) {
         self.badge = badge
+        self.host = host
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 4
@@ -489,8 +514,30 @@ final class RefPillView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(label)
+        if let host, let icon = host.icon {
+            // Remote chips lead with the hosting service's mark, set off by a thin divider.
+            iconView.image = icon
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            divider.wantsLayer = true
+            addSubview(iconView)
+            addSubview(divider)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 12),
+                iconView.heightAnchor.constraint(equalToConstant: 12),
+                divider.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
+                divider.widthAnchor.constraint(equalToConstant: 1),
+                divider.topAnchor.constraint(equalTo: topAnchor),
+                divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+                label.leadingAnchor.constraint(equalTo: divider.trailingAnchor, constant: 5),
+            ])
+        } else {
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5).isActive = true
+        }
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             label.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
@@ -540,6 +587,8 @@ final class RefPillView: NSView {
         layer?.backgroundColor = bgColor.cgColor
         layer?.borderColor = borderColor.cgColor
         label.textColor = fgColor
+        iconView.contentTintColor = fgColor
+        divider.layer?.backgroundColor = borderColor.withAlphaComponent(0.6).cgColor
     }
 
     @available(*, unavailable)
