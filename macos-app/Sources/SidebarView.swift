@@ -374,13 +374,12 @@ private struct LocalBranchRowView: View {
     var body: some View {
         HStack(spacing: 6) {
             // Align leaf branch icon under folder icon when nested, or flush when top-level
-            Image(systemName: branch.isHead ? "checkmark" : "arrow.triangle.branch")
-                .foregroundStyle(branch.isHead ? Color.primary : Color.secondary)
-                .font(.system(size: 11, weight: branch.isHead ? .bold : .regular))
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
                 .frame(width: 16, alignment: .center)
 
             Text(displayName)
-                .fontWeight(branch.isHead ? .semibold : .regular)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -397,8 +396,18 @@ private struct LocalBranchRowView: View {
                     .help("Fully merged into origin's default branch")
             }
 
-            if branch.ahead > 0 || branch.behind > 0 {
-                HStack(spacing: 4) {
+            if branch.isHead || branch.ahead > 0 || branch.behind > 0 {
+                HStack(spacing: 6) {
+                    if branch.isHead {
+                        Text("HEAD")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.primary)
+                    }
+                    if branch.isHead && (branch.ahead > 0 || branch.behind > 0) {
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.5))
+                            .frame(width: 1, height: 10)
+                    }
                     if branch.ahead > 0 {
                         Text("↑\(branch.ahead)")
                     }
@@ -408,9 +417,9 @@ private struct LocalBranchRowView: View {
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.12))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(branch.isHead ? 0.2 : 0.12))
                 .clipShape(Capsule())
             }
         }
