@@ -21,8 +21,25 @@ final class RepoTab: ObservableObject, Identifiable {
         var id: String { rawValue }
     }
 
+    enum WorktreeSource: Equatable {
+        case head
+        case localBranch(name: String, isCheckedOut: Bool)
+        case remoteBranch(name: String)
+        case commit(oid: String)
+
+        var id: String {
+            switch self {
+            case .head: return "head"
+            case let .localBranch(name, isCheckedOut): return "local-\(name)-\(isCheckedOut)"
+            case let .remoteBranch(name): return "remote-\(name)"
+            case let .commit(oid): return "commit-\(oid)"
+            }
+        }
+    }
+
     enum ActiveSheet: Identifiable {
         case newBranch(startPoint: String?)
+        case newWorktree(source: WorktreeSource)
         case checkoutCommit(oid: String)
         case mergeCommit(oid: String)
         case newTag(target: String?)
@@ -32,6 +49,7 @@ final class RepoTab: ObservableObject, Identifiable {
         var id: String {
             switch self {
             case let .newBranch(startPoint): return "new-branch-\(startPoint ?? "head")"
+            case let .newWorktree(source): return "new-worktree-\(source.id)"
             case let .checkoutCommit(oid): return "checkout-commit-\(oid)"
             case let .mergeCommit(oid): return "merge-commit-\(oid)"
             case let .newTag(target): return "new-tag-\(target ?? "head")"
@@ -47,6 +65,8 @@ final class RepoTab: ObservableObject, Identifiable {
         case forceDeleteBranch(name: String)
         case deleteRemoteBranch(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
+        case removeWorktree(path: String, label: String, isActive: Bool)
+        case forceRemoveWorktree(path: String, label: String, isActive: Bool)
         case abortMerge
         case abortRebase
         case dropStash(index: UInt32, name: String)
@@ -59,6 +79,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .forceDeleteBranch(name): return "force-del-branch-\(name)"
             case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
+            case let .removeWorktree(path, _, _): return "remove-worktree-\(path)"
+            case let .forceRemoveWorktree(path, _, _): return "force-remove-worktree-\(path)"
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
@@ -74,6 +96,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
+            case let .removeWorktree(_, label, _): return "Remove worktree \"\(label)\"?"
+            case let .forceRemoveWorktree(_, label, _): return "Worktree \"\(label)\" has uncommitted changes"
             case .abortMerge: return "Abort in-progress merge?"
             case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
@@ -95,6 +119,16 @@ final class RepoTab: ObservableObject, Identifiable {
                 return remote
                     ? "This will delete the tag locally and push the deletion to the remote repository."
                     : "This will remove the tag from your local repository."
+            case let .removeWorktree(path, _, isActive):
+                if isActive {
+                    return "This will delete \"\(path)\" from disk and switch this tab back to the main checkout. Committed history on its branch is kept."
+                }
+                return "This will delete \"\(path)\" from disk. Committed history on its branch is kept."
+            case let .forceRemoveWorktree(path, _, isActive):
+                if isActive {
+                    return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted, and this tab will switch back to the main checkout. Uncommitted changes can't be recovered from GitCraft."
+                }
+                return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted. Uncommitted changes can't be recovered from GitCraft."
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
             case .abortRebase:
@@ -111,6 +145,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
             case .forceDeleteBranch: return "Force Delete"
+            case .removeWorktree: return "Remove"
+            case .forceRemoveWorktree: return "Force Remove"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
@@ -241,6 +277,20 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func presentNewBranch(startPoint: String? = nil) {
         activeSheet = .newBranch(startPoint: startPoint)
+    }
+
+    func presentNewWorktree(source: WorktreeSource = .head) {
+        activeSheet = .newWorktree(source: source)
+    }
+
+    func requestRemoveWorktree(_ worktree: WorktreeInfo) {
+        guard !worktree.isMain, !worktree.isLocked else { return }
+        let label = worktree.branch ?? URL(fileURLWithPath: worktree.path).lastPathComponent
+        pendingConfirmation = .removeWorktree(
+            path: worktree.path,
+            label: label,
+            isActive: activeCheckoutPath == worktree.path
+        )
     }
 
     /// Opens the Checkout Commit sheet for `oid`. Checking out a commit detaches HEAD, as the sheet says.
@@ -491,8 +541,11 @@ final class RepoTab: ObservableObject, Identifiable {
                 try await Task.detached {
                     try work(session)
                 }.value
+                isBusy = false
                 onSuccess?()
-                refresh()
+                if self.session === session {
+                    refresh()
+                }
             } catch {
                 if let onFailure, onFailure(error) { return }
                 showError(error)

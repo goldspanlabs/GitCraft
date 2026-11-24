@@ -274,6 +274,10 @@ extension RepoTab {
             deleteRemoteBranch(name)
         case let .deleteTag(name, deleteRemote):
             deleteTag(name, deleteRemote: deleteRemote)
+        case let .removeWorktree(path, label, _):
+            removeWorktree(path: path, label: label, force: false)
+        case let .forceRemoveWorktree(path, label, _):
+            removeWorktree(path: path, label: label, force: true)
         case .abortMerge:
             abortMerge()
         case .abortRebase:
@@ -338,6 +342,59 @@ extension RepoTab {
             case .push: try session.push()
             }
         }
+    }
+
+    func addWorktree(
+        path: String,
+        branchName: String?,
+        startPoint: String?,
+        detach: Bool,
+        switchAfterCreate: Bool
+    ) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return }
+        let trimmedBranch = branchName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalBranch = (trimmedBranch?.isEmpty == false) ? trimmedBranch : nil
+        let trimmedStart = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalStart = (trimmedStart?.isEmpty == false) ? trimmedStart : nil
+        performMutation({ session in
+            try session.addWorktree(
+                path: trimmedPath,
+                branchName: finalBranch,
+                startPoint: finalStart,
+                detach: detach
+            )
+        }, onSuccess: { [weak self] in
+            if switchAfterCreate {
+                self?.switchCheckout(to: trimmedPath)
+            }
+        })
+    }
+
+    func removeWorktree(path: String, label: String, force: Bool) {
+        let canonical = Self.canonicalPath(for: path)
+        let wasActive = (canonical == activeCheckoutPath)
+        performMutation({ session in
+            try session.removeWorktree(path: canonical, force: force)
+        }, onSuccess: { [weak self] in
+            guard let self else { return }
+            if wasActive {
+                self.switchCheckout(to: self.repoPath)
+            }
+        }, onFailure: { [weak self] error in
+            // A safe remove refused because the worktree has modified, staged, or untracked
+            // files: ask for explicit confirmation before force-removing.
+            guard !force,
+                  error.displayMessage.contains("modified or untracked files")
+                  || error.displayMessage.contains("--force")
+            else { return false }
+            self?.pendingConfirmation = .forceRemoveWorktree(
+                path: canonical,
+                label: label,
+                isActive: wasActive
+            )
+            return true
+        })
     }
 
     func lockWorktree(_ path: String) {

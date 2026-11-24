@@ -74,6 +74,81 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertFalse(tab.skipHooks)
     }
 
+    @MainActor
+    func testSuggestedWorktreePathSanitizesBranchName() {
+        let path = NewWorktreeSheet.suggestedPath(
+            repoPath: "/Users/me/code/GitCraft",
+            suffix: "feature/worktree ui"
+        )
+        XCTAssertEqual(path, "/Users/me/code/GitCraft-feature-worktree-ui")
+
+        let fallback = NewWorktreeSheet.suggestedPath(
+            repoPath: "/Users/me/code/GitCraft",
+            suffix: "   "
+        )
+        XCTAssertEqual(fallback, "/Users/me/code/GitCraft-worktree")
+    }
+
+    @MainActor
+    func testRequestRemoveWorktreeGuardsMainAndLockedAndMarksActive() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        let locked = root.appendingPathComponent("locked", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+        try git(["worktree", "add", "-b", "locked", locked.path], in: repo)
+        try git(["worktree", "lock", locked.path], in: repo)
+
+        let tab = try RepoTab(url: linked)
+        defer { tab.stopWatcher() }
+
+        let mainWt = try XCTUnwrap(tab.worktrees.first { $0.isMain })
+        let lockedWt = try XCTUnwrap(tab.worktrees.first { $0.isLocked })
+        let activeWt = try XCTUnwrap(tab.worktrees.first { $0.path == tab.activeCheckoutPath })
+
+        tab.requestRemoveWorktree(mainWt)
+        XCTAssertNil(tab.pendingConfirmation, "main checkout must not be removable")
+
+        tab.requestRemoveWorktree(lockedWt)
+        XCTAssertNil(tab.pendingConfirmation, "locked worktree must be unlocked before removing")
+
+        tab.requestRemoveWorktree(activeWt)
+        guard case let .removeWorktree(path, label, isActive) = tab.pendingConfirmation else {
+            return XCTFail("expected .removeWorktree confirmation")
+        }
+        XCTAssertEqual(path, activeWt.path)
+        XCTAssertEqual(label, "linked")
+        XCTAssertTrue(isActive)
+    }
+
+    @MainActor
+    func testRemovingActiveWorktreeSwitchesBackToMainCheckout() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+
+        let tab = try RepoTab(url: linked)
+        defer { tab.stopWatcher() }
+
+        let activeWt = try XCTUnwrap(tab.worktrees.first { !$0.isMain })
+        XCTAssertEqual(tab.activeCheckoutPath, activeWt.path)
+
+        tab.removeWorktree(path: activeWt.path, label: "linked", force: false)
+
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && tab.activeCheckoutPath != tab.repoPath {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTAssertEqual(tab.activeCheckoutPath, tab.repoPath)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: activeWt.path))
+    }
+
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)

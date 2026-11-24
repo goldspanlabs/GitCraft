@@ -196,6 +196,12 @@ interface RepoSession {
   sequence<WorktreeInfo> list_worktrees();
 
   [Throws=GitCraftError]
+  void add_worktree(string path, string? branch_name, string? start_point, boolean detach);
+
+  [Throws=GitCraftError]
+  void remove_worktree(string path, boolean force);
+
+  [Throws=GitCraftError]
   void lock_worktree(string path, string? reason);
 
   [Throws=GitCraftError]

@@ -114,16 +114,21 @@ fn dirty_count(checkout: &Path) -> u32 {
     .unwrap_or(0)
 }
 
-pub(crate) fn contains_path(repo: &Path, path: &str) -> Result<bool, GitCraftError> {
+/// Lists worktree entries from `git worktree list --porcelain -z` without querying
+/// per-checkout `git status`.
+pub(crate) fn list_entries(repo: &Path) -> Result<Vec<WorktreeInfo>, GitCraftError> {
     let output = git_cli::run(repo, &["worktree", "list", "--porcelain", "-z"])?;
-    Ok(parse_porcelain(&output)
+    Ok(parse_porcelain(&output))
+}
+
+pub(crate) fn contains_path(repo: &Path, path: &str) -> Result<bool, GitCraftError> {
+    Ok(list_entries(repo)?
         .iter()
         .any(|worktree| worktree.path == path))
 }
 
 pub(crate) fn list(repo: &Path) -> Result<Vec<WorktreeInfo>, GitCraftError> {
-    let output = git_cli::run(repo, &["worktree", "list", "--porcelain", "-z"])?;
-    let mut worktrees = parse_porcelain(&output);
+    let mut worktrees = list_entries(repo)?;
     let fill_dirty = |worktree: &mut WorktreeInfo| {
         let checkout = Path::new(&worktree.path);
         if !worktree.is_prunable && checkout.is_dir() {

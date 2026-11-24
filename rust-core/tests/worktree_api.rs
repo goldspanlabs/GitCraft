@@ -281,3 +281,228 @@ fn linked_worktree_watcher_detects_commits_and_ref_changes() {
         "expected linked-worktree watcher to flag graph_dirty on commit/ref update"
     );
 }
+
+#[test]
+fn add_worktree_supports_new_branch_existing_branch_and_detached_commit() {
+    let repo = repo_with_commit();
+    fs::write(repo.path().join("README.md"), "v2\n").unwrap();
+    run_git(repo.path(), &["commit", "-am", "second"]);
+    let first_oid = run_git(repo.path(), &["rev-parse", "HEAD~1"])
+        .trim()
+        .to_owned();
+    run_git(repo.path(), &["branch", "existing-feature"]);
+
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+
+    // 1. New branch starting from an older commit.
+    let new_branch_dir = parent.path().join("new-branch");
+    session
+        .add_worktree(
+            new_branch_dir.to_string_lossy().into_owned(),
+            Some("feat/from-first".into()),
+            Some(first_oid.clone()),
+            false,
+        )
+        .unwrap();
+
+    // 2. Existing local branch (not checked out anywhere).
+    let existing_dir = parent.path().join("existing-branch");
+    session
+        .add_worktree(
+            existing_dir.to_string_lossy().into_owned(),
+            None,
+            Some("existing-feature".into()),
+            false,
+        )
+        .unwrap();
+
+    // 3. Detached HEAD at a specific commit.
+    let detached_dir = parent.path().join("detached");
+    session
+        .add_worktree(
+            detached_dir.to_string_lossy().into_owned(),
+            None,
+            Some(first_oid.clone()),
+            true,
+        )
+        .unwrap();
+
+    let worktrees = session.list_worktrees().unwrap();
+    assert_eq!(worktrees.len(), 4);
+
+    let nb = worktrees
+        .iter()
+        .find(|w| w.path == canonical(&new_branch_dir))
+        .expect("new branch worktree");
+    assert_eq!(nb.branch.as_deref(), Some("feat/from-first"));
+    assert_eq!(nb.head_oid_hex, first_oid);
+    assert!(!nb.is_detached);
+
+    let ex = worktrees
+        .iter()
+        .find(|w| w.path == canonical(&existing_dir))
+        .expect("existing branch worktree");
+    assert_eq!(ex.branch.as_deref(), Some("existing-feature"));
+
+    let det = worktrees
+        .iter()
+        .find(|w| w.path == canonical(&detached_dir))
+        .expect("detached worktree");
+    assert!(det.is_detached);
+    assert_eq!(det.branch, None);
+    assert_eq!(det.head_oid_hex, first_oid);
+}
+
+#[test]
+fn add_worktree_rejects_invalid_arguments_and_checked_out_branch() {
+    let repo = repo_with_commit();
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let target = parent.path().join("wt").to_string_lossy().into_owned();
+
+    assert!(session
+        .add_worktree("   ".into(), Some("b".into()), None, false)
+        .is_err());
+    assert!(session
+        .add_worktree(target.clone(), Some("b".into()), None, true)
+        .is_err());
+    assert!(session
+        .add_worktree(target.clone(), None, None, false)
+        .is_err());
+    assert!(session
+        .add_worktree(target.clone(), Some("-f".into()), None, false)
+        .is_err());
+    // `main` is already checked out in the primary worktree.
+    assert!(session
+        .add_worktree(target, None, Some("main".into()), false)
+        .is_err());
+    assert_eq!(session.list_worktrees().unwrap().len(), 1);
+}
+
+#[test]
+fn remove_worktree_deletes_clean_linked_checkout_even_from_its_own_session() {
+    let repo = repo_with_commit();
+    let parent = tempfile::tempdir().unwrap();
+    let linked = parent.path().join("clean-wt");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "clean-wt",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let linked_path = canonical(&linked);
+
+    // Open the session directly on the linked worktree being removed.
+    let linked_session = RepoSession::open(&linked).unwrap();
+    linked_session
+        .remove_worktree(linked_path.clone(), false)
+        .unwrap();
+
+    assert!(!linked.exists(), "worktree folder should be deleted");
+    let main_session = RepoSession::open(repo.path()).unwrap();
+    let remaining = main_session.list_worktrees().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(remaining[0].is_main);
+    // Branch history is preserved after worktree removal.
+    assert!(main_session
+        .list_branches()
+        .unwrap()
+        .iter()
+        .any(|b| b.name == "clean-wt"));
+}
+
+#[test]
+fn remove_worktree_requires_force_for_modified_staged_and_untracked_files() {
+    let repo = repo_with_commit();
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+
+    for (name, dirty_kind) in [
+        ("wt-modified", "modified"),
+        ("wt-staged", "staged"),
+        ("wt-untracked", "untracked"),
+    ] {
+        let wt = parent.path().join(name);
+        session
+            .add_worktree(
+                wt.to_string_lossy().into_owned(),
+                Some(name.into()),
+                None,
+                false,
+            )
+            .unwrap();
+        let wt_path = canonical(&wt);
+
+        match dirty_kind {
+            "modified" => fs::write(wt.join("README.md"), "dirty\n").unwrap(),
+            "staged" => {
+                fs::write(wt.join("README.md"), "staged\n").unwrap();
+                run_git(&wt, &["add", "README.md"]);
+            }
+            "untracked" => fs::write(wt.join("scratch.txt"), "untracked\n").unwrap(),
+            _ => unreachable!(),
+        }
+
+        let err = session
+            .remove_worktree(wt_path.clone(), false)
+            .expect_err(&format!("safe remove should refuse {dirty_kind} worktree"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("modified or untracked files") || msg.contains("--force"),
+            "unexpected error for {dirty_kind}: {msg}"
+        );
+        assert!(
+            wt.exists(),
+            "{dirty_kind} folder should remain on safe failure"
+        );
+
+        session.remove_worktree(wt_path, true).unwrap();
+        assert!(
+            !wt.exists(),
+            "forced remove should delete {dirty_kind} folder"
+        );
+    }
+
+    assert_eq!(session.list_worktrees().unwrap().len(), 1);
+}
+
+#[test]
+fn remove_worktree_refuses_primary_locked_and_unlisted_paths() {
+    let repo = repo_with_commit();
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let locked = parent.path().join("locked-wt");
+    session
+        .add_worktree(
+            locked.to_string_lossy().into_owned(),
+            Some("locked-wt".into()),
+            None,
+            false,
+        )
+        .unwrap();
+    let locked_path = canonical(&locked);
+    session.lock_worktree(locked_path.clone(), None).unwrap();
+
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    // Primary checkout cannot be removed, even with force.
+    assert!(session
+        .remove_worktree(canonical(repo.path()), true)
+        .is_err());
+    // Unlisted path cannot be removed.
+    assert!(session
+        .remove_worktree(canonical(elsewhere.path()), true)
+        .is_err());
+    // Locked worktree cannot be removed until unlocked, even with force.
+    assert!(session.remove_worktree(locked_path.clone(), true).is_err());
+    assert!(locked.exists());
+
+    session.unlock_worktree(locked_path.clone()).unwrap();
+    session.remove_worktree(locked_path, false).unwrap();
+    assert!(!locked.exists());
+}

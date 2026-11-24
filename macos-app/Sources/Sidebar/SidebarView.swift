@@ -107,12 +107,17 @@ struct SidebarView: View {
                 }
             } header: {
                 SectionHeaderLabel(title: "WORKTREES") {
-                    [.item(
-                        "Prune Stale Worktrees",
-                        enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
-                    ) {
-                        tab.pruneWorktrees()
-                    }]
+                    [
+                        .item("New Worktree…", enabled: !tab.isBusy) {
+                            tab.presentNewWorktree(source: .head)
+                        },
+                        .item(
+                            "Prune Stale Worktrees",
+                            enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
+                        ) {
+                            tab.pruneWorktrees()
+                        },
+                    ]
                 }
             }
 
@@ -412,6 +417,9 @@ private struct WorktreeRowView: View {
                     tab.lockWorktree(worktree.path)
                 })
             }
+            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && !worktree.isLocked) {
+                tab.requestRemoveWorktree(worktree)
+            })
         }
         return entries
     }
@@ -537,11 +545,18 @@ private struct LocalBranchRowView: View {
     }
 
     private var menuEntries: [MenuEntry] {
+        let branchWorktree = tab.worktrees.first { $0.branch == branch.name }
         var entries: [MenuEntry] = []
         if !branch.isHead {
-            entries.append(.item("Checkout...") {
-                tab.checkoutBranch(branch.name)
-            })
+            if let wt = branchWorktree, wt.path != tab.activeCheckoutPath {
+                entries.append(.item("Switch to Worktree", enabled: !tab.isBusy && !wt.isPrunable) {
+                    tab.switchCheckout(to: wt.path)
+                })
+            } else {
+                entries.append(.item("Checkout...") {
+                    tab.checkoutBranch(branch.name)
+                })
+            }
             entries.append(.item("Merge into '\(tab.currentBranch)'") {
                 tab.mergeBranch(branch.name)
             })
@@ -549,6 +564,14 @@ private struct LocalBranchRowView: View {
         entries.append(.item("New Branch...") {
             tab.presentNewBranch(startPoint: branch.name)
         })
+        entries.append(.item("New Worktree…", enabled: !tab.isBusy) {
+            tab.presentNewWorktree(source: .localBranch(name: branch.name, isCheckedOut: branchWorktree != nil))
+        })
+        if let wt = branchWorktree, !wt.isMain {
+            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && !wt.isLocked) {
+                tab.requestRemoveWorktree(wt)
+            })
+        }
         if !branch.isHead {
             entries.append(.separator)
             entries.append(.item("Delete...") {
@@ -572,14 +595,21 @@ private struct RemoteBranchRowView: View {
             displayName: displayName,
             depth: depth
         ) {
-            [.item("Checkout...") {
-                tab.checkoutBranch(branch.name)
-            }, .item("New Branch...") {
-                tab.presentNewBranch(startPoint: branch.name)
-            }, .separator,
-             .item("Delete '\(branch.name)'") {
-                tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
-             }]
+            [
+                .item("Checkout...") {
+                    tab.checkoutBranch(branch.name)
+                },
+                .item("New Branch...") {
+                    tab.presentNewBranch(startPoint: branch.name)
+                },
+                .item("New Worktree…", enabled: !tab.isBusy) {
+                    tab.presentNewWorktree(source: .remoteBranch(name: branch.name))
+                },
+                .separator,
+                .item("Delete '\(branch.name)'") {
+                    tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
+                },
+            ]
         } trailing: {
             EmptyView()
         }

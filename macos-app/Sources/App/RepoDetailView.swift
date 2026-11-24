@@ -44,6 +44,8 @@ struct RepoDetailView: View {
                             tab.remotes.map { ($0.name, RemoteHost(url: $0.fetchUrl)) },
                             uniquingKeysWith: { first, _ in first }
                         ),
+                        worktrees: tab.worktrees,
+                        isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
                         onSelectCommit: { tab.selectCommitFromTable($0) },
@@ -53,6 +55,12 @@ struct RepoDetailView: View {
                         },
                         onCreateTagAtCommit: { oid in
                             tab.presentNewTag(target: oid)
+                        },
+                        onCreateWorktreeAtCommit: { oid in
+                            tab.presentNewWorktree(source: .commit(oid: oid))
+                        },
+                        onRemoveWorktree: { worktree in
+                            tab.requestRemoveWorktree(worktree)
                         },
                         onCheckoutCommit: { oid in
                             tab.requestCheckoutCommit(oid)
@@ -116,6 +124,8 @@ private struct RepoSheets: ViewModifier {
                 switch sheet {
                 case let .newBranch(startPoint):
                     NewBranchSheet(tab: tab, startPoint: startPoint)
+                case let .newWorktree(source):
+                    NewWorktreeSheet(tab: tab, source: source)
                 case let .checkoutCommit(oid):
                     CheckoutCommitSheet(tab: tab, oid: oid)
                 case let .mergeCommit(oid):
