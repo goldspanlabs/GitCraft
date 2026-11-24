@@ -219,6 +219,10 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var searchQuery = ""
     @Published var commitSummary = ""
     @Published var commitBody = ""
+    /// Commit with `--no-verify`, so pre-commit and commit-msg hooks don't run.
+    @Published var skipHooks = false
+    /// Rewrite HEAD's commit instead of making a new one.
+    @Published private(set) var amendCommit = false
     @Published var isShowingNewBranchSheet = false
     @Published var newBranchStartPoint: String?
     @Published var isShowingCheckoutCommitSheet = false
@@ -787,22 +791,46 @@ final class RepoTab: ObservableObject, Identifiable {
         performMutation { session in try session.fetchRemote(name: name, includeTags: includeTags) }
     }
 
+    /// Turns Amend on or off. Turning it on fills an empty message with HEAD's message.
+    func setAmend(_ on: Bool) {
+        amendCommit = on
+        guard on, commitSummary.isEmpty, commitBody.isEmpty else { return }
+        let session = self.session
+        Task {
+            guard let message = try? await Task.detached { try session.headCommitMessage() }.value,
+                  self.amendCommit, self.commitSummary.isEmpty, self.commitBody.isEmpty else { return }
+            let lines = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            self.commitSummary = String(lines.first ?? "")
+            self.commitBody = lines.count > 1
+                ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+        }
+    }
+
     func commitChanges() {
         let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }
         let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullMessage = body.isEmpty ? summary : "\(summary)\n\n\(body)"
-        let autoStage = GitPreferences.autoStageOnCommit
+        // Hand-picked staging wins: auto-staging only fills in when nothing is staged.
+        let autoStage = GitPreferences.shouldStageAll(
+            autoStage: GitPreferences.autoStageOnCommit,
+            stagedCount: stagedFiles.count
+        )
+        let skip = skipHooks
+        let amend = amendCommit
 
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
             if autoStage {
                 try session.stageAll()
             }
-            try session.commit(message: fullMessage)
+            try session.commitWithOptions(message: fullMessage, skipHooks: skip, amend: amend)
         } onSuccess: { [weak self] in
             self?.commitSummary = ""
             self?.commitBody = ""
+            self?.amendCommit = false
+            self?.skipHooks = false
             if GitPreferences.pushOnCommit {
                 // Hop to the next run-loop turn so this mutation finishes (and clears
                 // `isBusy`) before the push starts its own.

@@ -19,6 +19,12 @@ final class CommitGatingTests: XCTestCase {
         XCTAssertFalse(GitPreferences.canCommit(summary: "Fix", stagedCount: 0, changedCount: 0, autoStage: true, isBusy: false))
     }
 
+    func testAutoStageOnlyWhenNothingIsStaged() {
+        XCTAssertTrue(GitPreferences.shouldStageAll(autoStage: true, stagedCount: 0))
+        XCTAssertFalse(GitPreferences.shouldStageAll(autoStage: true, stagedCount: 2))
+        XCTAssertFalse(GitPreferences.shouldStageAll(autoStage: false, stagedCount: 0))
+    }
+
     func testBusyBlocksCommit() {
         XCTAssertFalse(GitPreferences.canCommit(summary: "Fix", stagedCount: 1, changedCount: 1, autoStage: true, isBusy: true))
     }
