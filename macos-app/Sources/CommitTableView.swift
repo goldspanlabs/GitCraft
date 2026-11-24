@@ -188,7 +188,7 @@ struct CommitTableView: NSViewRepresentable {
             tagItem.representedObject = commit.oidHex
             menu.addItem(tagItem)
 
-            let checkoutItem = NSMenuItem(title: "Checkout Commit (Detached)", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
+            let checkoutItem = NSMenuItem(title: "Checkout Commit...", action: #selector(handleCheckoutCommit(_:)), keyEquivalent: "")
             checkoutItem.target = self
             checkoutItem.representedObject = commit.oidHex
             menu.addItem(checkoutItem)

@@ -141,7 +141,7 @@ struct RepoDetailView: View {
                             tab.isShowingNewTagSheet = true
                         },
                         onCheckoutCommit: { oid in
-                            tab.checkoutBranch(oid)
+                            tab.requestCheckoutCommit(oid)
                         }
                     )
 
@@ -233,6 +233,9 @@ private struct RepoSheets: ViewModifier {
         content
         .sheet(isPresented: $tab.isShowingNewBranchSheet) {
             NewBranchSheet(tab: tab)
+        }
+        .sheet(isPresented: $tab.isShowingCheckoutCommitSheet) {
+            CheckoutCommitSheet(tab: tab)
         }
         .sheet(isPresented: $tab.isShowingNewTagSheet) {
             NewTagSheet(tab: tab)

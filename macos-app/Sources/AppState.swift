@@ -221,6 +221,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var commitBody = ""
     @Published var isShowingNewBranchSheet = false
     @Published var newBranchStartPoint: String?
+    @Published var isShowingCheckoutCommitSheet = false
+    @Published var checkoutCommitOid: String?
     @Published var isShowingNewTagSheet = false
     @Published var newTagTarget: String?
     @Published var isShowingStashSheet = false
@@ -793,6 +795,41 @@ final class RepoTab: ObservableObject, Identifiable {
                 // Hop to the next run-loop turn so this mutation finishes (and clears
                 // `isBusy`) before the push starts its own.
                 DispatchQueue.main.async { self?.runRemote(.push) }
+            }
+        }
+    }
+
+    /// Opens the Checkout Commit sheet for `oid`. Checking out a commit detaches HEAD, as the sheet says.
+    func requestCheckoutCommit(_ oid: String) {
+        checkoutCommitOid = oid
+        isShowingCheckoutCommitSheet = true
+    }
+
+    /// Detached checkout of `oid`, handling local changes the same way creating a branch does.
+    func checkoutCommit(_ oid: String, localChanges: LocalChangesHandling = .doNotChange) {
+        let hasLocalChanges = totalChangesCount > 0
+        performMutation { session in
+            if hasLocalChanges {
+                switch localChanges {
+                case .doNotChange:
+                    try session.checkoutBranch(branchName: oid)
+                case .stashAndReapply:
+                    try session.stashPush(message: "Auto-stash before checking out \(oid.prefix(7))", includeUntracked: true)
+                    do {
+                        try session.checkoutBranch(branchName: oid)
+                    } catch {
+                        try? session.stashPop(index: 0)
+                        throw error
+                    }
+                    try session.stashPop(index: 0)
+                case .discard:
+                    for file in try session.status().files {
+                        try session.discardFile(path: file)
+                    }
+                    try session.checkoutBranch(branchName: oid)
+                }
+            } else {
+                try session.checkoutBranch(branchName: oid)
             }
         }
     }
