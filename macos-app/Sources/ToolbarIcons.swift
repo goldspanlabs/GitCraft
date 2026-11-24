@@ -102,7 +102,15 @@ private final class SVGIconCache {
 
 /// Phosphor regular-weight glyphs used in the sidebar.
 enum PhosphorGlyph {
-    case branch, tag, cloud, folder, archive
+    case branch, tag, cloud, folder, archive, panelBottom
+
+    /// Optional faded shape drawn under the main path (duotone glyphs).
+    fileprivate var shading: String? {
+        switch self {
+        case .panelBottom: "M208,128v72a8,8,0,0,1-8,8H56a8,8,0,0,1-8-8V128Z"
+        default: nil
+        }
+    }
 
     fileprivate var path: String {
         switch self {
@@ -114,6 +122,9 @@ enum PhosphorGlyph {
             "M160,40A88.09,88.09,0,0,0,81.29,88.67,64,64,0,1,0,72,216h88a88,88,0,0,0,0-176Zm0,160H72a48,48,0,0,1,0-96c1.1,0,2.2,0,3.29.11A88,88,0,0,0,72,128a8,8,0,0,0,16,0,72,72,0,1,1,72,72Z"
         case .folder:
             "M216,72H131.31L104,44.69A15.86,15.86,0,0,0,92.69,40H40A16,16,0,0,0,24,56V200.62A15.4,15.4,0,0,0,39.38,216H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72ZM40,56H92.69l16,16H40ZM216,200H40V88H216Z"
+        case .panelBottom:
+            // Phosphor "square-half-bottom" (duotone): outline plus the shaded half, below.
+            "M200,40H56A16,16,0,0,0,40,56V200a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,16v64H56V56Zm0,144H56V136H200v64Z"
         case .archive:
             "M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z"
         }
@@ -130,7 +141,8 @@ struct PhosphorIcon: View {
     private var image: NSImage? {
         let path = glyph.path
         if let hit = Self.cache[path] { return hit }
-        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\"><path fill=\"black\" d=\"\(path)\"/></svg>"
+        let shade = glyph.shading.map { "<path fill=\"black\" opacity=\"0.4\" d=\"\($0)\"/>" } ?? ""
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\">\(shade)<path fill=\"black\" d=\"\(path)\"/></svg>"
         guard let data = svg.data(using: .utf8), let img = NSImage(data: data) else { return nil }
         img.isTemplate = true
         Self.cache[path] = img

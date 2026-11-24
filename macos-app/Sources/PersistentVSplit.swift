@@ -5,6 +5,10 @@ import SwiftUI
 /// SwiftUI's `VSplitView` can't persist its divider, so this draws its own.
 struct PersistentVSplit<Top: View, Bottom: View>: View {
     static var storageKey: String { "bottomPanelHeight" }
+    /// Whether the bottom panel is collapsed to just its tab strip.
+    static var collapsedKey: String { "bottomPanelCollapsed" }
+    /// Height of the tab strip (30pt) plus its divider: what stays visible when collapsed.
+    static var collapsedHeight: CGFloat { 31 }
 
     let minTop: CGFloat
     let minBottom: CGFloat
@@ -12,12 +16,14 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
     @ViewBuilder let bottom: () -> Bottom
 
     @AppStorage(PersistentVSplit<EmptyView, EmptyView>.storageKey) private var storedHeight: Double = 290
+    @AppStorage(PersistentVSplit<EmptyView, EmptyView>.collapsedKey) private var isCollapsed = false
     @State private var dragStartHeight: Double?
 
     var body: some View {
         GeometryReader { geo in
             let maxBottom = max(minBottom, geo.size.height - minTop - 1)
-            let bottomHeight = min(max(CGFloat(storedHeight), minBottom), maxBottom)
+            let expandedHeight = min(max(CGFloat(storedHeight), minBottom), maxBottom)
+            let bottomHeight = isCollapsed ? Self.collapsedHeight : expandedHeight
 
             VStack(spacing: 0) {
                 top()
@@ -26,7 +32,8 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
 
                 Divider()
                     .overlay {
-                        // Wider invisible grab area around the 1pt line.
+                        // Wider invisible grab area around the 1pt line (not when collapsed).
+                        if !isCollapsed {
                         Color.clear
                             .frame(height: 9)
                             .contentShape(Rectangle())
@@ -43,11 +50,12 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
                                     }
                                     .onEnded { _ in dragStartHeight = nil }
                             )
+                        }
                     }
 
                 bottom()
                     .frame(maxWidth: .infinity)
-                    .frame(height: bottomHeight)
+                    .frame(height: bottomHeight, alignment: .top)
                     .clipped()
             }
         }

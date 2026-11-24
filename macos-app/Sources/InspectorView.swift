@@ -21,6 +21,9 @@ private struct WorkingChangesInspectorView: View {
             && !tab.isBusy
     }
 
+    // This view has no tab strip, so a collapsed panel would have no way to reopen.
+    @AppStorage(PersistentVSplit<EmptyView, EmptyView>.collapsedKey) private var isCollapsed = false
+
     var body: some View {
         HSplitView {
             // Left: Staged & Unstaged lists + Commit Composer
@@ -203,6 +206,9 @@ private struct WorkingChangesInspectorView: View {
                 }
             }
         }
+        .onAppear {
+            if isCollapsed { isCollapsed = false }
+        }
     }
 }
 
@@ -212,30 +218,50 @@ private enum CommitPaneTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Slim tab strip along the top of the bottom pane.
-private struct CommitPaneTabBar: View {
-    @Binding var selection: CommitPaneTab
+/// Slim strip along the top of the bottom pane: the Commit / Changes tabs (when there are
+/// any) on the left and the show/hide toggle flush right. When the panel is collapsed this
+/// strip is all that remains visible.
+private struct BottomPaneBar: View {
+    var selection: Binding<CommitPaneTab>?
+    @AppStorage(PersistentVSplit<EmptyView, EmptyView>.collapsedKey) private var isCollapsed = false
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(CommitPaneTab.allCases) { item in
-                Button {
-                    selection = item
-                } label: {
-                    Text(item.rawValue)
-                        .font(.system(size: 12, weight: selection == item ? .semibold : .regular))
-                        .foregroundStyle(selection == item ? Color.primary : Color.secondary)
-                        .padding(.horizontal, 12)
-                        .frame(height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(selection == item ? Color.primary.opacity(0.12) : Color.clear)
-                        )
-                        .contentShape(Rectangle())
+            if let selection {
+                ForEach(CommitPaneTab.allCases) { item in
+                    Button {
+                        selection.wrappedValue = item
+                        // Picking a tab while collapsed reopens the panel at its last height.
+                        if isCollapsed {
+                            withAnimation(.easeInOut(duration: 0.18)) { isCollapsed = false }
+                        }
+                    } label: {
+                        Text(item.rawValue)
+                            .font(.system(size: 12, weight: selection.wrappedValue == item ? .semibold : .regular))
+                            .foregroundStyle(selection.wrappedValue == item ? Color.primary : Color.secondary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(selection.wrappedValue == item ? Color.primary.opacity(0.12) : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
+            } label: {
+                PhosphorIcon(glyph: .panelBottom, size: 16)
+                    .foregroundStyle(isCollapsed ? Color.secondary : Color.primary.opacity(0.8))
+                    .padding(.horizontal, 6)
+                    .frame(height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isCollapsed ? "Show the bottom panel" : "Hide the bottom panel")
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
@@ -257,7 +283,7 @@ private struct CommitInspectorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CommitPaneTabBar(selection: $pane)
+            BottomPaneBar(selection: $pane)
             Divider()
             if pane == .changes {
                 header
