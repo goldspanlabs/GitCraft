@@ -198,9 +198,10 @@ impl RepoSession {
     }
 
     pub fn status(&self) -> Result<RepoStatus, GitCraftError> {
-        let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "--branch"])?;
-        let mut lines = output.lines();
-        let branch = lines
+        // -z: NUL-separated, paths are never quoted or escaped (non-ASCII, spaces, quotes).
+        let output = git_cli::run(&self.path, &["status", "--porcelain=v1", "-z", "--branch"])?;
+        let mut entries = output.split('\0');
+        let branch = entries
             .next()
             .unwrap_or_default()
             .trim_start_matches("## ")
@@ -211,23 +212,21 @@ impl RepoSession {
         let mut unstaged_files = Vec::new();
         let mut has_conflicts = false;
 
-        for line in lines {
-            if line.len() < 4 {
+        while let Some(entry) = entries.next() {
+            if entry.len() < 4 {
                 continue;
             }
-            let bytes = line.as_bytes();
+            let bytes = entry.as_bytes();
             let x = bytes[0] as char;
             let y = bytes[1] as char;
             if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
                 has_conflicts = true;
             }
-            let raw_path = &line[3..];
-            let path = raw_path
-                .split(" -> ")
-                .last()
-                .unwrap_or(raw_path)
-                .trim_matches('"')
-                .to_owned();
+            let path = entry[3..].to_owned();
+            // Renames and copies carry the original path as an extra entry; skip it.
+            if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') {
+                entries.next();
+            }
 
             all_paths.insert(path.clone());
 
@@ -767,8 +766,8 @@ fn ignore_rule(path: &str) -> String {
     let trimmed = path.trim_start_matches("./").trim_start_matches('/');
     let mut rule = String::from("/");
     for (i, c) in trimmed.chars().enumerate() {
-        let needs_escape = matches!(c, '*' | '?' | '[' | '\\')
-            || (i == 0 && matches!(c, '#' | '!'));
+        let needs_escape =
+            matches!(c, '*' | '?' | '[' | '\\') || (i == 0 && matches!(c, '#' | '!'));
         if needs_escape {
             rule.push('\\');
         }
@@ -786,7 +785,9 @@ fn ignore_rule(path: &str) -> String {
 fn validate_remote_arg(value: &str) -> Result<String, GitCraftError> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(GitCraftError::message("remote name and URL must not be empty"));
+        return Err(GitCraftError::message(
+            "remote name and URL must not be empty",
+        ));
     }
     if value.starts_with('-') {
         return Err(GitCraftError::message(format!(

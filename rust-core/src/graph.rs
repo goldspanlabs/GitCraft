@@ -766,25 +766,27 @@ pub fn get_commit_detail(
             "diff-tree",
             "--no-commit-id",
             "--name-status",
+            "-z",
             "-r",
             "--root",
             oid_hex,
         ],
     )?;
 
-    let files = files_output
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(2, '\t');
-            let status = parts.next()?.trim();
-            let path = parts.next()?.trim();
-            Some(crate::FileChange {
-                path: path.to_owned(),
-                status: status.chars().next().unwrap_or('M').to_string(),
-                staged: false,
-            })
-        })
-        .collect();
+    // -z output is "<status>\0<path>\0" per file, with no quoting of unusual paths.
+    let mut files = Vec::new();
+    let mut fields = files_output.split('\0');
+    while let (Some(status), Some(path)) = (fields.next(), fields.next()) {
+        let status = status.trim();
+        if status.is_empty() || path.is_empty() {
+            continue;
+        }
+        files.push(crate::FileChange {
+            path: path.to_owned(),
+            status: status.chars().next().unwrap_or('M').to_string(),
+            staged: false,
+        });
+    }
 
     Ok(crate::CommitDetail {
         oid_hex: oid_hex.to_owned(),

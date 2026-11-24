@@ -631,7 +631,10 @@ fn ignore_path_writes_gitignore_and_hides_file() {
         "/scratch.txt\n"
     );
     let status = session.status().unwrap();
-    assert!(!status.unstaged_files.iter().any(|f| f.path == "scratch.txt"));
+    assert!(!status
+        .unstaged_files
+        .iter()
+        .any(|f| f.path == "scratch.txt"));
 }
 
 #[test]
@@ -777,4 +780,62 @@ fn tags_are_listed_newest_created_first() {
     let names: Vec<_> = tags.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(names, ["aaa-annotated", "zzz-light"]);
     assert!(tags[0].created_timestamp > tags[1].created_timestamp);
+}
+
+#[test]
+fn status_handles_non_ascii_and_special_filenames() {
+    let dir = init_repo_with_commit();
+    write(dir.path(), "café.txt", "x\n");
+    write(dir.path(), "a b.txt", "x\n");
+    write(dir.path(), "q\"uote.txt", "x\n");
+    let session = open(dir.path());
+
+    let status = session.status().unwrap();
+    let mut paths: Vec<_> = status
+        .unstaged_files
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect();
+    paths.sort();
+    assert_eq!(paths, ["a b.txt", "café.txt", "q\"uote.txt"]);
+
+    // The reported path must round-trip through stage/unstage.
+    session.stage("café.txt".into()).unwrap();
+    let status = session.status().unwrap();
+    assert_eq!(status.staged_files.len(), 1);
+    assert_eq!(status.staged_files[0].path, "café.txt");
+    session.unstage("café.txt".into()).unwrap();
+    assert!(session.status().unwrap().staged_files.is_empty());
+}
+
+#[test]
+fn status_reports_rename_with_new_path_only() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["mv", "a.txt", "renamed é.txt"]);
+    let status = open(dir.path()).status().unwrap();
+    assert_eq!(status.staged_files.len(), 1);
+    assert_eq!(status.staged_files[0].path, "renamed é.txt");
+    assert_eq!(status.staged_files[0].status, "R");
+    assert!(status.unstaged_files.is_empty());
+}
+
+#[test]
+fn commit_detail_and_diff_handle_non_ascii_paths() {
+    let dir = init_repo_with_commit();
+    write(dir.path(), "café.txt", "hello\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "add cafe"]);
+    let head = run_git(dir.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+
+    let session = open(dir.path());
+    let detail = session.get_commit_detail(head.clone()).unwrap();
+    assert_eq!(detail.files.len(), 1);
+    assert_eq!(detail.files[0].path, "café.txt");
+
+    let diff = session
+        .get_commit_diff(head, Some("café.txt".into()))
+        .unwrap();
+    assert!(diff.iter().any(|r| r.text.contains("hello")));
 }
