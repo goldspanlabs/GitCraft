@@ -208,8 +208,8 @@ struct SidebarView: View {
                                     tab.stashApply(stash.index)
                                 }
                                 Divider()
-                                Button("Drop \(stash.name)", role: .destructive) {
-                                    tab.stashDrop(stash.index)
+                                Button("Drop \(stash.name)…", role: .destructive) {
+                                    tab.pendingConfirmation = .dropStash(index: stash.index, name: stash.name)
                                 }
                             }
                         }
@@ -777,6 +777,7 @@ struct NewBranchSheet: View {
     @State private var branchName = ""
     @State private var checkout = true
     @State private var localChanges: RepoTab.LocalChangesHandling = .stashAndReapply
+    @State private var confirmDiscard = false
     @FocusState private var isBranchNameFocused: Bool
 
     private var startPointDisplay: String {
@@ -887,13 +888,11 @@ struct NewBranchSheet: View {
                     .controlSize(.large)
 
                     Button(checkout ? "Create and Checkout" : "Create") {
-                        tab.createBranch(
-                            name: branchName,
-                            startPoint: tab.newBranchStartPoint,
-                            checkout: checkout,
-                            localChanges: localChanges
-                        )
-                        dismiss()
+                        if checkout && localChanges == .discard && tab.totalChangesCount > 0 {
+                            confirmDiscard = true
+                        } else {
+                            createBranchNow()
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -908,6 +907,28 @@ struct NewBranchSheet: View {
         .onAppear {
             isBranchNameFocused = true
         }
+        .confirmationDialog(
+            "Discard all local changes?",
+            isPresented: $confirmDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes and Create", role: .destructive) {
+                createBranchNow()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently reverts \(tab.totalChangesCount) changed file(s) and deletes untracked files. It can't be undone.")
+        }
+    }
+
+    private func createBranchNow() {
+        tab.createBranch(
+            name: branchName,
+            startPoint: tab.newBranchStartPoint,
+            checkout: checkout,
+            localChanges: localChanges
+        )
+        dismiss()
     }
 }
 

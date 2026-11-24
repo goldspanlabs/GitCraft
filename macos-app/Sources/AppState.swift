@@ -130,6 +130,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case deleteBranch(name: String, force: Bool)
         case deleteTag(name: String, deleteRemote: Bool)
         case abortMerge
+        case dropStash(index: UInt32, name: String)
 
         var id: String {
             switch self {
@@ -137,6 +138,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case .abortMerge: return "abort-merge"
+            case let .dropStash(index, _): return "drop-stash-\(index)"
             }
         }
 
@@ -147,6 +149,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
             case .abortMerge: return "Abort in-progress merge?"
+            case let .dropStash(_, name): return "Drop \"\(name)\"?"
             }
         }
 
@@ -162,6 +165,8 @@ final class RepoTab: ObservableObject, Identifiable {
                     : "This will remove the tag from your local repository."
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
+            case .dropStash:
+                return "The stashed changes will be removed. This can't be undone from GitCraft."
             }
         }
 
@@ -170,6 +175,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteTag: return "Delete"
             case .abortMerge: return "Abort Merge"
+            case .dropStash: return "Drop"
             }
         }
     }
@@ -793,6 +799,8 @@ final class RepoTab: ObservableObject, Identifiable {
             deleteTag(name, deleteRemote: deleteRemote)
         case .abortMerge:
             abortMerge()
+        case let .dropStash(index, _):
+            stashDrop(index)
         }
     }
 
