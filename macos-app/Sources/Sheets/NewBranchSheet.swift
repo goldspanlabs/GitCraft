@@ -26,6 +26,7 @@ struct NewBranchSheet: View {
         ActionSheetLayout(
             title: "Create Branch",
             subtitle: "Create new branch",
+            showsAppIcon: false,
             confirmLabel: checkout ? "Create and Checkout" : "Create",
             confirmDisabled: branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             onCancel: { dismiss() },
