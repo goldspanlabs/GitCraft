@@ -1270,3 +1270,53 @@ fn nothing_is_marked_unpushed_without_remote_branches() {
     let rows = open(dir.path()).get_commit_graph(0, 10, None).unwrap();
     assert!(rows.iter().all(|r| !r.is_unpushed));
 }
+
+#[test]
+fn discard_all_clears_staged_unstaged_and_untracked_changes() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    // Staged edit, staged addition, unstaged edit, and untracked file.
+    write(dir.path(), "a.txt", "staged edit\n");
+    write(dir.path(), "added.txt", "staged add\n");
+    session.stage("a.txt".into()).unwrap();
+    session.stage("added.txt".into()).unwrap();
+    write(dir.path(), "b.txt", "unstaged edit\n");
+    write(dir.path(), "untracked.txt", "untracked\n");
+
+    session.discard_all().unwrap();
+
+    let status = session.status().unwrap();
+    assert!(status.is_clean, "expected clean repo, got {status:?}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "bravo\n"
+    );
+    assert!(!dir.path().join("added.txt").exists());
+    assert!(!dir.path().join("untracked.txt").exists());
+}
+
+#[test]
+fn discard_all_handles_unborn_head_with_staged_and_untracked_files() {
+    let dir = init_repo();
+    let session = open(dir.path());
+
+    write(dir.path(), "staged.txt", "staged\n");
+    session.stage("staged.txt".into()).unwrap();
+    write(dir.path(), "untracked.txt", "untracked\n");
+
+    session.discard_all().unwrap();
+    assert!(session.status().unwrap().is_clean);
+    assert!(!dir.path().join("staged.txt").exists());
+    assert!(!dir.path().join("untracked.txt").exists());
+
+    // Also works on unborn HEAD when only untracked files exist (empty index).
+    write(dir.path(), "only_untracked.txt", "untracked\n");
+    session.discard_all().unwrap();
+    assert!(session.status().unwrap().is_clean);
+    assert!(!dir.path().join("only_untracked.txt").exists());
+}

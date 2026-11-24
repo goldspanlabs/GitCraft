@@ -67,7 +67,8 @@ extension RepoTab {
 
     func updateSearch(_ query: String) {
         searchQuery = query
-        graphGeneration += 1  // in-flight page fetches used the old query
+        graphGeneration += 1  // invalidate in-flight page fetches and older searches
+        let requestGeneration = graphGeneration
         pendingSearchReplacements += 1
         let session = self.session
         let q = activeSearchQuery
@@ -80,11 +81,19 @@ extension RepoTab {
                 let graphRows = try await Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: q)
                 }.value
+                guard requestGeneration == graphGeneration,
+                      activeSearchQuery == q,
+                      scopeToCurrentBranch == scoped
+                else { return }
                 graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
+                guard requestGeneration == graphGeneration,
+                      activeSearchQuery == q,
+                      scopeToCurrentBranch == scoped
+                else { return }
                 showError(error)
             }
         }

@@ -11,11 +11,18 @@ pub(crate) struct CommitMetadata {
     pub timestamp: i64,
 }
 
-pub(crate) fn extract_commit_metadata(commit: &gix::Commit<'_>) -> CommitMetadata {
+pub(crate) fn extract_commit_metadata(
+    commit: &gix::Commit<'_>,
+    include_body: bool,
+) -> CommitMetadata {
     let raw_msg = commit.message_raw_sloppy().to_str_lossy();
     let mut lines = raw_msg.lines();
     let summary = lines.next().unwrap_or_default().trim().to_owned();
-    let body = lines.collect::<Vec<_>>().join("\n").trim().to_owned();
+    let body = if include_body {
+        lines.collect::<Vec<_>>().join("\n").trim().to_owned()
+    } else {
+        String::new()
+    };
 
     let (author_name, author_email) = commit
         .author()
@@ -50,7 +57,7 @@ pub fn get_commit_detail(
         .find_commit(oid)
         .map_err(|e| GitCraftError::message(e.to_string()))?;
 
-    let meta = extract_commit_metadata(&commit);
+    let meta = extract_commit_metadata(&commit, true);
     let parent_oids = commit
         .parent_ids()
         .map(|p| p.detach().to_hex().to_string())

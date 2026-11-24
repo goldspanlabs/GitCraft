@@ -66,6 +66,23 @@ impl RepoSession {
         })
     }
 
+    /// Discards all staged, unstaged, and untracked local changes without altering
+    /// single-file `discard_file` semantics. Handles unborn HEAD explicitly.
+    pub fn discard_all(&self) -> Result<(), GitCraftError> {
+        self.with_mutation_lock(|| {
+            if has_head(&self.path) {
+                git_cli::mutate(&self.path, &["reset", "--hard", "HEAD"])?;
+            } else {
+                git_cli::mutate(
+                    &self.path,
+                    &["rm", "--cached", "-rf", "--ignore-unmatch", "--", "."],
+                )?;
+            }
+            git_cli::mutate(&self.path, &["clean", "-fd"])?;
+            Ok(())
+        })
+    }
+
     /// Adds `path` to `.gitignore` (shared) or `.git/info/exclude` (local only).
     /// The rule is anchored to the repo root; duplicates are not re-added.
     pub fn ignore_path(&self, path: String, local_only: bool) -> Result<(), GitCraftError> {

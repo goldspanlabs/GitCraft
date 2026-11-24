@@ -27,9 +27,7 @@ extension RepoTab {
             }
             try session.stashPop(index: 0)
         case .discard:
-            for file in try session.status().files {
-                try session.discardFile(path: file)
-            }
+            try session.discardAll()
             try operation()
         }
     }

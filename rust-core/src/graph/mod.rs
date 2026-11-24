@@ -126,7 +126,7 @@ fn graph_walk(
         }
         let is_remote_only = !is_local;
 
-        let meta = extract_commit_metadata(&commit);
+        let meta = extract_commit_metadata(&commit, false);
         let raw = RawCommit {
             oid,
             parents,
