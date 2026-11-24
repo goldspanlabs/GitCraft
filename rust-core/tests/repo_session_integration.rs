@@ -610,14 +610,26 @@ fn branch_graph_keeps_ref_badges_and_supports_search_and_paging() {
 }
 
 #[test]
-fn branch_graph_falls_back_to_full_graph_on_default_branch_detached_head_or_no_base() {
+fn branch_graph_on_default_branch_shows_only_its_own_history() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     setup_branch_scope_repo(root);
     let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
 
+    // On main: its history only, without feature's or other's commits.
     run_git(root, &["checkout", "main"]);
-    assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);
+    assert_eq!(
+        summaries(&session.get_branch_graph(0, 100, None).unwrap()),
+        vec!["c1", "c2", "c3", "m1", "m2"]
+    );
+}
+
+#[test]
+fn branch_graph_falls_back_to_full_graph_on_detached_head_or_no_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    setup_branch_scope_repo(root);
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
 
     run_git(root, &["checkout", "--detach", "feature"]);
     assert_eq!(session.get_branch_graph(0, 100, None).unwrap().len(), 8);

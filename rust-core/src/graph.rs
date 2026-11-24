@@ -71,16 +71,14 @@ fn short_branch_name(full: &str) -> &str {
 }
 
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be
-/// shown. The view walks only from the checked-out branch, so it shows that branch's whole
-/// history and leaves out the default branch's commits and every other branch.
+/// shown (detached HEAD, or no default branch to compare against). The view walks only from
+/// the checked-out branch, so it shows that branch's whole history and leaves out other
+/// branches. This holds on the default branch too.
 fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::ObjectId>)> {
     let head = repo.head().ok()?;
-    let head_ref = head.referent_name()?.as_bstr().to_str_lossy().into_owned();
+    head.referent_name()?;
     let head_id = head.id()?.detach();
-    let (base_ref, base_id) = default_base(repo)?;
-    if short_branch_name(&head_ref) == short_branch_name(&base_ref) || head_id == base_id {
-        return None;
-    }
+    default_base(repo)?;
     Some((vec![head_id], Vec::new()))
 }
 
