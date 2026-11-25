@@ -247,4 +247,90 @@ mod tests {
             .any(|e| e.from_lane == 1 && e.to_lane == 0 && e.is_merge));
         assert!(lanes.slots.is_empty());
     }
+    #[test]
+    fn octopus_merge_fans_out_one_edge_per_extra_parent() {
+        // o5 merges [o1, o2, o3, o4]; each parent is a separate root-less branch tip.
+        let mut lanes = LaneState::default();
+
+        let merge = lanes.assign_commit(&raw(5, &[1, 2, 3, 4], "Octopus"), vec![]);
+        assert_eq!(merge.lane, 0);
+        assert_eq!(merge.max_lanes, 4);
+        for target in 1..=3u32 {
+            assert!(
+                merge
+                    .edges
+                    .iter()
+                    .any(|e| e.from_lane == 0 && e.to_lane == target && e.is_merge),
+                "missing merge edge to lane {target}"
+            );
+        }
+        // Mainline continues straight on lane 0.
+        assert!(merge
+            .edges
+            .iter()
+            .any(|e| e.from_lane == 0 && e.to_lane == 0 && !e.is_merge));
+        // Each branch gets its own color.
+        let colors: std::collections::HashSet<u8> =
+            merge.edges.iter().map(|e| e.color_idx).collect();
+        assert_eq!(colors.len(), 4);
+
+        // Parents land on the lanes their edges promised.
+        let p2 = lanes.assign_commit(&raw(2, &[], "p2"), vec![]);
+        assert_eq!(p2.lane, 1);
+        let p3 = lanes.assign_commit(&raw(3, &[], "p3"), vec![]);
+        assert_eq!(p3.lane, 2);
+        let p4 = lanes.assign_commit(&raw(4, &[], "p4"), vec![]);
+        assert_eq!(p4.lane, 3);
+        let p1 = lanes.assign_commit(&raw(1, &[], "p1"), vec![]);
+        assert_eq!(p1.lane, 0);
+        assert!(lanes.slots.is_empty());
+    }
+
+    #[test]
+    fn merge_into_an_already_tracked_lane_reuses_it() {
+        // Two tips (c5 -> c2, c4 merge [c3, c2]) share c2, so the merge edge targets the existing lane.
+        let mut lanes = LaneState::default();
+
+        let c5 = lanes.assign_commit(&raw(5, &[2], "Other tip"), vec![]);
+        assert_eq!(c5.lane, 0);
+        let c4 = lanes.assign_commit(&raw(4, &[3, 2], "Merge"), vec![]);
+        assert_eq!(c4.lane, 1);
+        let to_existing = c4
+            .edges
+            .iter()
+            .find(|e| e.from_lane == 1 && e.is_merge)
+            .expect("merge edge");
+        assert_eq!(to_existing.to_lane, 0);
+        assert_eq!(c4.max_lanes, 2);
+    }
+
+    #[test]
+    fn independent_branch_tips_get_separate_lanes_and_free_slots_are_reused() {
+        let mut lanes = LaneState::default();
+
+        let a = lanes.assign_commit(&raw(10, &[], "tip a (root)"), vec![]);
+        assert_eq!(a.lane, 0);
+        assert!(lanes.slots.is_empty());
+
+        // Two live tips side by side.
+        let b = lanes.assign_commit(&raw(20, &[19], "tip b"), vec![]);
+        let c = lanes.assign_commit(&raw(30, &[29], "tip c"), vec![]);
+        assert_eq!((b.lane, c.lane), (0, 1));
+        assert_ne!(b.color_idx, c.color_idx);
+
+        // Finishing lane 0 frees it, so the next new tip reuses lane 0.
+        lanes.assign_commit(&raw(19, &[], "end b"), vec![]);
+        let d = lanes.assign_commit(&raw(40, &[], "tip d"), vec![]);
+        assert_eq!(d.lane, 0);
+    }
+
+    #[test]
+    fn colors_wrap_after_eight_lanes() {
+        let mut lanes = LaneState::default();
+        let rows: Vec<_> = (1..=9u8)
+            .map(|i| lanes.assign_commit(&raw(i, &[100 + i], "tip"), vec![]))
+            .collect();
+        let colors: Vec<u8> = rows.iter().map(|r| r.color_idx).collect();
+        assert_eq!(colors, vec![0, 1, 2, 3, 4, 5, 6, 7, 0]);
+    }
 }

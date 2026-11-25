@@ -20,6 +20,20 @@ enum AvatarInitials {
 final class AvatarLoader {
     static let shared = AvatarLoader()
 
+    /// Fetches avatar bytes for a request. Replaceable so tests can fake the network.
+    typealias Fetch = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    private let fetch: Fetch
+    private let now: () -> Date
+
+    init(
+        fetch: @escaping Fetch = { try await URLSession.shared.data(for: $0) },
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.fetch = fetch
+        self.now = now
+    }
+
     private enum Lookup: Sendable {
         case found(CGImage)
         case notFound
@@ -52,14 +66,15 @@ final class AvatarLoader {
         guard !key.isEmpty else { return nil }
         if let sender = KnownSender(email: key) { return sender.tile }
         if let hit = cache.object(forKey: key as NSString) { return hit }
-        if let failed = failedAt[key], Date().timeIntervalSince(failed) < 60 { return nil }
+        if let failed = failedAt[key], now().timeIntervalSince(failed) < 60 { return nil }
         if let task = inFlight[key] { return resolve(await task.value, key: key) }
 
+        let fetch = self.fetch
         let task = Task.detached(priority: .utility) { () -> Lookup in
             guard let url = Self.avatarURL(for: key) else { return .notFound }
             var request = URLRequest(url: url)
             request.timeoutInterval = 10
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
+            guard let (data, response) = try? await fetch(request),
                   let status = (response as? HTTPURLResponse)?.statusCode
             else { return .failed }
             switch status {
@@ -92,7 +107,7 @@ final class AvatarLoader {
             cache.setObject(tile, forKey: key as NSString)
             return tile
         case .failed:
-            failedAt[key] = Date()
+            failedAt[key] = now()
             return nil
         }
     }
