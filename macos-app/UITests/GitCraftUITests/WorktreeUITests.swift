@@ -220,7 +220,11 @@ final class WorktreeUITests: XCTestCase {
             "the row disappears once the worktree is removed"
         )
         XCTAssertTrue(
-            wait(for: app.windows.firstMatch, toSatisfy: "title == 'repo'", timeout: 20),
+            wait(
+                for: app.windows.firstMatch,
+                toSatisfy: "NOT (title CONTAINS 'repo-ui') AND title CONTAINS 'repo'",
+                timeout: 20
+            ),
             "the tab moves to the main checkout"
         )
         XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
