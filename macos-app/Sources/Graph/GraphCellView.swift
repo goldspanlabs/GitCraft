@@ -34,7 +34,6 @@ final class GraphCellView: NSView {
     private var commit: CommitRow?
     private var hasIncomingLine = false
     private var isWorkingChanges = false
-    private var connectsToWorkingChanges = false
 
     override var isFlipped: Bool { true }
 
@@ -45,15 +44,13 @@ final class GraphCellView: NSView {
 
     func configureWorkingChanges() {
         isWorkingChanges = true
-        connectsToWorkingChanges = false
         commit = nil
         hasIncomingLine = false
         needsDisplay = true
     }
 
-    func configure(commit: CommitRow, hasIncomingLine: Bool, connectsToWorkingChanges: Bool = false) {
+    func configure(commit: CommitRow, hasIncomingLine: Bool) {
         isWorkingChanges = false
-        self.connectsToWorkingChanges = connectsToWorkingChanges
         self.commit = commit
         self.hasIncomingLine = hasIncomingLine
         needsDisplay = true
@@ -68,13 +65,6 @@ final class GraphCellView: NSView {
 
         if isWorkingChanges {
             let x = Self.centerX(forLane: 0)
-            ctx.setStrokeColor(NSColor.secondaryLabelColor.cgColor)
-            ctx.setLineDash(phase: 0, lengths: [2.5, 2.5])
-            ctx.move(to: CGPoint(x: x, y: midY + Self.nodeRadius))
-            ctx.addLine(to: CGPoint(x: x, y: bounds.height))
-            ctx.strokePath()
-
-            ctx.setLineDash(phase: 0, lengths: [])
             let ringRect = CGRect(
                 x: x - Self.nodeRadius,
                 y: midY - Self.nodeRadius,
@@ -89,17 +79,6 @@ final class GraphCellView: NSView {
         }
 
         guard let commit else { return }
-
-        // Continue the dashed Working Changes line down into this (HEAD) commit.
-        if connectsToWorkingChanges {
-            let x = Self.centerX(forLane: Int(commit.lane))
-            ctx.setStrokeColor(NSColor.secondaryLabelColor.cgColor)
-            ctx.setLineDash(phase: 0, lengths: [2.5, 2.5])
-            ctx.move(to: CGPoint(x: x, y: 0))
-            ctx.addLine(to: CGPoint(x: x, y: midY))
-            ctx.strokePath()
-            ctx.setLineDash(phase: 0, lengths: [])
-        }
 
         // Draw edges first so the commit node renders cleanly on top.
         for edge in commit.edges {

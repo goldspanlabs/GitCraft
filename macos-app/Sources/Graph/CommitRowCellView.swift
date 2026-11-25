@@ -119,7 +119,6 @@ final class CommitRowCellView: NSTableCellView {
     func configure(
         commit: CommitRow,
         hasIncomingLine: Bool,
-        connectsToWorkingChanges: Bool = false,
         remoteHosts: [String: RemoteHost] = [:]
     ) {
         let lanes = max(1, Int(commit.maxLanes))
@@ -128,8 +127,7 @@ final class CommitRowCellView: NSTableCellView {
         graphView.alphaValue = 1.0
         graphView.configure(
             commit: commit,
-            hasIncomingLine: hasIncomingLine,
-            connectsToWorkingChanges: connectsToWorkingChanges
+            hasIncomingLine: hasIncomingLine
         )
 
         badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }

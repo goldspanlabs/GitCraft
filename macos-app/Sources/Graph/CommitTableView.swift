@@ -305,14 +305,9 @@ struct CommitTableView: NSViewRepresentable {
                 let commitIndex = row - 1
                 let commit = rows[commitIndex]
                 let hasIncomingLine = hasIncomingLane(at: commitIndex)
-                // The dashed Working Changes line leads into the HEAD commit when it's the first row.
-                let connectsToWorkingChanges = commitIndex == 0
-                    && commit.lane == 0
-                    && commit.refs.contains(where: { $0.isCurrent })
                 cell.configure(
                     commit: commit,
                     hasIncomingLine: hasIncomingLine,
-                    connectsToWorkingChanges: connectsToWorkingChanges,
                     remoteHosts: remoteHosts
                 )
             }
