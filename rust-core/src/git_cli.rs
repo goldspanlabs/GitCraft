@@ -60,6 +60,19 @@ fn execute_raw(
         .env("PATH", augmented_path())
         // There is no terminal to prompt on: fail with an error instead of waiting.
         .env("GIT_TERMINAL_PROMPT", "0")
+        // The app matches some of git's messages (for example "divergent branches"), so keep
+        // them in English whatever the system language is.
+        .env("LC_MESSAGES", "C")
+        .env_remove("LANGUAGE");
+    // An inherited LC_ALL would override LC_MESSAGES. Drop it, keeping its value as the
+    // character-type locale so hooks still see the encoding they had.
+    if let Some(all) = std::env::var_os("LC_ALL") {
+        command.env_remove("LC_ALL");
+        if std::env::var_os("LC_CTYPE").is_none() {
+            command.env("LC_CTYPE", all);
+        }
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -220,6 +233,13 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(started.elapsed() < Duration::from_secs(20));
+    }
+
+    #[test]
+    fn git_messages_are_not_translated() {
+        let dir = temp_repo();
+        let out = run(dir.path(), &["-c", "alias.msg=!echo $LC_MESSAGES", "msg"]).unwrap();
+        assert_eq!(out.trim(), "C");
     }
 
     #[test]

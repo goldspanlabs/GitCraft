@@ -50,13 +50,26 @@ impl RepoSession {
 
     pub fn discard_file(&self, path: String) -> Result<(), GitCraftError> {
         self.with_mutation_lock(|| {
-            // Try checkout -- first; if untracked, fall back to git clean -fd --.
-            if git_cli::mutate(
+            // Tracked paths are restored with checkout and its error is reported. Only a path git
+            // does not know is cleaned; falling back to `clean` on any checkout failure would
+            // silently do nothing for a tracked file and still report success.
+            let is_tracked = git_cli::run(
                 &self.path,
-                &["--literal-pathspecs", "checkout", "--", &path],
+                &[
+                    "--literal-pathspecs",
+                    "ls-files",
+                    "--error-unmatch",
+                    "--",
+                    &path,
+                ],
             )
-            .is_err()
-            {
+            .is_ok();
+            if is_tracked {
+                git_cli::mutate(
+                    &self.path,
+                    &["--literal-pathspecs", "checkout", "--", &path],
+                )?;
+            } else {
                 git_cli::mutate(
                     &self.path,
                     &["--literal-pathspecs", "clean", "-fd", "--", &path],

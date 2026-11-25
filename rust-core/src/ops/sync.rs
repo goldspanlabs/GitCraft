@@ -61,14 +61,19 @@ impl RepoSession {
     }
 
     fn fetch_impl(&self, remote: Option<&str>, include_tags: bool) -> Result<(), GitCraftError> {
-        let mut args = vec!["fetch", "--prune"];
+        // `--no-write-fetch-head` keeps this unlocked fetch from rewriting FETCH_HEAD under a
+        // `pull` that is reading it (nothing here uses FETCH_HEAD).
+        let mut args = vec!["fetch", "--prune", "--no-write-fetch-head"];
         if include_tags {
             args.push("--tags");
         }
         if let Some(name) = remote {
             args.push(name);
         }
-        self.mutate(&args)
+        // No mutation lock: fetch only updates remote-tracking refs (git locks those itself) and
+        // can run for minutes, which must not hold up staging or committing.
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
     }
 
     pub fn fetch_remote(&self, name: String, include_tags: bool) -> Result<(), GitCraftError> {

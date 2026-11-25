@@ -15,12 +15,26 @@ pub use models::*;
 pub use worktree::WorktreeInfo;
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
+
+/// One mutation lock per repository (keyed by its canonical common dir), shared by every
+/// session that opens it. A session per checkout or window would otherwise each hold its own
+/// lock and race on refs and `.git/index.lock`.
+fn mutation_lock_for(common_dir: PathBuf) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let key = std::fs::canonicalize(&common_dir).unwrap_or(common_dir);
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(locks.entry(key).or_default())
+}
 
 pub struct RepoSession {
     pub(crate) path: PathBuf,
@@ -91,7 +105,7 @@ impl RepoSession {
         Ok(Self {
             path,
             sync_repo,
-            mutation_lock: Arc::new(Mutex::new(())),
+            mutation_lock: mutation_lock_for(common_dir),
             dirty,
             graph_dirty,
             worktrees_dirty,
@@ -100,8 +114,8 @@ impl RepoSession {
         })
     }
 
-    /// Serializes mutating git operations against this session so concurrent UI requests
-    /// never race on `.git/index.lock` or ref updates.
+    /// Serializes mutating git operations on this repository so concurrent UI requests, even
+    /// from different sessions, never race on `.git/index.lock` or ref updates.
     pub(crate) fn with_mutation_lock<T>(
         &self,
         f: impl FnOnce() -> Result<T, GitCraftError>,
@@ -222,3 +236,21 @@ impl RepoSession {
 }
 
 uniffi::include_scaffolding!("gitcraft_core");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sessions_of_one_repository_share_a_mutation_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let git_dir = dir.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let a = mutation_lock_for(git_dir.clone());
+        let b = mutation_lock_for(git_dir.join("../.git"));
+        let c = mutation_lock_for(other.path().to_path_buf());
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(!Arc::ptr_eq(&a, &c));
+    }
+}
