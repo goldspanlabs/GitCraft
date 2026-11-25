@@ -162,4 +162,27 @@ impl RepoSession {
         let commit = validate_ref_arg(&commit)?;
         self.mutate(&["revert", "--no-edit", &commit])
     }
+
+    /// Stops a cherry-pick that stopped on a conflict, putting the branch and working tree
+    /// back as they were before it started.
+    pub fn abort_cherry_pick(&self) -> Result<(), GitCraftError> {
+        self.mutate(&["cherry-pick", "--abort"])
+    }
+
+    /// Commits a stopped cherry-pick once its conflicts are resolved and staged, keeping the
+    /// original commit's message. The editor is skipped, as there is no terminal.
+    pub fn continue_cherry_pick(&self) -> Result<(), GitCraftError> {
+        self.mutate(&["-c", "core.editor=true", "cherry-pick", "--continue"])
+    }
+
+    /// Stops a revert that stopped on a conflict, putting the branch and working tree back.
+    pub fn abort_revert(&self) -> Result<(), GitCraftError> {
+        self.mutate(&["revert", "--abort"])
+    }
+
+    /// Commits a stopped revert once its conflicts are resolved and staged, keeping git's
+    /// default message.
+    pub fn continue_revert(&self) -> Result<(), GitCraftError> {
+        self.mutate(&["-c", "core.editor=true", "revert", "--continue"])
+    }
 }

@@ -15,6 +15,10 @@ struct FixtureRepository {
         case rebase
         /// Both branches have their conflicting commit, but git hasn't started anything.
         case notStarted
+        /// main cherry-picks feature's commit and stops on the conflict.
+        case cherryPick
+        /// main commits README.md again, then reverting "main edit" stops on the conflict.
+        case revert
     }
 
     /// The branch `make(mergedBranch: true)` creates. It needs `twoBranches`, which gives main a
@@ -102,6 +106,11 @@ struct FixtureRepository {
             case .merge: try gitExpectingFailure(["merge", featureBranch], in: main)
             case .rebase: try gitExpectingFailure(["rebase", featureBranch], in: main)
             case .notStarted: break
+            case .cherryPick: try gitExpectingFailure(["cherry-pick", featureBranch], in: main)
+            case .revert:
+                try "later\n".write(to: readme, atomically: true, encoding: .utf8)
+                try git(["commit", "-am", "later edit"], in: main)
+                try gitExpectingFailure(["revert", "--no-edit", "HEAD~1"], in: main)
             }
         }
 

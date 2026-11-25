@@ -234,6 +234,8 @@ final class WorktreeTabTests: XCTestCase {
         tab.unstagedFiles = [FileChange(path: "b.txt", status: "M", staged: false)]
         tab.isMerging = true
         tab.isRebasing = true
+        tab.isCherryPicking = true
+        tab.isReverting = true
         tab.hasConflicts = true
         tab.scrollRequest = RepoTab.ScrollRequest(oidHex: "deadbeef")
 
@@ -244,6 +246,8 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertTrue(tab.unstagedFiles.isEmpty)
         XCTAssertFalse(tab.isMerging)
         XCTAssertFalse(tab.isRebasing)
+        XCTAssertFalse(tab.isCherryPicking)
+        XCTAssertFalse(tab.isReverting)
         XCTAssertFalse(tab.hasConflicts)
         XCTAssertEqual(tab.currentBranch, "linked")
         XCTAssertNotNil(tab.scrollRequest)

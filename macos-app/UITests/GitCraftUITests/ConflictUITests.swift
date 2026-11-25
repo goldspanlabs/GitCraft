@@ -10,9 +10,19 @@ final class ConflictUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // Both branches rewrite README.md's only line; git stops mid-merge or mid-rebase.
-        fixture = try FixtureRepository.make(conflict: name.contains("Rebase") ? .rebase : .merge)
-        // A stopped merge or rebase leaves refs/heads/main where it was.
+        // Both branches rewrite README.md's only line; git stops partway on the conflict.
+        let conflict: FixtureRepository.Conflict
+        if name.contains("CherryPick") {
+            conflict = .cherryPick
+        } else if name.contains("Revert") {
+            conflict = .revert
+        } else if name.contains("Rebase") {
+            conflict = .rebase
+        } else {
+            conflict = .merge
+        }
+        fixture = try FixtureRepository.make(conflict: conflict)
+        // A stopped merge, rebase, cherry-pick or revert leaves refs/heads/main where it was.
         mainBefore = try fixture.commitID("refs/heads/main")
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
@@ -86,6 +96,60 @@ final class ConflictUITests: XCTestCase {
         )
         XCTAssertTrue(
             wait(for: text(containing: "Rebase stopped"), toSatisfy: "exists == false", timeout: 20),
+            "the banner goes away"
+        )
+    }
+
+    func testAStoppedCherryPickShowsItsOwnBannerAndAbortRestoresTheBranch() throws {
+        XCTAssertTrue(
+            text(containing: "Cherry-pick stopped on conflicts").waitForExistence(timeout: 60),
+            "the banner names the cherry-pick, not a merge"
+        )
+        XCTAssertFalse(app.buttons["Abort Merge…"].exists, "it doesn't offer a merge abort that would fail")
+        let abort = app.buttons["Abort Cherry Pick…"].firstMatch
+        XCTAssertTrue(abort.exists)
+        abort.click()
+
+        let confirm = app.sheets.buttons["Abort Cherry Pick"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "aborting asks first")
+        XCTAssertTrue(fixture.gitDirContains("CHERRY_PICK_HEAD"), "nothing is aborted while the dialog is open")
+        confirm.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { !self.fixture.gitDirContains("CHERRY_PICK_HEAD") },
+            "the cherry-pick is aborted"
+        )
+        XCTAssertEqual(try fixture.commitID("HEAD"), mainBefore, "main is back where it was")
+        XCTAssertFalse(try fixture.isModified("README.md"), "no conflicted changes are left")
+        XCTAssertTrue(
+            wait(for: text(containing: "Cherry-pick stopped"), toSatisfy: "exists == false", timeout: 20),
+            "the banner goes away"
+        )
+    }
+
+    func testAStoppedRevertShowsItsOwnBannerAndAbortRestoresTheBranch() throws {
+        XCTAssertTrue(
+            text(containing: "Revert stopped on conflicts").waitForExistence(timeout: 60),
+            "the banner names the revert, not a merge"
+        )
+        XCTAssertFalse(app.buttons["Abort Merge…"].exists)
+        let abort = app.buttons["Abort Revert…"].firstMatch
+        XCTAssertTrue(abort.exists)
+        abort.click()
+
+        let confirm = app.sheets.buttons["Abort Revert"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "aborting asks first")
+        XCTAssertTrue(fixture.gitDirContains("REVERT_HEAD"), "nothing is aborted while the dialog is open")
+        confirm.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { !self.fixture.gitDirContains("REVERT_HEAD") },
+            "the revert is aborted"
+        )
+        XCTAssertEqual(try fixture.commitID("HEAD"), mainBefore, "main is back where it was")
+        XCTAssertFalse(try fixture.isModified("README.md"), "no conflicted changes are left")
+        XCTAssertTrue(
+            wait(for: text(containing: "Revert stopped"), toSatisfy: "exists == false", timeout: 20),
             "the banner goes away"
         )
     }

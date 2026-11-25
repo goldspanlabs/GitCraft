@@ -69,6 +69,8 @@ final class RepoTab: ObservableObject, Identifiable {
         case forceRemoveWorktree(path: String, label: String, isActive: Bool)
         case abortMerge
         case abortRebase
+        case abortCherryPick
+        case abortRevert
         case dropStash(index: UInt32, name: String)
         case resetHard(branch: String, commit: String)
         case rebase(branch: String, commit: String)
@@ -84,6 +86,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .forceRemoveWorktree(path, _, _): return "force-remove-worktree-\(path)"
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
+            case .abortCherryPick: return "abort-cherry-pick"
+            case .abortRevert: return "abort-revert"
             case let .dropStash(index, _): return "drop-stash-\(index)"
             case let .resetHard(_, commit): return "reset-hard-\(commit)"
             case let .rebase(_, commit): return "rebase-\(commit)"
@@ -102,6 +106,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .forceRemoveWorktree(_, label, _): return "Worktree \"\(label)\" has uncommitted changes"
             case .abortMerge: return "Abort in-progress merge?"
             case .abortRebase: return "Abort in-progress rebase?"
+            case .abortCherryPick: return "Abort in-progress cherry-pick?"
+            case .abortRevert: return "Abort in-progress revert?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
             case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.prefix(7)) and discard changes?"
             case let .rebase(branch, commit): return "Rebase \"\(branch)\" onto \(commit.prefix(7))?"
@@ -136,6 +142,10 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will abort the current merge and restore the repository to its pre-merge state."
             case .abortRebase:
                 return "This will stop the rebase and put your branch back as it was before the pull."
+            case .abortCherryPick:
+                return "This will stop the cherry-pick and put your branch and files back as they were before it started."
+            case .abortRevert:
+                return "This will stop the revert and put your branch and files back as they were before it started."
             case .dropStash:
                 return "The stashed changes will be removed. This can't be undone from GitCraft."
             case .rebase:
@@ -154,6 +164,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case .forceRemoveWorktree: return "Force Remove"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
+            case .abortCherryPick: return "Abort Cherry Pick"
+            case .abortRevert: return "Abort Revert"
             case .dropStash: return "Drop"
             case .resetHard: return "Reset"
             case .rebase: return "Rebase"
@@ -178,6 +190,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var currentBranch = ""
     @Published var isMerging = false
     @Published var isRebasing = false
+    @Published var isCherryPicking = false
+    @Published var isReverting = false
     @Published var hasConflicts = false
     @Published var stagedFiles: [FileChange] = []
     @Published var unstagedFiles: [FileChange] = []
@@ -615,6 +629,8 @@ final class RepoTab: ObservableObject, Identifiable {
         currentBranch = worktrees.first(where: { $0.path == canonical })?.branch ?? ""
         isMerging = false
         isRebasing = false
+        isCherryPicking = false
+        isReverting = false
         hasConflicts = false
         stagedFiles = []
         unstagedFiles = []
@@ -649,6 +665,8 @@ final class RepoTab: ObservableObject, Identifiable {
         currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
         isMerging = status.isMerging
         isRebasing = status.isRebasing
+        isCherryPicking = status.isCherryPicking
+        isReverting = status.isReverting
         hasConflicts = status.hasConflicts
         if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
         if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }

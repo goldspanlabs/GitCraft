@@ -23,6 +23,26 @@ struct RepoDetailView: View {
                     continueLabel: "Continue Rebase",
                     onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRebase() }
                 )
+            } else if tab.isCherryPicking {
+                OperationBanner(
+                    title: tab.hasConflicts
+                        ? "Cherry-pick stopped on conflicts — resolve them, stage the files, then continue, or abort."
+                        : "Cherry-pick in progress — continue to commit it, or abort.",
+                    abortLabel: "Abort Cherry Pick…",
+                    onAbort: { tab.pendingConfirmation = .abortCherryPick },
+                    continueLabel: "Continue Cherry Pick",
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueCherryPick() }
+                )
+            } else if tab.isReverting {
+                OperationBanner(
+                    title: tab.hasConflicts
+                        ? "Revert stopped on conflicts — resolve them, stage the files, then continue, or abort."
+                        : "Revert in progress — continue to commit it, or abort.",
+                    abortLabel: "Abort Revert…",
+                    onAbort: { tab.pendingConfirmation = .abortRevert },
+                    continueLabel: "Continue Revert",
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRevert() }
+                )
             } else if tab.isMerging || tab.hasConflicts {
                 OperationBanner(
                     title: tab.hasConflicts

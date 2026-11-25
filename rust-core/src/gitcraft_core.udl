@@ -150,6 +150,8 @@ dictionary RepoStatus {
   boolean is_clean;
   boolean is_merging;
   boolean is_rebasing;
+  boolean is_cherry_picking;
+  boolean is_reverting;
   boolean has_conflicts;
 };
 
@@ -329,6 +331,14 @@ interface RepoSession {
   void abort_rebase();
   [Throws=GitCraftError]
   void continue_rebase();
+  [Throws=GitCraftError]
+  void abort_cherry_pick();
+  [Throws=GitCraftError]
+  void continue_cherry_pick();
+  [Throws=GitCraftError]
+  void abort_revert();
+  [Throws=GitCraftError]
+  void continue_revert();
 
   [Throws=GitCraftError]
   void push();

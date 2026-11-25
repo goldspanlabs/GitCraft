@@ -207,5 +207,9 @@ pub struct RepoStatus {
     pub is_clean: bool,
     pub is_merging: bool,
     pub is_rebasing: bool,
+    /// A cherry-pick stopped partway, usually on a conflict (`CHERRY_PICK_HEAD` exists).
+    pub is_cherry_picking: bool,
+    /// A revert stopped partway, usually on a conflict (`REVERT_HEAD` exists).
+    pub is_reverting: bool,
     pub has_conflicts: bool,
 }
