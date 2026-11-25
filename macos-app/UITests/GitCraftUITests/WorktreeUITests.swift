@@ -388,7 +388,12 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 20), "main's history has loaded")
         XCTAssertFalse(app.staticTexts["Linked work"].exists, "main's history has no linked-only commit")
 
-        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
+        // Switch from the row menu. A double-click also counts as a single click, which selects
+        // the worktree's head commit, so the panel would show that commit instead of the changes.
+        rightClick(linked)
+        let switchItem = app.menuItems["Switch to Worktree"]
+        XCTAssertTrue(switchItem.waitForExistence(timeout: 10))
+        switchItem.click()
 
         XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
         XCTAssertTrue(
