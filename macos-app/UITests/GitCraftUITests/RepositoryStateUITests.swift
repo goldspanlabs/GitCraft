@@ -190,7 +190,7 @@ final class RepositoryStateUITests: XCTestCase {
     // MARK: Unusual branch names
 
     func testNonASCIIAndLongBranchNamesShowAndCanBeCheckedOut() throws {
-        let long = String(repeating: "long-name-", 8) + "end"
+        let long = String(repeating: "long-name-", count: 8) + "end"
         try launch(
             fixture: FixtureRepository.make(extraBranches: ["日本語", "ветка", long]),
             extraArguments: ["-sidebar.localBranchesExpanded", "YES"]
