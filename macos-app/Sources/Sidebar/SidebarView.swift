@@ -101,8 +101,14 @@ struct SidebarView: View {
 
             Section(isExpanded: $isWorktreesExpanded) {
                 if isWorktreesExpanded {
-                    ForEach(tab.worktrees, id: \.path) { worktree in
-                        WorktreeRowView(tab: tab, worktree: worktree)
+                    if !tab.worktrees.contains(where: { !$0.isMain }) {
+                        Text("No worktrees")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(tab.worktrees, id: \.path) { worktree in
+                            WorktreeRowView(tab: tab, worktree: worktree)
+                        }
                     }
                 }
             } header: {
