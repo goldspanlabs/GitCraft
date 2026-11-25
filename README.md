@@ -55,17 +55,13 @@ everything at once, write your message and commit, or amend the last commit.
 
 ### Branches, worktrees, tags and stashes in one sidebar
 
-<img src="docs/screenshots/sidebar-branches-light.png" width="240" align="right" alt="Sidebar listing local branches, remotes, worktrees, tags and stashes">
-
-- Create, check out, merge and delete branches. GitCraft checks for conflicts
-  *before* you merge.
+- Create, check out, merge and delete branches. With Git 2.38 or later, GitCraft checks for
+  conflicts *before* you merge.
 - First-class **worktrees**: add, open, lock and prune them without the command line.
 - Create annotated tags and push them to your remote.
 - Stash work in progress (untracked files included), then apply or pop it later.
 - See which branches are ahead of or behind their remote, with GitHub, GitLab, Bitbucket,
   Codeberg, Gitea and SourceHut remotes recognised automatically.
-
-<br clear="right">
 
 ### Powerful history tools
 
@@ -89,8 +85,8 @@ on a conflict, GitCraft tells you exactly where you are and lets you continue or
 3. The first time you open it, macOS may say the app can't be verified. Open
    **System Settings → Privacy & Security** and click **Open Anyway**.
 
-GitCraft needs macOS 14 Sonoma or later on an Apple Silicon Mac, and `git` (installed with the
-Xcode Command Line Tools: `xcode-select --install`).
+GitCraft needs macOS 14 Sonoma or later on an Apple Silicon Mac, and `git` 2.38 or later (installed
+with the Xcode Command Line Tools: `xcode-select --install`).
 
 ## Build from source
 

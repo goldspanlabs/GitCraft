@@ -8,9 +8,10 @@
 #   nimbus-hotfix/     a linked worktree of it
 #   .remote/nimbus.git a bare repo standing in for the GitHub remote
 #
-# Every person, email and project name is made up. The remote's URL reads as
-# github.com (so GitCraft shows the GitHub icon), but a repo-local `insteadOf`
-# points it at the bare repo, so fetch and push work offline and touch nothing real.
+# Every person, email and project name is made up. The remote is configured with a
+# github.com URL, but a repo-local `insteadOf` points it at the bare repo, so fetch and
+# push work offline and touch nothing real. GitCraft reads the rewritten (local) URL,
+# so the remote shows the generic cloud icon rather than GitHub's.
 # Run it again with a new TARGET_DIR to get a fresh copy; it never deletes anything.
 set -euo pipefail
 
