@@ -553,15 +553,15 @@ private struct LocalBranchRowView: View {
                     tab.switchCheckout(to: wt.path)
                 })
             } else {
-                entries.append(.item("Checkout...") {
+                entries.append(.item("Checkout") {
                     tab.checkoutBranch(branch.name)
                 })
             }
-            entries.append(.item("Merge into '\(tab.currentBranch)'") {
-                tab.mergeBranch(branch.name)
+            entries.append(.item("Merge into '\(tab.currentBranch)'…") {
+                tab.requestMergeCommit(branch.targetOidHex)
             })
         }
-        entries.append(.item("New Branch...") {
+        entries.append(.item("New Branch…") {
             tab.presentNewBranch(startPoint: branch.name)
         })
         entries.append(.item("New Worktree…", enabled: !tab.isBusy) {
@@ -574,7 +574,7 @@ private struct LocalBranchRowView: View {
         }
         if !branch.isHead {
             entries.append(.separator)
-            entries.append(.item("Delete...") {
+            entries.append(.item("Delete…") {
                 tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
             })
         }
@@ -596,17 +596,17 @@ private struct RemoteBranchRowView: View {
             depth: depth
         ) {
             [
-                .item("Checkout...") {
+                .item("Checkout") {
                     tab.checkoutBranch(branch.name)
                 },
-                .item("New Branch...") {
+                .item("New Branch…") {
                     tab.presentNewBranch(startPoint: branch.name)
                 },
                 .item("New Worktree…", enabled: !tab.isBusy) {
                     tab.presentNewWorktree(source: .remoteBranch(name: branch.name))
                 },
                 .separator,
-                .item("Delete '\(branch.name)'") {
+                .item("Delete '\(branch.name)'…") {
                     tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
                 },
             ]

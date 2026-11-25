@@ -224,6 +224,11 @@ extension RepoTab {
         return try? await Task.detached { try session.mergeHasConflicts(commit: oid) }.value
     }
 
+    /// Rebasing rewrites the branch's commits, so it goes through the confirmation dialog.
+    func requestRebase(onto oid: String) {
+        pendingConfirmation = .rebase(branch: currentBranch, commit: oid)
+    }
+
     func rebaseOnto(_ oid: String) {
         performMutation { try $0.rebaseOnto(commit: oid) }
     }
@@ -288,6 +293,8 @@ extension RepoTab {
             stashDrop(index)
         case let .resetHard(_, commit):
             performReset(commit, mode: .hard)
+        case let .rebase(_, commit):
+            rebaseOnto(commit)
         }
     }
 

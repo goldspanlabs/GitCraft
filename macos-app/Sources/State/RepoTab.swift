@@ -71,6 +71,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case abortRebase
         case dropStash(index: UInt32, name: String)
         case resetHard(branch: String, commit: String)
+        case rebase(branch: String, commit: String)
 
         var id: String {
             switch self {
@@ -85,6 +86,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
             case let .resetHard(_, commit): return "reset-hard-\(commit)"
+            case let .rebase(_, commit): return "rebase-\(commit)"
             }
         }
 
@@ -102,6 +104,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
             case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.prefix(7)) and discard changes?"
+            case let .rebase(branch, commit): return "Rebase \"\(branch)\" onto \(commit.prefix(7))?"
             }
         }
 
@@ -135,6 +138,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "This will stop the rebase and put your branch back as it was before the pull."
             case .dropStash:
                 return "The stashed changes will be removed. This can't be undone from GitCraft."
+            case .rebase:
+                return "This replays the commits on your branch on top of the selected commit and rewrites their IDs. If you have already pushed this branch, you will need to force push afterwards."
             case .resetHard:
                 return "Uncommitted changes to tracked files will be discarded, and commits after this one will leave the branch. Discarded changes can't be recovered from GitCraft."
             }
@@ -151,6 +156,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
             case .resetHard: return "Reset"
+            case .rebase: return "Rebase"
             }
         }
     }

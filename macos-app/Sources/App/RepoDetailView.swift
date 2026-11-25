@@ -72,7 +72,7 @@ struct RepoDetailView: View {
                         onCommitAction: { action, oid in
                             switch action {
                             case .merge: tab.requestMergeCommit(oid)
-                            case .rebase: tab.rebaseOnto(oid)
+                            case .rebase: tab.requestRebase(onto: oid)
                             case let .reset(mode): tab.resetTo(oid, mode: mode)
                             case .cherryPick: tab.cherryPick(oid)
                             case .revert: tab.revertCommit(oid)
