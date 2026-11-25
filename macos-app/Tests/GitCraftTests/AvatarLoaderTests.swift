@@ -83,4 +83,37 @@ final class AvatarLoaderTests: XCTestCase {
         let cloudIcon2 = try XCTUnwrap(cloud2.displayedIconImage)
         XCTAssertTrue(cloudIcon1 === cloudIcon2)
     }
+    func testInitialsUseFirstTwoWordsAndFallBackToQuestionMark() {
+        XCTAssertEqual(AvatarInitials.from("Ada Lovelace"), "AL")
+        XCTAssertEqual(AvatarInitials.from("ada byron lovelace"), "AB")
+        XCTAssertEqual(AvatarInitials.from("madonna"), "M")
+        XCTAssertEqual(AvatarInitials.from(""), "?")
+        XCTAssertEqual(AvatarInitials.from("   "), "?")
+    }
+
+    func testNormalizedKeyTrimsWhitespaceAndLowercases() {
+        XCTAssertEqual(AvatarLoader.normalizedKey(for: "  Foo@Example.COM "), "foo@example.com")
+        XCTAssertEqual(AvatarLoader.normalizedKey(for: "   "), "")
+    }
+
+    func testAvatarURLMapsGitHubNoreplyAddressesToGitHubAvatars() {
+        XCTAssertEqual(
+            AvatarLoader.avatarURL(for: "octocat@users.noreply.github.com")?.absoluteString,
+            "https://github.com/octocat.png?size=120"
+        )
+        XCTAssertEqual(
+            AvatarLoader.avatarURL(for: "12345+octocat@users.noreply.github.com")?.absoluteString,
+            "https://github.com/octocat.png?size=120"
+        )
+        XCTAssertNil(AvatarLoader.avatarURL(for: "noreply@github.com"))
+    }
+
+    func testAvatarURLUsesHashedGravatarWithoutLeakingTheAddress() throws {
+        let url = try XCTUnwrap(AvatarLoader.avatarURL(for: "someone@example.com"))
+        XCTAssertEqual(url.host, "www.gravatar.com")
+        XCTAssertFalse(url.absoluteString.contains("someone"))
+        XCTAssertEqual(url.lastPathComponent.count, 64)
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "d" }?.value, "404")
+        XCTAssertEqual(url, AvatarLoader.avatarURL(for: "someone@example.com"))
+    }
 }
