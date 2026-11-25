@@ -6,11 +6,25 @@ final class RefPillView: NSView {
     private let divider = NSView()
     /// The untinted glyph; `applyColors` bakes the chip colour into `iconView.image`.
     private var templateIcon: NSImage?
+    private var templateIconKey: String?
     private let badge: RefBadge
     /// The graph lane colour of the commit this chip sits on. Used by branch chips only;
     /// HEAD and tag chips keep fixed colours so they stand apart from the lanes.
     private let laneColor: NSColor?
     private let host: RemoteHost?
+    private var appliedAppearanceName: NSAppearance.Name?
+
+    private static let checkmarkIcon: NSImage? = {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
+        return NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
+            .withSymbolConfiguration(config)
+    }()
+
+    private static let tintedIconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
 
     /// `showsUnpushedDot` swaps the checked-out branch's check mark for an orange dot.
     /// `inOtherWorktree` marks a local branch checked out in a different worktree with a folder icon.
@@ -38,7 +52,7 @@ final class RefPillView: NSView {
         if !iconOnly { addSubview(label) }
         if let host, let icon = host.icon {
             // Remote chips lead with the hosting service's mark, set off by a thin divider.
-            configureLeadingIcon(icon, size: 14, iconOnly: iconOnly, withDivider: !iconOnly)
+            configureLeadingIcon(icon, key: "host:\(host)", size: 14, iconOnly: iconOnly, withDivider: !iconOnly)
         } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head, showsUnpushedDot {
             // Unpushed commits: the orange dot takes the check mark's place, same 13pt slot.
             let dot = NSView()
@@ -60,16 +74,13 @@ final class RefPillView: NSView {
             ])
         } else if badge.isCurrent, badge.kind == .localBranch || badge.kind == .head {
             // The checked-out branch gets a check mark in front of its name.
-            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
-            let check = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
-                .withSymbolConfiguration(config)
-            configureLeadingIcon(check, size: 13, iconOnly: false, withDivider: false, labelSpacing: 4)
+            configureLeadingIcon(Self.checkmarkIcon, key: "checkmark", size: 13, iconOnly: false, withDivider: false, labelSpacing: 4)
         } else if inOtherWorktree, badge.kind == .localBranch, !badge.isCurrent {
             // Checked out in another worktree: a folder mark set off by a divider, like tags.
-            configureLeadingIcon(PhosphorIcon.nsImage(for: .folder), size: 12, iconOnly: false, withDivider: true)
+            configureLeadingIcon(PhosphorIcon.nsImage(for: .folder), key: "folder", size: 12, iconOnly: false, withDivider: true)
         } else if badge.kind == .tag {
             // Tags lead with a tag glyph, set off by a thin divider like the host marks on remote chips.
-            configureLeadingIcon(PhosphorIcon.nsImage(for: .tag), size: 12, iconOnly: false, withDivider: true)
+            configureLeadingIcon(PhosphorIcon.nsImage(for: .tag), key: "tag", size: 12, iconOnly: false, withDivider: true)
         } else {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6).isActive = true
         }
@@ -87,12 +98,14 @@ final class RefPillView: NSView {
 
     private func configureLeadingIcon(
         _ icon: NSImage?,
+        key: String,
         size: CGFloat,
         iconOnly: Bool,
         withDivider: Bool,
         labelSpacing: CGFloat = 6
     ) {
         templateIcon = icon
+        templateIconKey = key
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
@@ -125,16 +138,31 @@ final class RefPillView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    /// The tinted leading icon currently displayed by this chip (for tests).
+    var displayedIconImage: NSImage? {
+        iconView.image
+    }
+
     override func updateLayer() {
-        applyColors()
+        if appliedAppearanceName != effectiveAppearance.name {
+            applyColors()
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        appliedAppearanceName = nil
         needsDisplay = true
     }
 
-    private static func tinted(_ template: NSImage, with color: NSColor) -> NSImage {
+    private static func tinted(_ template: NSImage, key: String, with color: NSColor) -> NSImage {
+        let byte: (CGFloat) -> UInt8 = { UInt8((min(max($0, 0), 1) * 255).rounded()) }
+        let cacheKey: NSString? = color.usingColorSpace(.sRGB).map { srgb in
+            "\(key):\(byte(srgb.redComponent)):\(byte(srgb.greenComponent)):\(byte(srgb.blueComponent)):\(byte(srgb.alphaComponent))" as NSString
+        }
+        if let cacheKey, let cached = tintedIconCache.object(forKey: cacheKey) {
+            return cached
+        }
         let size = template.size
         let image = NSImage(size: size, flipped: false) { rect in
             template.draw(in: rect)
@@ -143,43 +171,53 @@ final class RefPillView: NSView {
             return true
         }
         image.isTemplate = false
+        if let cacheKey {
+            tintedIconCache.setObject(image, forKey: cacheKey)
+        }
         return image
     }
 
     private func applyColors() {
-        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        appliedAppearanceName = effectiveAppearance.name
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 
-        let baseColor: NSColor = switch badge.kind {
-        case .localBranch, .remoteBranch: laneColor ?? .systemGray
-        case .tag: .systemBrown
-        case .head: .systemYellow
+            let baseColor: NSColor = switch badge.kind {
+            case .localBranch, .remoteBranch: laneColor ?? .systemGray
+            case .tag: .systemBrown
+            case .head: .systemYellow
+            }
+
+            // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
+            // highlighted with the strong blue selection color.
+            let bgColor: NSColor
+            let fgColor: NSColor
+            let borderColor: NSColor
+
+            if isDark {
+                let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
+                bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
+                // The current branch's chip text is noticeably brighter than other chips'.
+                fgColor = baseColor.blended(withFraction: badge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
+                borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
+            } else {
+                bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
+                fgColor = baseColor.blended(withFraction: 0.45, of: .black) ?? baseColor
+                borderColor = baseColor.withAlphaComponent(badge.isCurrent ? 0.85 : 0.55)
+            }
+
+            layer?.backgroundColor = bgColor.cgColor
+            layer?.borderColor = borderColor.cgColor
+            label.textColor = fgColor
+            // Pre-tint instead of relying on a template image: a selected row would otherwise
+            // recolour template icons, washing them out against the selection highlight.
+            if let templateIcon, let templateIconKey {
+                iconView.image = Self.tinted(templateIcon, key: templateIconKey, with: fgColor)
+            } else {
+                iconView.image = nil
+            }
+            divider.layer?.backgroundColor = borderColor.withAlphaComponent(0.6).cgColor
         }
-
-        // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
-        // highlighted with the strong blue selection color.
-        let bgColor: NSColor
-        let fgColor: NSColor
-        let borderColor: NSColor
-
-        if isDark {
-            let darkBase = NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1.0)
-            bgColor = darkBase.blended(withFraction: badge.isCurrent ? 0.35 : 0.25, of: baseColor) ?? darkBase
-            // The current branch's chip text is noticeably brighter than other chips'.
-            fgColor = baseColor.blended(withFraction: badge.isCurrent ? 0.8 : 0.45, of: .white) ?? baseColor
-            borderColor = baseColor.blended(withFraction: 0.25, of: .white) ?? baseColor
-        } else {
-            bgColor = NSColor.white.blended(withFraction: badge.isCurrent ? 0.22 : 0.14, of: baseColor) ?? .white
-            fgColor = baseColor.blended(withFraction: 0.45, of: .black) ?? baseColor
-            borderColor = baseColor.withAlphaComponent(badge.isCurrent ? 0.85 : 0.55)
-        }
-
-        layer?.backgroundColor = bgColor.cgColor
-        layer?.borderColor = borderColor.cgColor
-        label.textColor = fgColor
-        // Pre-tint instead of relying on a template image: a selected row would otherwise
-        // recolour template icons, washing them out against the selection highlight.
-        iconView.image = templateIcon.map { Self.tinted($0, with: fgColor) }
-        divider.layer?.backgroundColor = borderColor.withAlphaComponent(0.6).cgColor
     }
 
     @available(*, unavailable)
