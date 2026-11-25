@@ -513,6 +513,8 @@ private struct BranchRowContainer<Trailing: View>: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
                 .help(glyphHelp)
+                // VoiceOver (and UI tests) read the same note the tooltip shows.
+                .accessibilityLabel(glyphHelp.isEmpty ? "Branch" : glyphHelp)
 
             Text(displayName)
                 .lineLimit(1)
