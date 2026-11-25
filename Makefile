@@ -14,7 +14,9 @@ rust:
 	cargo build --release --manifest-path $(RUST_DIR)/Cargo.toml
 
 bindings: rust
-	@TMP_DIR="$$(mktemp -d)"; \
+	@set -eu; \
+	TMP_DIR="$$(mktemp -d)"; \
+	trap 'rm -rf "$$TMP_DIR"' EXIT; \
 	cargo run --release --manifest-path $(RUST_DIR)/Cargo.toml --bin uniffi-bindgen -- generate "$(RUST_DIR)/src/gitcraft_core.udl" --language swift --crate gitcraft_core --out-dir "$$TMP_DIR"; \
 	mkdir -p "$(APP_DIR)/Sources/Generated"; \
 	for f in "$$TMP_DIR"/*; do \
@@ -22,8 +24,7 @@ bindings: rust
 		if [ ! -f "$$dest" ] || ! cmp -s "$$f" "$$dest"; then \
 			cp "$$f" "$$dest"; \
 		fi; \
-	done; \
-	rm -rf "$$TMP_DIR"
+	done
 
 swift: rust bindings
 	cd "$(APP_DIR)" && swift build -c release $(SWIFT_FLAGS)

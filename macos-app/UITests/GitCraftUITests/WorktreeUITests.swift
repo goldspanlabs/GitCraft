@@ -116,7 +116,8 @@ final class WorktreeUITests: XCTestCase {
             wait(for: linked, toSatisfy: "exists == false", timeout: 30),
             "the row disappears once the worktree is removed"
         )
-        XCTAssertTrue(element("worktree-row:main").exists)
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
+        XCTAssertFalse(element("worktree-row:main").exists)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
     }
 
@@ -175,7 +176,8 @@ final class WorktreeUITests: XCTestCase {
             "the row disappears once the forced removal finishes"
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder and its uncommitted file are deleted")
-        XCTAssertTrue(element("worktree-row:main").exists)
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
+        XCTAssertFalse(element("worktree-row:main").exists)
     }
 
     func testRemovingTheActiveWorktreeSwitchesTheTabToTheMainCheckout() throws {
@@ -218,9 +220,10 @@ final class WorktreeUITests: XCTestCase {
             "the row disappears once the worktree is removed"
         )
         XCTAssertTrue(
-            element("worktree-current:main").waitForExistence(timeout: 20),
+            wait(for: app.windows.firstMatch, toSatisfy: "title == 'repo'", timeout: 20),
             "the tab moves to the main checkout"
         )
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.mainPath), "the main checkout is untouched")
     }
