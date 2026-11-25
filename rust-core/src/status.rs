@@ -3,8 +3,16 @@ use std::{collections::BTreeSet, path::PathBuf};
 use crate::{git_cli, FileChange, GitCraftError, RepoSession, RepoStatus};
 
 impl RepoSession {
-    /// Resolves `<git dir>/<name>` for several names in one `git rev-parse --git-path` call,
-    /// so it works even when `.git` is a file (linked worktrees, submodules).
+    /// Resolves `<git dir>/<name>` via `git rev-parse --git-path`, so it works even when
+    /// `.git` is a file (linked worktrees, submodules). Only the final newline is dropped, so a
+    /// path that itself contains a newline stays in one piece.
+    pub(crate) fn git_path(&self, name: &str) -> Result<PathBuf, GitCraftError> {
+        let out = git_cli::run(&self.path, &["rev-parse", "--git-path", name])?;
+        Ok(self.resolve_git_path(out.strip_suffix('\n').unwrap_or(&out)))
+    }
+
+    /// Resolves several names in one git call. If the output doesn't split into exactly one
+    /// line per name (a path containing a newline), falls back to one call per name.
     pub(crate) fn git_paths(&self, names: &[&str]) -> Result<Vec<PathBuf>, GitCraftError> {
         let mut args = vec!["rev-parse"];
         for name in names {
@@ -12,23 +20,23 @@ impl RepoSession {
             args.push(name);
         }
         let out = git_cli::run(&self.path, &args)?;
-        Ok(out
-            .lines()
-            .map(|line| {
-                let p = PathBuf::from(line);
-                if p.is_absolute() {
-                    p
-                } else {
-                    self.path.join(p)
-                }
-            })
-            .collect())
+        let lines: Vec<&str> = out.lines().collect();
+        if lines.len() == names.len() {
+            return Ok(lines
+                .into_iter()
+                .map(|l| self.resolve_git_path(l))
+                .collect());
+        }
+        names.iter().map(|name| self.git_path(name)).collect()
     }
 
-    pub(crate) fn git_path(&self, name: &str) -> Result<PathBuf, GitCraftError> {
-        self.git_paths(&[name])?.into_iter().next().ok_or_else(|| {
-            GitCraftError::message(format!("git did not resolve the path for {name}"))
-        })
+    fn resolve_git_path(&self, line: &str) -> PathBuf {
+        let p = PathBuf::from(line);
+        if p.is_absolute() {
+            p
+        } else {
+            self.path.join(p)
+        }
     }
 
     pub fn status(&self) -> Result<RepoStatus, GitCraftError> {

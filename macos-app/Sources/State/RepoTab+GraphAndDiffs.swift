@@ -72,13 +72,12 @@ extension RepoTab {
         searchDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
+            self?.searchDebounceTask = nil
             self?.updateSearch(query)
         }
     }
 
     func updateSearch(_ query: String) {
-        searchDebounceTask?.cancel()
-        searchDebounceTask = nil
         searchQuery = query
         graphGeneration += 1  // invalidate in-flight page fetches and older searches
         let requestGeneration = graphGeneration
