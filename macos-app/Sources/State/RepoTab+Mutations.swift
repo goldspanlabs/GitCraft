@@ -3,7 +3,7 @@ import AppKit
 extension RepoTab {
     /// Applies a `LocalChangesHandling` strategy around an operation (checkout or branch creation),
     /// stashing and rolling back on error or discarding dirty files before running `operation`.
-    private nonisolated static func withLocalChanges(
+    nonisolated static func withLocalChanges(
         _ handling: LocalChangesHandling,
         hasChanges: Bool,
         stashMessage: String,
@@ -18,14 +18,19 @@ extension RepoTab {
         case .doNotChange:
             try operation()
         case .stashAndReapply:
+            // `git stash push` succeeds without creating anything when there is nothing to
+            // save (the tab's change list can be a moment stale). Popping then would apply and
+            // drop an older stash the person kept, so only pop an entry this call created.
+            let stashesBefore = try session.listStashes().count
             try session.stashPush(message: stashMessage, includeUntracked: true)
+            let didStash = try session.listStashes().count > stashesBefore
             do {
                 try operation()
             } catch {
-                try? session.stashPop(index: 0)
+                if didStash { try? session.stashPop(index: 0) }
                 throw error
             }
-            try session.stashPop(index: 0)
+            if didStash { try session.stashPop(index: 0) }
         case .discard:
             try session.discardAll()
             try operation()
@@ -122,13 +127,16 @@ extension RepoTab {
         )
         let skip = skipHooks
         let amend = amendCommit
-        let session = self.session
         // Amending a commit that is already on the remote would make the push a non-fast-forward,
-        // so it is left for the person to push by hand.
-        let rewritesPushedCommit = amend && ((try? session.headIsPushed()) ?? false)
+        // so it is left for the person to push by hand. Asking walks history, so it happens in
+        // the background work (before the amend moves HEAD), not on the main thread.
+        let pushedCheck = PushedCheck()
 
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
+            if amend {
+                pushedCheck.headWasPushed = (try? session.headIsPushed()) ?? false
+            }
             if autoStage {
                 try session.stageAll()
             }
@@ -139,7 +147,7 @@ extension RepoTab {
             self?.amendCommit = false
             self?.skipHooks = false
             if pushAfter {
-                if rewritesPushedCommit {
+                if pushedCheck.headWasPushed {
                     self?.toast = Toast(
                         message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
                     )
@@ -485,4 +493,11 @@ extension RepoTab {
 /// awaited that work, so the unchecked `Sendable` is safe.
 private final class PreparedSession: @unchecked Sendable {
     var session: RepoSession?
+}
+
+/// Carries whether HEAD was already pushed from a mutation's background work back to the main
+/// actor. Written once before the commit runs and read only after `performMutation` has awaited
+/// that work, so the unchecked `Sendable` is safe.
+private final class PushedCheck: @unchecked Sendable {
+    var headWasPushed = false
 }

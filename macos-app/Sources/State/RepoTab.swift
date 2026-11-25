@@ -274,6 +274,7 @@ final class RepoTab: ObservableObject, Identifiable {
     private var reportedMissingCheckout: (path: String, message: String)?
     private var sortObserver: NSObjectProtocol?
     private var lastCommitSort = CommitSortPreference.current
+    private var lastShowAvatars = AvatarPreference.isEnabled()
 
     /// Resolves symlinks with POSIX `realpath` so checkout paths match `git worktree list`
     /// verbatim. Unlike `URL.resolvingSymlinksInPath()`, `realpath` preserves macOS's
@@ -553,6 +554,14 @@ final class RepoTab: ObservableObject, Identifiable {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                let avatarsOn = AvatarPreference.isEnabled()
+                if avatarsOn != self.lastShowAvatars {
+                    self.lastShowAvatars = avatarsOn
+                    // Rows keep their cells until reloaded; a new generation forces the table
+                    // to redraw them with or without avatars.
+                    self.graphGeneration += 1
+                    self.graphRevision = UUID()
+                }
                 let current = CommitSortPreference.current
                 guard current != self.lastCommitSort else { return }
                 self.lastCommitSort = current

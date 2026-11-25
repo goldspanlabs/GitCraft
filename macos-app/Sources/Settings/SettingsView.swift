@@ -6,7 +6,7 @@ struct SettingsView: View {
     @AppStorage(AppearancePreference.storageKey)
     private var appearanceRaw = AppearancePreference.system.rawValue
 
-    @AppStorage(showAvatarsStorageKey) private var showAvatars = true
+    @AppStorage(showAvatarsStorageKey) private var showAvatars = false
     @AppStorage(AutoFetchInterval.storageKey) private var autoFetchMinutes = 0
     @AppStorage(GitPreferences.fetchIncludeTagsKey) private var fetchIncludeTags = false
     @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
@@ -87,7 +87,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Show author avatars", isOn: $showAvatars)
-                Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address. When off, nothing is sent and initials are shown instead.")
+                Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address. When off, nothing is sent and no avatars are shown.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

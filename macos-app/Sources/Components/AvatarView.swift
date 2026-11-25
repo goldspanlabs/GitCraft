@@ -129,11 +129,21 @@ final class AvatarLoader {
         return CGImageSourceCreateImageAtIndex(source, 0, imageOptions as CFDictionary)
     }
 
+    /// GitHub logins are 1-39 letters, digits and single hyphens, not starting with a hyphen.
+    nonisolated static func isGitHubLogin(_ name: String) -> Bool {
+        guard (1 ... 39).contains(name.count), !name.hasPrefix("-") else { return false }
+        return name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+
     nonisolated static func avatarURL(for email: String) -> URL? {
         let suffix = "@users.noreply.github.com"
         if email.hasSuffix(suffix) {
             var user = String(email.dropLast(suffix.count))
             if let plus = user.firstIndex(of: "+") { user = String(user[user.index(after: plus)...]) }
+            // The text before the @ is chosen by the commit author, so only a plausible GitHub
+            // login goes into the URL. Anything else (slashes, `?`, `#`, brackets of a bot
+            // account) would change the request path, and gets no avatar lookup.
+            guard isGitHubLogin(user) else { return nil }
             return URL(string: "https://github.com/\(user).png?size=120")
         }
         if email == "noreply@github.com" { return nil }
@@ -148,10 +158,17 @@ struct AvatarView: View {
     let email: String
     var size: CGFloat = 36
 
-    @AppStorage(showAvatarsStorageKey) private var showAvatars = true
+    @AppStorage(showAvatarsStorageKey) private var showAvatars = false
     @State private var loaded: (email: String, image: NSImage)?
 
+    /// Draws nothing at all while avatars are off, not even the initials tile.
     var body: some View {
+        if showAvatars {
+            avatar
+        }
+    }
+
+    @ViewBuilder private var avatar: some View {
         let key = AvatarLoader.normalizedKey(for: email)
         let displayedImage: NSImage? = if showAvatars, !key.isEmpty {
             AvatarLoader.shared.cachedImage(for: key)
@@ -254,8 +271,13 @@ final class AvatarImageView: NSView {
     }
 
     func configure(name: String, email: String) {
-        let showAvatars = UserDefaults.standard.object(forKey: showAvatarsStorageKey) as? Bool ?? true
+        let showAvatars = AvatarPreference.isEnabled()
         let key = AvatarLoader.normalizedKey(for: email)
+        isHidden = !showAvatars
+        guard showAvatars else {
+            clear()
+            return
+        }
 
         // Reuse the existing image in place when the recycled cell belongs to the same author.
         if showAvatars, !key.isEmpty, self.email == key, imageView.image != nil, !imageView.isHidden {

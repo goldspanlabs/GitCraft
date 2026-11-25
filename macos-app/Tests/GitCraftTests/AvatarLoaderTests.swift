@@ -108,6 +108,55 @@ final class AvatarLoaderTests: XCTestCase {
         XCTAssertNil(AvatarLoader.avatarURL(for: "noreply@github.com"))
     }
 
+    func testAvatarURLRejectsNoreplyNamesThatAreNotGitHubLogins() {
+        for email in [
+            "a/../../settings@users.noreply.github.com",
+            "name?size=1#@users.noreply.github.com",
+            "49699333+dependabot[bot]@users.noreply.github.com",
+            "-leading@users.noreply.github.com",
+            "@users.noreply.github.com",
+        ] {
+            XCTAssertNil(AvatarLoader.avatarURL(for: email), email)
+        }
+        XCTAssertNotNil(AvatarLoader.avatarURL(for: "a-b-9@users.noreply.github.com"))
+    }
+
+    func testAvatarsAreOffAndUnansweredUntilThePersonChooses() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "gitcraft-avatar-pref-\(UUID().uuidString)"))
+        XCTAssertFalse(AvatarPreference.isEnabled(defaults))
+        XCTAssertTrue(AvatarPreference.needsPrompt(defaults))
+
+        defaults.set(true, forKey: showAvatarsStorageKey)
+        XCTAssertTrue(AvatarPreference.isEnabled(defaults))
+        XCTAssertFalse(AvatarPreference.needsPrompt(defaults))
+
+        defaults.set(false, forKey: showAvatarsStorageKey)
+        XCTAssertFalse(AvatarPreference.isEnabled(defaults))
+        XCTAssertFalse(AvatarPreference.needsPrompt(defaults))
+    }
+
+    @MainActor
+    func testAvatarImageViewIsHiddenWhileAvatarsAreOff() {
+        let previous = UserDefaults.standard.object(forKey: showAvatarsStorageKey)
+        UserDefaults.standard.set(false, forKey: showAvatarsStorageKey)
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: showAvatarsStorageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: showAvatarsStorageKey)
+            }
+        }
+
+        let view = AvatarImageView(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+        view.isHidden = false
+        view.configure(name: "Ada Lovelace", email: "ada@example.com")
+        XCTAssertTrue(view.isHidden)
+        view.isHidden = false
+        view.configure(name: "GitHub", email: "noreply@github.com")
+        XCTAssertTrue(view.isHidden)
+        XCTAssertFalse(view.hasLoadedImage)
+    }
+
     func testAvatarURLUsesHashedGravatarWithoutLeakingTheAddress() throws {
         let url = try XCTUnwrap(AvatarLoader.avatarURL(for: "someone@example.com"))
         XCTAssertEqual(url.host, "www.gravatar.com")

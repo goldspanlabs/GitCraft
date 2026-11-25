@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !workspace.restoreTabs() {
             workspace.openWelcome()
         }
+        // Once the windows are up, ask whether to load avatars. Skipped for UI tests so the
+        // prompt can't sit in front of the fixture repository.
+        if UserDefaults.standard.string(forKey: "UITestOpenRepository") == nil {
+            DispatchQueue.main.async { AvatarPreference.askIfNeeded() }
+        }
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
