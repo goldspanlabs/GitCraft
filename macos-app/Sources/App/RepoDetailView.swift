@@ -59,6 +59,9 @@ struct RepoDetailView: View {
                         onCreateWorktreeAtCommit: { oid in
                             tab.presentNewWorktree(source: .commit(oid: oid))
                         },
+                        canRemoveWorktree: { worktree in
+                            tab.canRemoveWorktree(worktree)
+                        },
                         onRemoveWorktree: { worktree in
                             tab.requestRemoveWorktree(worktree)
                         },

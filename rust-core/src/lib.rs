@@ -24,10 +24,11 @@ use std::{
 
 pub struct RepoSession {
     pub(crate) path: PathBuf,
-    sync_repo: gix::ThreadSafeRepository,
+    pub(crate) sync_repo: gix::ThreadSafeRepository,
     mutation_lock: Arc<Mutex<()>>,
     dirty: Arc<AtomicBool>,
     graph_dirty: Arc<AtomicBool>,
+    worktrees_dirty: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
     commit_sort: AtomicU8,
 }
@@ -54,16 +55,27 @@ impl RepoSession {
             let repo = sync_repo.to_thread_local();
             (repo.git_dir().to_owned(), repo.common_dir().to_owned())
         };
+        let sibling_worktrees = worktree::list_entries(&path)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|w| !w.is_prunable)
+            .map(|w| PathBuf::from(w.path))
+            .collect();
         let dirty = Arc::new(AtomicBool::new(false));
         let graph_dirty = Arc::new(AtomicBool::new(false));
+        let worktrees_dirty = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         watcher::spawn_dirty_watcher(
             &path,
             &git_dir,
             &common_dir,
-            Arc::clone(&dirty),
-            Arc::clone(&graph_dirty),
-            Arc::clone(&stopped),
+            sibling_worktrees,
+            watcher::WatchFlags {
+                status_dirty: Arc::clone(&dirty),
+                graph_dirty: Arc::clone(&graph_dirty),
+                worktrees_dirty: Arc::clone(&worktrees_dirty),
+                stopped: Arc::clone(&stopped),
+            },
         );
         Ok(Self {
             path,
@@ -71,6 +83,7 @@ impl RepoSession {
             mutation_lock: Arc::new(Mutex::new(())),
             dirty,
             graph_dirty,
+            worktrees_dirty,
             stopped,
             commit_sort: AtomicU8::new(0),
         })
@@ -106,6 +119,12 @@ impl RepoSession {
     /// Plain working-tree edits only need a status refresh.
     pub fn take_graph_dirty(&self) -> bool {
         self.graph_dirty.swap(false, Ordering::AcqRel)
+    }
+
+    /// True if an inactive sibling worktree's working tree or index changed, so sidebar
+    /// dirty counts need refreshing without touching the active checkout's status or graph.
+    pub fn take_worktrees_dirty(&self) -> bool {
+        self.worktrees_dirty.swap(false, Ordering::AcqRel)
     }
 
     /// Chooses the order used by the graph queries. Takes effect on the next query.

@@ -25,6 +25,7 @@ struct CommitTableView: NSViewRepresentable {
     let onCreateBranchAtCommit: (String) -> Void
     let onCreateTagAtCommit: (String) -> Void
     let onCreateWorktreeAtCommit: (String) -> Void
+    let canRemoveWorktree: (WorktreeInfo) -> Bool
     let onRemoveWorktree: (WorktreeInfo) -> Void
     let onCheckoutCommit: (String) -> Void
     /// The checked-out branch's name; empty when HEAD is detached.
@@ -41,6 +42,7 @@ struct CommitTableView: NSViewRepresentable {
             onCreateBranchAtCommit: onCreateBranchAtCommit,
             onCreateTagAtCommit: onCreateTagAtCommit,
             onCreateWorktreeAtCommit: onCreateWorktreeAtCommit,
+            canRemoveWorktree: canRemoveWorktree,
             onRemoveWorktree: onRemoveWorktree,
             onCheckoutCommit: onCheckoutCommit
         )
@@ -106,6 +108,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
         coordinator.onCreateTagAtCommit = onCreateTagAtCommit
         coordinator.onCreateWorktreeAtCommit = onCreateWorktreeAtCommit
+        coordinator.canRemoveWorktree = canRemoveWorktree
         coordinator.onRemoveWorktree = onRemoveWorktree
         coordinator.onCheckoutCommit = onCheckoutCommit
         coordinator.currentBranch = currentBranch
@@ -165,6 +168,7 @@ struct CommitTableView: NSViewRepresentable {
         var onCreateBranchAtCommit: (String) -> Void
         var onCreateTagAtCommit: (String) -> Void
         var onCreateWorktreeAtCommit: (String) -> Void
+        var canRemoveWorktree: (WorktreeInfo) -> Bool
         var onRemoveWorktree: (WorktreeInfo) -> Void
         var onCheckoutCommit: (String) -> Void
         var currentBranch = ""
@@ -185,6 +189,7 @@ struct CommitTableView: NSViewRepresentable {
             onCreateBranchAtCommit: @escaping (String) -> Void,
             onCreateTagAtCommit: @escaping (String) -> Void,
             onCreateWorktreeAtCommit: @escaping (String) -> Void,
+            canRemoveWorktree: @escaping (WorktreeInfo) -> Bool,
             onRemoveWorktree: @escaping (WorktreeInfo) -> Void,
             onCheckoutCommit: @escaping (String) -> Void
         ) {
@@ -196,6 +201,7 @@ struct CommitTableView: NSViewRepresentable {
             self.onCreateBranchAtCommit = onCreateBranchAtCommit
             self.onCreateTagAtCommit = onCreateTagAtCommit
             self.onCreateWorktreeAtCommit = onCreateWorktreeAtCommit
+            self.canRemoveWorktree = canRemoveWorktree
             self.onRemoveWorktree = onRemoveWorktree
             self.onCheckoutCommit = onCheckoutCommit
         }
@@ -242,13 +248,13 @@ struct CommitTableView: NSViewRepresentable {
             let linkedHere = worktrees.filter { !$0.isMain && $0.headOidHex == oid }
             if linkedHere.count == 1, let worktree = linkedHere.first {
                 let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
-                entries.append(.item("Remove Worktree '\(folder)'…", enabled: !isBusy && !worktree.isLocked) { [weak self] in
+                entries.append(.item("Remove Worktree '\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
                     self?.onRemoveWorktree(worktree)
                 })
             } else if linkedHere.count > 1 {
                 entries.append(.submenu("Remove Worktree…", linkedHere.map { worktree in
                     let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
-                    return .item("'\(folder)'…", enabled: !isBusy && !worktree.isLocked) { [weak self] in
+                    return .item("'\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
                         self?.onRemoveWorktree(worktree)
                     }
                 }))

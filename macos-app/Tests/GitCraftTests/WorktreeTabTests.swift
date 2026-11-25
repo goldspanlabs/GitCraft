@@ -215,6 +215,47 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: expected))
     }
 
+    @MainActor
+    func testBareBackedWorktreeRemovalUsesSurvivingCheckoutAndBlocksSoleCheckout() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let bare = root.appendingPathComponent("origin.git", isDirectory: true)
+        try git(["clone", "--bare", source.path, bare.path], in: root)
+
+        let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
+        let wt2 = root.appendingPathComponent("wt2", isDirectory: true)
+        try git(["worktree", "add", wt1.path, "main"], in: bare)
+        try git(["worktree", "add", "-b", "second", wt2.path], in: bare)
+
+        let tab = try RepoTab(url: wt1)
+        defer { tab.stopWatcher() }
+
+        let firstWt = try XCTUnwrap(tab.worktrees.first { $0.path == tab.activeCheckoutPath })
+        let secondWt = try XCTUnwrap(tab.worktrees.first { $0.path != tab.activeCheckoutPath })
+        XCTAssertTrue(tab.canRemoveWorktree(firstWt))
+
+        tab.removeWorktree(path: firstWt.path, label: "main", force: false)
+
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && tab.activeCheckoutPath != secondWt.path {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTAssertEqual(tab.activeCheckoutPath, secondWt.path)
+        XCTAssertEqual(tab.repoPath, secondWt.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstWt.path))
+
+        // Wait for the surviving tab's worktree list to reflect that only one checkout remains.
+        let listDeadline = Date().addingTimeInterval(10)
+        while Date() < listDeadline && tab.worktrees.count != 1 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let sole = try XCTUnwrap(tab.worktrees.first)
+        XCTAssertFalse(tab.canRemoveWorktree(sole), "cannot remove the sole remaining checkout")
+    }
+
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)

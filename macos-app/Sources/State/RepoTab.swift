@@ -158,7 +158,7 @@ final class RepoTab: ObservableObject, Identifiable {
     let id = UUID()
     let url: URL
     /// The repository's primary checkout, the folder that owns `.git`. It names the tab.
-    private(set) var repoPath: String
+    var repoPath: String
     /// The checkout this tab shows: `repoPath` or one of its linked worktrees.
     @Published private(set) var activeCheckoutPath: String
     /// Every checkout of the repository, primary first.
@@ -298,8 +298,28 @@ final class RepoTab: ObservableObject, Identifiable {
         activeSheet = .newWorktree(source: source)
     }
 
+    /// Picks a surviving checkout to switch back to when removing `path`: the primary checkout
+    /// when available, otherwise any other non-prunable linked checkout (for bare-backed repos).
+    func fallbackCheckoutPath(excluding path: String) -> String? {
+        let canonical = Self.canonicalPath(for: path)
+        if let main = worktrees.first(where: { $0.isMain && $0.path != canonical && !$0.isPrunable }) {
+            return main.path
+        }
+        return worktrees.first(where: { $0.path != canonical && !$0.isPrunable })?.path
+    }
+
+    /// Whether `worktree` can be safely removed from this tab. Never allows removing the primary
+    /// checkout, a locked worktree, or the sole remaining checkout of a bare-backed repository.
+    func canRemoveWorktree(_ worktree: WorktreeInfo) -> Bool {
+        guard !worktree.isMain, !worktree.isLocked else { return false }
+        if activeCheckoutPath == worktree.path {
+            return fallbackCheckoutPath(excluding: worktree.path) != nil
+        }
+        return true
+    }
+
     func requestRemoveWorktree(_ worktree: WorktreeInfo) {
-        guard !worktree.isMain, !worktree.isLocked else { return }
+        guard canRemoveWorktree(worktree) else { return }
         let label = worktree.branch ?? URL(fileURLWithPath: worktree.path).lastPathComponent
         pendingConfirmation = .removeWorktree(
             path: worktree.path,
@@ -366,15 +386,21 @@ final class RepoTab: ObservableObject, Identifiable {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }
-                // Refs/HEAD/config changes need the full reload; plain file edits (including
-                // build output) only need a status refresh, which is far cheaper.
-                let (graphDirty, dirty) = await Task.detached {
-                    (session.takeGraphDirty(), session.takeDirty())
+                // Refs/HEAD/config changes need the full reload; plain file edits in the
+                // active checkout only need a status refresh; edits in inactive sibling
+                // worktrees only refresh sidebar dirty counts.
+                let (graphDirty, dirty, worktreesDirty) = await Task.detached {
+                    (session.takeGraphDirty(), session.takeDirty(), session.takeWorktreesDirty())
                 }.value
                 if graphDirty {
                     self?.refresh()
-                } else if dirty {
-                    self?.refreshStatus()
+                } else {
+                    if dirty {
+                        self?.refreshStatus()
+                    }
+                    if worktreesDirty {
+                        self?.refreshWorktrees()
+                    }
                 }
             }
         }
@@ -463,6 +489,14 @@ final class RepoTab: ObservableObject, Identifiable {
         onCheckoutChanged?()
     }
 
+    private func syncActiveWorktreeDirtyCount() {
+        let activeDirty = UInt32(totalChangesCount)
+        if let index = worktrees.firstIndex(where: { $0.path == activeCheckoutPath }),
+           worktrees[index].dirtyCount != activeDirty {
+            worktrees[index].dirtyCount = activeDirty
+        }
+    }
+
     func applyStatus(_ status: RepoStatus) {
         currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
         isMerging = status.isMerging
@@ -470,11 +504,7 @@ final class RepoTab: ObservableObject, Identifiable {
         hasConflicts = status.hasConflicts
         if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
         if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
-        let activeDirty = UInt32(totalChangesCount)
-        if let index = worktrees.firstIndex(where: { $0.path == activeCheckoutPath }),
-           worktrees[index].dirtyCount != activeDirty {
-            worktrees[index].dirtyCount = activeDirty
-        }
+        syncActiveWorktreeDirtyCount()
     }
 
     /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
@@ -495,6 +525,22 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    /// Re-reads worktree metadata and per-checkout dirty counts independently so a slow
+    /// sibling checkout never delays publishing the active checkout's status or graph.
+    func refreshWorktrees() {
+        let session = self.session
+        Task {
+            do {
+                let worktreeList = try await Task.detached { try session.listWorktrees() }.value
+                guard self.session === session else { return }
+                worktrees = worktreeList
+                syncActiveWorktreeDirtyCount()
+            } catch {
+                // Non-fatal: active checkout status and graph remain usable.
+            }
+        }
+    }
+
     func refresh() {
         let session = self.session
         let query = activeSearchQuery
@@ -504,6 +550,8 @@ final class RepoTab: ObservableObject, Identifiable {
         let limit = max(pageSize, UInt32(commits.count))
         let scoped = scopeToCurrentBranch
 
+        refreshWorktrees()
+
         Task {
             do {
                 async let statusTask = Task.detached { try session.status() }.value
@@ -511,22 +559,19 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let tagsTask = Task.detached { try session.listTags() }.value
                 async let stashesTask = Task.detached { try session.listStashes() }.value
                 async let remotesTask = Task.detached { try session.listRemotes() }.value
-                async let worktreesTask = Task.detached { try session.listWorktrees() }.value
                 async let graphTask = Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
                 }.value
 
-                let (status, branchList, tagList, stashList, remoteList, worktreeList, graphRows) = try await (
+                let (status, branchList, tagList, stashList, remoteList, graphRows) = try await (
                     statusTask,
                     branchesTask,
                     tagsTask,
                     stashesTask,
                     remotesTask,
-                    worktreesTask,
                     graphTask
                 )
                 guard self.session === session else { return }
-                worktrees = worktreeList
                 applyStatus(status)
                 branches = branchList
                 // The core already returns tags newest-created first.

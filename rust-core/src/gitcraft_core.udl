@@ -333,4 +333,5 @@ interface RepoSession {
 
   boolean take_dirty();
   boolean take_graph_dirty();
+  boolean take_worktrees_dirty();
 };

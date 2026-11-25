@@ -375,12 +375,16 @@ extension RepoTab {
     func removeWorktree(path: String, label: String, force: Bool) {
         let canonical = Self.canonicalPath(for: path)
         let wasActive = (canonical == activeCheckoutPath)
+        let fallback = fallbackCheckoutPath(excluding: canonical)
         performMutation({ session in
             try session.removeWorktree(path: canonical, force: force)
         }, onSuccess: { [weak self] in
             guard let self else { return }
-            if wasActive {
-                self.switchCheckout(to: self.repoPath)
+            if self.repoPath == canonical, let fallback {
+                self.repoPath = fallback
+            }
+            if wasActive, let fallback {
+                self.switchCheckout(to: fallback)
             }
         }, onFailure: { [weak self] error in
             // A safe remove refused because the worktree has modified, staged, or untracked

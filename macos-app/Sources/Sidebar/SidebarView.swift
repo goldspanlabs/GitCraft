@@ -417,7 +417,7 @@ private struct WorktreeRowView: View {
                     tab.lockWorktree(worktree.path)
                 })
             }
-            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && !worktree.isLocked) {
+            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && tab.canRemoveWorktree(worktree)) {
                 tab.requestRemoveWorktree(worktree)
             })
         }
@@ -568,7 +568,7 @@ private struct LocalBranchRowView: View {
             tab.presentNewWorktree(source: .localBranch(name: branch.name, isCheckedOut: branchWorktree != nil))
         })
         if let wt = branchWorktree, !wt.isMain {
-            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && !wt.isLocked) {
+            entries.append(.item("Remove Worktree…", enabled: !tab.isBusy && tab.canRemoveWorktree(wt)) {
                 tab.requestRemoveWorktree(wt)
             })
         }

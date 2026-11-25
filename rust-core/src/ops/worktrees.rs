@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::{
     git_cli,
     validation::{trim_optional_text, validate_ref_arg},
@@ -88,17 +86,14 @@ impl RepoSession {
                     "worktree is locked; unlock it before removing",
                 ));
             }
-            let primary = entries
-                .first()
-                .map(|w| Path::new(w.path.as_str()))
-                .unwrap_or(&self.path);
+            let common_dir = self.sync_repo.to_thread_local().common_dir().to_owned();
             let mut args = vec!["worktree", "remove"];
             if force {
                 args.push("--force");
             }
             args.push("--");
             args.push(path.as_str());
-            git_cli::mutate(primary, &args)?;
+            git_cli::mutate(&common_dir, &args)?;
             Ok(())
         })
     }

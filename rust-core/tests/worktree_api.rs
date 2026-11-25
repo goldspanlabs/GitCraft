@@ -533,3 +533,120 @@ fn list_worktree_entries_returns_metadata_without_dirty_counts() {
     assert_eq!(entries[1].path, canonical(&linked));
     assert!(entries.iter().all(|w| w.dirty_count == 0));
 }
+
+#[test]
+fn commit_graph_includes_detached_sibling_worktree_head() {
+    let repo = repo_with_commit();
+    let parent = tempfile::tempdir().unwrap();
+    let detached = parent.path().join("detached-wt");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            detached.to_str().unwrap(),
+            "main",
+        ],
+    );
+    fs::write(detached.join("detached.txt"), "only on detached\n").unwrap();
+    run_git(&detached, &["add", "detached.txt"]);
+    run_git(&detached, &["commit", "-m", "detached-only commit"]);
+    let detached_oid = run_git(&detached, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    // Open on the primary checkout, where no branch or tag points at `detached_oid`.
+    let session = RepoSession::open(repo.path()).unwrap();
+    let rows = session.get_commit_graph(0, 50, None).unwrap();
+    assert!(
+        rows.iter().any(|r| r.oid_hex == detached_oid),
+        "expected full commit graph to include detached sibling worktree HEAD {detached_oid}"
+    );
+}
+
+#[test]
+fn sibling_worktree_file_edit_flags_worktrees_dirty_without_dirtying_active_status() {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let repo = repo_with_commit();
+    let parent = tempfile::tempdir().unwrap();
+    let sibling = parent.path().join("sibling-wt");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "sibling",
+            sibling.to_str().unwrap(),
+        ],
+    );
+
+    let session = RepoSession::open(repo.path()).unwrap();
+    thread::sleep(Duration::from_millis(600));
+    let _ = session.take_dirty();
+    let _ = session.take_graph_dirty();
+    let _ = session.take_worktrees_dirty();
+
+    fs::write(sibling.join("README.md"), "edited in sibling\n").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let mut worktrees_dirty = false;
+    while Instant::now() < deadline {
+        if session.take_worktrees_dirty() {
+            worktrees_dirty = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        worktrees_dirty,
+        "expected sibling worktree edit to flag worktrees_dirty"
+    );
+    assert!(
+        !session.take_dirty(),
+        "sibling worktree edit should not mark active checkout status dirty"
+    );
+    assert!(
+        !session.take_graph_dirty(),
+        "sibling worktree edit should not mark graph dirty"
+    );
+}
+
+#[test]
+fn remove_worktree_works_in_bare_backed_repository_from_removed_session() {
+    let source = repo_with_commit();
+    let parent = tempfile::tempdir().unwrap();
+    let bare = parent.path().join("origin.git");
+    run_git(
+        parent.path(),
+        &[
+            "clone",
+            "--bare",
+            source.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let wt1 = parent.path().join("wt1");
+    let wt2 = parent.path().join("wt2");
+    run_git(&bare, &["worktree", "add", wt1.to_str().unwrap(), "main"]);
+    run_git(
+        &bare,
+        &["worktree", "add", "-b", "second", wt2.to_str().unwrap()],
+    );
+    let wt1_path = canonical(&wt1);
+    let wt2_path = canonical(&wt2);
+
+    // Removing the first non-bare worktree from its own session must run from `common_dir`
+    // (the bare repo) rather than from `wt1` itself.
+    let session = RepoSession::open(&wt1).unwrap();
+    session.remove_worktree(wt1_path, false).unwrap();
+
+    assert!(!wt1.exists(), "removed bare-backed worktree should be gone");
+    let surviving = RepoSession::open(&wt2).unwrap();
+    let remaining = surviving.list_worktree_entries().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].path, wt2_path);
+}
