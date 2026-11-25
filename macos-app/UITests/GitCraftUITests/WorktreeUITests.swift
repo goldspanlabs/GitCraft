@@ -13,8 +13,9 @@ final class WorktreeUITests: XCTestCase {
         // That last test skips the linked worktree: git can't hold both `feature` and
         // `feature/ui` as branch names.
         let fromBranch = name.contains("FromABranchChecksOutThatBranch")
+        let noLinkedWorktrees = fromBranch || name.contains("WithoutLinked")
         fixture = try FixtureRepository.make(
-            linkedWorktree: !fromBranch,
+            linkedWorktree: !noLinkedWorktrees,
             dirtyLinkedWorktree: name.contains("Dirty"),
             lockedLinkedWorktree: name.contains("Locked"),
             detachedLinkedWorktree: name.contains("DetachedWorktreeRow"),
@@ -40,6 +41,11 @@ final class WorktreeUITests: XCTestCase {
     override func tearDownWithError() throws {
         app?.terminate()
         if let fixture { try? FileManager.default.removeItem(at: fixture.root) }
+    }
+
+    func testSidebarHidesMainCheckoutWithoutLinkedWorktrees() {
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 60))
+        XCTAssertFalse(element("worktree-row:main").exists, "the sole primary checkout is not listed as a worktree")
     }
 
     func testSidebarListsMainAndLinkedWorktrees() {
