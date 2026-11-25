@@ -55,7 +55,7 @@ everything at once, write your message and commit, or amend the last commit.
 
 ### Branches, worktrees, tags and stashes in one sidebar
 
-<img src="docs/screenshots/sidebar-branches-light.png" width="380" align="right" alt="Sidebar listing local branches, remotes, worktrees, tags and stashes">
+<img src="docs/screenshots/sidebar-branches-light.png" width="240" align="right" alt="Sidebar listing local branches, remotes, worktrees, tags and stashes">
 
 - Create, check out, merge and delete branches. GitCraft checks for conflicts
   *before* you merge.
