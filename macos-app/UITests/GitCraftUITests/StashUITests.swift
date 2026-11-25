@@ -38,17 +38,21 @@ final class StashUITests: XCTestCase {
 
         let includeUntracked = app.sheets.checkBoxes["Include untracked files"]
         XCTAssertTrue(includeUntracked.waitForExistence(timeout: 10), "the Stash sheet opens")
-        XCTAssertEqual(includeUntracked.value as? Int, 1, "untracked files are included by default")
+        // XCUITest reports a checkbox's value as 1 or "1" depending on the OS; compare its text.
+        XCTAssertEqual("\(includeUntracked.value ?? "")", "1", "untracked files are included by default")
         let stash = app.sheets.buttons["Stash"]
         XCTAssertTrue(stash.waitForExistence(timeout: 10))
         stash.click()
 
+        // git records the stash before it finishes cleaning the working tree, so wait for both.
         XCTAssertTrue(
-            waitUntil(timeout: 30) { (try? self.fixture.stashMessages().count) == 1 },
-            "one stash is saved"
+            waitUntil(timeout: 30) {
+                (try? self.fixture.stashMessages().count) == 1
+                    && (try? self.fixture.isModified("README.md")) == false
+                    && !FileManager.default.fileExists(atPath: untracked)
+            },
+            "one stash is saved, holding the tracked edit and the untracked file"
         )
-        XCTAssertFalse(try fixture.isModified("README.md"), "the tracked edit is stashed")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: untracked), "the untracked file is stashed too")
         let stashed = try fixture.git(["show", "--name-only", "--format=", "stash@{0}^3"])
         XCTAssertTrue(stashed.contains(FixtureRepository.untrackedFileName), "the stash holds the untracked file")
         XCTAssertTrue(element("stash-row:0").waitForExistence(timeout: 20), "the stash is listed in the sidebar")
