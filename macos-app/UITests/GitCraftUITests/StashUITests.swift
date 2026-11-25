@@ -24,6 +24,7 @@ final class StashUITests: XCTestCase {
             // STASHES starts collapsed; its expanded state is a persisted user preference.
             "-sidebar.stashesExpanded", "YES",
         ]
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 

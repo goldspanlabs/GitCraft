@@ -123,6 +123,7 @@ final class StagingUITests: XCTestCase {
         self.fixture = fixture
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 
