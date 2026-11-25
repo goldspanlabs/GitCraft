@@ -237,6 +237,8 @@ final class RepoTab: ObservableObject, Identifiable {
 
     private var watcherTask: Task<Void, Never>?
     private var autoFetchTask: Task<Void, Never>?
+    private var worktreesRefreshTask: Task<Void, Never>?
+    private var worktreesRefreshPending = false
     private var sortObserver: NSObjectProtocol?
     private var lastCommitSort = CommitSortPreference.current
 
@@ -299,13 +301,20 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     /// Picks a surviving checkout to switch back to when removing `path`: the primary checkout
-    /// when available, otherwise any other non-prunable linked checkout (for bare-backed repos).
+    /// when available, otherwise any other linked checkout that still exists on disk (for
+    /// bare-backed repos). A locked worktree whose folder is gone is not prunable per git, so
+    /// the folder check is needed too.
     func fallbackCheckoutPath(excluding path: String) -> String? {
         let canonical = Self.canonicalPath(for: path)
-        if let main = worktrees.first(where: { $0.isMain && $0.path != canonical && !$0.isPrunable }) {
+        func isSurviving(_ worktree: WorktreeInfo) -> Bool {
+            worktree.path != canonical
+                && !worktree.isPrunable
+                && FileManager.default.fileExists(atPath: worktree.path)
+        }
+        if let main = worktrees.first(where: { $0.isMain && isSurviving($0) }) {
             return main.path
         }
-        return worktrees.first(where: { $0.path != canonical && !$0.isPrunable })?.path
+        return worktrees.first(where: isSurviving)?.path
     }
 
     /// Whether `worktree` can be safely removed from this tab. Never allows removing the primary
@@ -461,6 +470,10 @@ final class RepoTab: ObservableObject, Identifiable {
         autoFetchTask?.cancel()
         revealTask?.cancel()
         revealTask = nil
+        // Any in-flight sweep belongs to the old session; the new one starts fresh.
+        worktreesRefreshTask?.cancel()
+        worktreesRefreshTask = nil
+        worktreesRefreshPending = false
         session = next
         activeCheckoutPath = canonical
         graphGeneration += 1
@@ -527,16 +540,29 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Re-reads worktree metadata and per-checkout dirty counts independently so a slow
     /// sibling checkout never delays publishing the active checkout's status or graph.
+    /// Requests made while a sweep is running coalesce into one rerun after it finishes, so
+    /// the poller never stacks overlapping `git status` sweeps.
     func refreshWorktrees() {
+        worktreesRefreshPending = true
+        guard worktreesRefreshTask == nil else { return }
+        runWorktreesRefresh()
+    }
+
+    private func runWorktreesRefresh() {
+        worktreesRefreshPending = false
         let session = self.session
-        Task {
-            do {
-                let worktreeList = try await Task.detached { try session.listWorktrees() }.value
-                guard self.session === session else { return }
+        worktreesRefreshTask = Task {
+            // Non-fatal on failure: active checkout status and graph remain usable.
+            let worktreeList = try? await Task.detached { try session.listWorktrees() }.value
+            // A checkout switch already cleared the task slot for the new session.
+            guard self.session === session else { return }
+            worktreesRefreshTask = nil
+            if let worktreeList {
                 worktrees = worktreeList
                 syncActiveWorktreeDirtyCount()
-            } catch {
-                // Non-fatal: active checkout status and graph remain usable.
+            }
+            if worktreesRefreshPending {
+                runWorktreesRefresh()
             }
         }
     }

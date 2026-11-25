@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -94,6 +94,16 @@ fn classify_path(
         }
     }
     if path.starts_with(worktree) {
+        // A linked checkout nested inside the active one (e.g. `.worktrees/feature`) is still
+        // its own sibling: the active checkout's recursive watch sees its edits too, but only
+        // its sidebar dirty count should refresh. Ancestor siblings never match here, so the
+        // active checkout keeps precedence over them.
+        if sibling_worktrees
+            .iter()
+            .any(|s| s.starts_with(worktree) && path.starts_with(s))
+        {
+            return Change::Worktrees;
+        }
         // Fallback for uncanonicalized event paths containing `/.git/`.
         let text = path.to_string_lossy();
         if let Some((_, inside)) = text.split_once("/.git/") {
@@ -112,6 +122,51 @@ fn classify_path(
     Change::Status
 }
 
+/// Checkout folders registered under `common_dir/worktrees/<name>/gitdir`. Each `gitdir` file
+/// holds the path of that checkout's `.git` file, so its parent is the checkout folder.
+fn registered_worktree_paths(common_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(common_dir.join("worktrees")) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| fs::read_to_string(entry.path().join("gitdir")).ok())
+        .filter_map(|text| Path::new(text.trim_end()).parent().map(Path::to_path_buf))
+        .map(|p| canonical_or_owned(&p))
+        .collect()
+}
+
+/// The sibling checkouts to classify and watch: the ones known when the session opened, plus
+/// any registered since. Entries whose folder is gone are dropped.
+fn current_siblings(worktree: &Path, initial: &[PathBuf], common_dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = initial.to_vec();
+    paths.extend(registered_worktree_paths(common_dir));
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter(|p| p != worktree && p.is_dir())
+        .collect()
+}
+
+/// Adds watches for siblings that are not watched yet. Siblings inside the active checkout are
+/// already covered by its recursive watch.
+fn sync_sibling_watches(
+    watcher: &mut RecommendedWatcher,
+    watched: &mut Vec<PathBuf>,
+    worktree: &Path,
+    siblings: &[PathBuf],
+) {
+    for sibling in siblings {
+        if sibling.starts_with(worktree) || watched.contains(sibling) {
+            continue;
+        }
+        if watcher.watch(sibling, RecursiveMode::Recursive).is_ok() {
+            watched.push(sibling.clone());
+        }
+    }
+}
+
 /// Shared atomic flags raised by the background filesystem watcher.
 pub struct WatchFlags {
     pub status_dirty: Arc<AtomicBool>,
@@ -125,6 +180,9 @@ pub struct WatchFlags {
 /// - `status_dirty` when the active checkout's working tree or index changes,
 /// - `graph_dirty` when refs, HEAD, config, or worktree structure changes,
 /// - `worktrees_dirty` when an inactive sibling worktree's working tree or index changes.
+///
+/// Graph-level events also re-scan the registered worktrees, so a checkout added after the
+/// session opened gets watched and classified too.
 pub fn spawn_dirty_watcher(
     repo: &Path,
     git_dir: &Path,
@@ -135,30 +193,38 @@ pub fn spawn_dirty_watcher(
     let worktree = canonical_or_owned(repo);
     let git_dir = canonical_or_owned(git_dir);
     let common_dir = canonical_or_owned(common_dir);
-    let siblings: Vec<PathBuf> = sibling_worktrees
+    let initial_siblings: Vec<PathBuf> = sibling_worktrees
         .into_iter()
         .map(|p| canonical_or_owned(&p))
         .filter(|p| p != &worktree && p.is_dir())
         .collect();
     thread::spawn(move || {
+        let shared_siblings = Arc::new(Mutex::new(initial_siblings.clone()));
+        // Starts raised so the first loop pass registers siblings created before this thread ran.
+        let reconcile = Arc::new(AtomicBool::new(true));
         let cb_worktree = worktree.clone();
         let cb_git_dir = git_dir.clone();
         let cb_common_dir = common_dir.clone();
-        let cb_siblings = siblings.clone();
+        let cb_siblings = Arc::clone(&shared_siblings);
+        let cb_reconcile = Arc::clone(&reconcile);
         let status_dirty = flags.status_dirty;
         let graph_dirty = flags.graph_dirty;
         let worktrees_dirty = flags.worktrees_dirty;
         let stopped = flags.stopped;
         let callback = move |result: notify::Result<Event>| {
             let Ok(event) = result else { return };
+            let Ok(siblings) = cb_siblings.lock() else {
+                return;
+            };
             for p in &event.paths {
-                match classify_path(p, &cb_worktree, &cb_git_dir, &cb_common_dir, &cb_siblings) {
+                match classify_path(p, &cb_worktree, &cb_git_dir, &cb_common_dir, &siblings) {
                     Change::Irrelevant => {}
                     Change::Status => status_dirty.store(true, Ordering::Release),
                     Change::Worktrees => worktrees_dirty.store(true, Ordering::Release),
                     Change::Graph => {
                         status_dirty.store(true, Ordering::Release);
                         graph_dirty.store(true, Ordering::Release);
+                        cb_reconcile.store(true, Ordering::Release);
                     }
                 }
             }
@@ -178,12 +244,15 @@ pub fn spawn_dirty_watcher(
         if !git_dir.starts_with(&worktree) && !git_dir.starts_with(&common_dir) {
             let _ = watcher.watch(&git_dir, RecursiveMode::Recursive);
         }
-        for sibling in &siblings {
-            if !sibling.starts_with(&worktree) {
-                let _ = watcher.watch(sibling, RecursiveMode::Recursive);
-            }
-        }
+        let mut watched: Vec<PathBuf> = Vec::new();
         while !stopped.load(Ordering::Acquire) {
+            if reconcile.swap(false, Ordering::AcqRel) {
+                let siblings = current_siblings(&worktree, &initial_siblings, &common_dir);
+                sync_sibling_watches(&mut watcher, &mut watched, &worktree, &siblings);
+                if let Ok(mut shared) = shared_siblings.lock() {
+                    *shared = siblings;
+                }
+            }
             thread::sleep(Duration::from_millis(500));
         }
     });
@@ -211,6 +280,33 @@ mod tests {
         assert_eq!(classify("/r/.git/packed-refs"), Change::Graph);
         assert_eq!(classify("/r/.git/config"), Change::Graph);
         assert_eq!(classify("/wt/feature/README.md"), Change::Worktrees);
+    }
+
+    #[test]
+    fn classifies_nested_sibling_checkout_as_worktree_not_active_status() {
+        let worktree = Path::new("/repo");
+        let git_dir = Path::new("/repo/.git");
+        let siblings = vec![PathBuf::from("/repo/.worktrees/feature")];
+        let classify = |p: &str| classify_path(Path::new(p), worktree, git_dir, git_dir, &siblings);
+
+        assert_eq!(
+            classify("/repo/.worktrees/feature/src/a.rs"),
+            Change::Worktrees
+        );
+        assert_eq!(classify("/repo/src/a.rs"), Change::Status);
+    }
+
+    #[test]
+    fn active_checkout_keeps_precedence_over_ancestor_sibling() {
+        let worktree = Path::new("/wt/feature");
+        let git_dir = Path::new("/repo/.git/worktrees/feature");
+        let common_dir = Path::new("/repo/.git");
+        let siblings = vec![PathBuf::from("/wt")];
+        let classify =
+            |p: &str| classify_path(Path::new(p), worktree, git_dir, common_dir, &siblings);
+
+        assert_eq!(classify("/wt/feature/src/lib.rs"), Change::Status);
+        assert_eq!(classify("/wt/other/file.txt"), Change::Worktrees);
     }
 
     #[test]
@@ -257,5 +353,29 @@ mod tests {
         assert_eq!(classify("/repo/README.md"), Change::Worktrees);
         assert_eq!(classify("/wt/other/file.txt"), Change::Worktrees);
         assert_eq!(classify("/repo/.git/worktrees/other/HEAD"), Change::Graph);
+    }
+
+    #[test]
+    fn registered_worktrees_are_found_from_gitdir_files() {
+        let repo = tempfile::tempdir().unwrap();
+        let checkout = tempfile::tempdir().unwrap();
+        let common_dir = repo.path().join(".git");
+        let meta = common_dir.join("worktrees").join("feature");
+        fs::create_dir_all(&meta).unwrap();
+        fs::write(
+            meta.join("gitdir"),
+            format!("{}\n", checkout.path().join(".git").display()),
+        )
+        .unwrap();
+
+        let found = registered_worktree_paths(&common_dir);
+        assert_eq!(found, vec![canonical_or_owned(checkout.path())]);
+
+        let siblings = current_siblings(Path::new("/nowhere"), &[], &common_dir);
+        assert_eq!(siblings, vec![canonical_or_owned(checkout.path())]);
+
+        // A registration whose folder has been deleted is not watched.
+        fs::remove_dir_all(checkout.path()).unwrap();
+        assert!(current_siblings(Path::new("/nowhere"), &[], &common_dir).is_empty());
     }
 }
