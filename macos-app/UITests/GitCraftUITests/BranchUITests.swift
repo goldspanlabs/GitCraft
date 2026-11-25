@@ -94,6 +94,13 @@ final class BranchUITests: XCTestCase {
         XCTAssertFalse(one.staticTexts["team/one"].exists, "not the full name")
         XCTAssertTrue(app.staticTexts["team"].firstMatch.exists, "a team folder holds them")
         XCTAssertTrue(element("branch-row:main").exists, "main stays at the top level")
+
+        let teamFolder = app.staticTexts["team"].firstMatch
+        teamFolder.click()
+        XCTAssertTrue(wait(for: one, toSatisfy: "exists == false", timeout: 10), "clicking team collapses its branches")
+
+        teamFolder.click()
+        XCTAssertTrue(one.waitForExistence(timeout: 10), "clicking team again expands its branches")
     }
 
     // MARK: Helpers

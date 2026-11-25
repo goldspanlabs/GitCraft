@@ -17,6 +17,24 @@ final class RemoteUITests: XCTestCase {
 
     // MARK: Remote branches
 
+    func testOriginFolderCanBeCollapsedAndExpanded() throws {
+        try launch(fixture: FixtureRepository.make(twoBranches: true, bareRemote: true))
+        let remoteFeature = element("branch-row:origin/\(FixtureRepository.featureBranch)")
+        XCTAssertTrue(remoteFeature.waitForExistence(timeout: 60), "the remote branch is listed")
+
+        let originFolder = app.staticTexts["origin"].firstMatch
+        XCTAssertTrue(originFolder.exists)
+        originFolder.click()
+
+        XCTAssertTrue(
+            wait(for: remoteFeature, toSatisfy: "exists == false", timeout: 10),
+            "clicking origin collapses its remote branches"
+        )
+
+        originFolder.click()
+        XCTAssertTrue(remoteFeature.waitForExistence(timeout: 10), "clicking origin again expands it")
+    }
+
     func testDeletingARemoteBranchKeepsTheLocalOne() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true, bareRemote: true))
         let featureBefore = try fixture.commitID(FixtureRepository.featureBranch)

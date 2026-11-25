@@ -714,38 +714,141 @@ private struct SidebarRowHighlightModifier: ViewModifier {
         return .clear
     }
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        let base = content
+        content
             .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(highlightColor)
-                    .padding(.horizontal, -6)
-                    .padding(.vertical, -3)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(highlightColor)
+                    if showsPress {
+                        PressTrackingBackground(isPressed: $isPressed)
+                    }
+                }
+                .padding(.horizontal, -6)
+                .padding(.vertical, -3)
             }
             .animation(.easeOut(duration: 0.12), value: isHovered)
             .animation(.easeOut(duration: 0.12), value: isPressed)
             .onHover { isHovered = $0 }
-
-        if showsPress {
-            base.simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !isPressed { isPressed = true }
-                    }
-                    .onEnded { _ in
-                        isPressed = false
-                    }
-            )
-        } else {
-            base
-        }
     }
 }
 
 private extension View {
     func sidebarRowHighlight(showsPress: Bool = true) -> some View {
         modifier(SidebarRowHighlightModifier(showsPress: showsPress))
+    }
+}
+
+/// Tracks left-mouse press state via AppKit event monitoring without adding a SwiftUI gesture,
+/// so single-click, double-click, right-click, and accessibility containment are never blocked.
+private struct PressTrackingBackground: NSViewRepresentable {
+    @Binding var isPressed: Bool
+
+    func makeNSView(context: Context) -> PressTrackingNSView {
+        let view = PressTrackingNSView()
+        view.onPressChange = { pressed in
+            if isPressed != pressed {
+                isPressed = pressed
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: PressTrackingNSView, context: Context) {
+        view.onPressChange = { pressed in
+            if isPressed != pressed {
+                isPressed = pressed
+            }
+        }
+    }
+}
+
+@MainActor
+private final class SidebarPressMonitor {
+    static let shared = SidebarPressMonitor()
+
+    private let views = NSHashTable<PressTrackingNSView>.weakObjects()
+    private var pressedViews = NSHashTable<PressTrackingNSView>.weakObjects()
+    private var monitor: Any?
+
+    func register(_ view: PressTrackingNSView) {
+        views.add(view)
+        ensureMonitor()
+    }
+
+    func unregister(_ view: PressTrackingNSView) {
+        views.remove(view)
+        pressedViews.remove(view)
+        if views.allObjects.isEmpty, let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    private func ensureMonitor() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self] event in
+            self?.handle(event)
+            return event
+        }
+    }
+
+    private func handle(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            guard !event.modifierFlags.contains(.control) else { return }
+            for view in views.allObjects {
+                guard let window = view.window, window === event.window, !view.isHiddenOrHasHiddenAncestor else {
+                    continue
+                }
+                let point = view.convert(event.locationInWindow, from: nil)
+                if view.bounds.contains(point) {
+                    pressedViews.add(view)
+                    view.setPressed(true)
+                }
+            }
+        case .leftMouseDragged:
+            for view in pressedViews.allObjects {
+                guard let window = view.window, window === event.window, !view.isHiddenOrHasHiddenAncestor else {
+                    view.setPressed(false)
+                    continue
+                }
+                let point = view.convert(event.locationInWindow, from: nil)
+                view.setPressed(view.bounds.contains(point))
+            }
+        case .leftMouseUp:
+            for view in pressedViews.allObjects {
+                view.setPressed(false)
+            }
+            pressedViews.removeAllObjects()
+        default:
+            break
+        }
+    }
+}
+
+private final class PressTrackingNSView: NSView {
+    var onPressChange: ((Bool) -> Void)?
+    private var isCurrentlyPressed = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            SidebarPressMonitor.shared.register(self)
+        } else {
+            setPressed(false)
+            SidebarPressMonitor.shared.unregister(self)
+        }
+    }
+
+    func setPressed(_ pressed: Bool) {
+        guard isCurrentlyPressed != pressed else { return }
+        isCurrentlyPressed = pressed
+        onPressChange?(pressed)
     }
 }
 
