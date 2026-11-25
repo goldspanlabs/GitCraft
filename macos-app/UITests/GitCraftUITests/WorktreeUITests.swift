@@ -84,7 +84,8 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(remove.waitForExistence(timeout: 10))
         remove.click()
 
-        let confirm = app.buttons["Remove"]
+        // Scope to the confirmation sheet: the TouchBar also exposes a "Remove" button.
+        let confirm = app.sheets.buttons["Remove"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10), "removal asks for confirmation")
         confirm.click()
 
