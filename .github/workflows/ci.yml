@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: ["main"]
   workflow_dispatch:
+    inputs:
+      test_class:
+        description: >-
+          Run only these UI test classes (comma-separated, e.g. StashUITests,BranchUITests,
+          or StashUITests/testName). Leave empty to run the whole CI.
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,8 +22,40 @@ permissions:
   contents: read
 
 jobs:
-  rust:
+  # Cheap Linux job that decides what the rest needs, so macOS runners only start when useful.
+  changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.plan.outputs.rust }}
+      macos: ${{ steps.plan.outputs.macos }}
+      swift_tests: ${{ steps.plan.outputs.swift_tests }}
+      ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plan jobs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TEST_CLASS: ${{ inputs.test_class }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            CHANGED="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')"
+            export CHANGED
+            echo "Changed files:"; echo "$CHANGED"
+          fi
+          python3 scripts/ci_plan.py
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -37,20 +76,35 @@ jobs:
         run: cargo test --manifest-path rust-core/Cargo.toml
 
   build-app:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Cache Rust and Swift builds
+      # Keys include the sources so a new cache is saved when code changes; restore-keys let
+      # that run start from the previous build instead of from scratch.
+      - name: Cache Rust build
         uses: actions/cache@v4
         with:
-          path: |
-            rust-core/target
-            macos-app/.build
-          key: ${{ runner.os }}-app-${{ hashFiles('rust-core/Cargo.lock', 'macos-app/Package.swift') }}
+          path: rust-core/target
+          key: ${{ runner.os }}-app-rust-${{ hashFiles('rust-core/Cargo.lock', 'rust-core/Cargo.toml', 'rust-core/src/**') }}
           restore-keys: |
-            ${{ runner.os }}-app-
+            ${{ runner.os }}-app-rust-
+      - name: Cache Swift build
+        uses: actions/cache@v4
+        with:
+          path: macos-app/.build
+          key: ${{ runner.os }}-app-swift-${{ hashFiles('macos-app/Package.swift', 'macos-app/Sources/**') }}
+          restore-keys: |
+            ${{ runner.os }}-app-swift-
       - name: Run Swift tests
+        if: needs.changes.outputs.swift_tests == 'true'
         run: make test-swift
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -76,12 +130,14 @@ jobs:
           retention-days: 1
 
   ui-tests:
-    needs: build-app
+    needs: [changes, build-app]
+    if: needs.changes.outputs.ui_matrix != '[]'
     runs-on: macos-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        include: ${{ fromJSON(needs.changes.outputs.ui_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Download app bundle
@@ -96,36 +152,15 @@ jobs:
       - name: Run UI tests (shard ${{ matrix.shard }})
         env:
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_COUNT: 3
+          TEST_CLASSES: ${{ matrix.classes }}
           TEST_RUNNER_GITCRAFT_APP_PATH: ${{ github.workspace }}/build/GitCraft.app
         run: |
-          # Distribute UI test classes evenly across shards by test count so new test files
-          # are picked up automatically without editing this workflow.
+          # The classes for this shard are planned by scripts/ci_plan.py, which balances them
+          # by test count and narrows the run to the touched classes on UI-test-only changes.
           ONLY_TESTING=()
-          while IFS= read -r cls; do
-            [ -n "$cls" ] && ONLY_TESTING+=("-only-testing:GitCraftUITests/$cls")
-          done < <(python3 - <<'PY'
-          import glob, os, re
-
-          shard_index = int(os.environ["SHARD_INDEX"])
-          shard_count = int(os.environ["SHARD_COUNT"])
-          classes = []
-          for path in sorted(glob.glob("macos-app/UITests/GitCraftUITests/*UITests.swift")):
-              name = os.path.basename(path).removesuffix(".swift")
-              count = len(re.findall(r"\bfunc\s+test\w+\s*\(", open(path).read()))
-              classes.append((name, count))
-
-          buckets = [[] for _ in range(shard_count)]
-          loads = [0] * shard_count
-          for name, count in sorted(classes, key=lambda item: (-item[1], item[0])):
-              target = min(range(shard_count), key=lambda i: (loads[i], i))
-              buckets[target].append(name)
-              loads[target] += count
-
-          for name in sorted(buckets[shard_index]):
-              print(name)
-          PY
-          )
+          for cls in $TEST_CLASSES; do
+            ONLY_TESTING+=("-only-testing:GitCraftUITests/$cls")
+          done
           echo "Running shard $SHARD_INDEX: ${ONLY_TESTING[*]}"
           XCTESTRUN=(build/UITestsDerivedData/Build/Products/*.xctestrun)
           xcodebuild test-without-building \
