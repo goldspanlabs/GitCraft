@@ -292,6 +292,8 @@ private struct WorkingFileSection<RowContent: View>: View {
                     Button(actionTitle, action: onAction)
                         .buttonStyle(.link)
                         .font(.caption)
+                        // A link-style button isn't reported as a button, so tests find it by id.
+                        .accessibilityIdentifier(actionTitle.lowercased().replacingOccurrences(of: " ", with: "-"))
                 }
             }
             .padding(.horizontal, 10)

@@ -110,6 +110,9 @@ struct RepoDetailView: View {
                             ToastView(message: error, tint: .red) {
                                 tab.errorMessage = nil
                             }
+                            // UI tests wait for this to see that an action failed.
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("error-toast")
                             .id(error)
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
