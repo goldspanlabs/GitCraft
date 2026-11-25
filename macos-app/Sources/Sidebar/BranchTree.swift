@@ -46,14 +46,20 @@ final class BranchTreeNode {
         }
     }
 
+    private var sortRank: Int {
+        if branch?.isDefault == true { return 0 }
+        if isFolder { return 1 }
+        return 2
+    }
+
     func sortTree() {
         for child in children where child.isFolder {
             child.sortTree()
         }
-        // Keep root-level direct branches (e.g. main) above folders, or sort alphabetically within each group.
+        // Default branch first, then folders, then direct branches not in folders (alphabetically within each group).
         children.sort { a, b in
-            if a.isFolder != b.isFolder {
-                return !a.isFolder
+            if a.sortRank != b.sortRank {
+                return a.sortRank < b.sortRank
             }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }

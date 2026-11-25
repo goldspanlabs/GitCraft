@@ -328,6 +328,49 @@ fn delete_current_branch_is_an_error() {
     assert!(session.delete_branch("main".into(), true).is_err());
 }
 
+#[test]
+fn list_branches_marks_default_remote_branches() {
+    let dir = init_repo_with_commit();
+    let head_oid = run_git(dir.path(), &["rev-parse", "HEAD"]);
+    let head_oid = head_oid.trim();
+
+    run_git(
+        dir.path(),
+        &["update-ref", "refs/remotes/origin/main", head_oid],
+    );
+    run_git(
+        dir.path(),
+        &["update-ref", "refs/remotes/origin/feature", head_oid],
+    );
+    run_git(
+        dir.path(),
+        &["update-ref", "refs/remotes/upstream/develop", head_oid],
+    );
+    run_git(
+        dir.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/upstream/HEAD",
+            "refs/remotes/upstream/develop",
+        ],
+    );
+
+    let session = open(dir.path());
+    let branches = session.list_branches().unwrap();
+
+    let is_default = |name: &str| {
+        branches
+            .iter()
+            .find(|b| b.is_remote && b.name == name)
+            .unwrap_or_else(|| panic!("missing remote branch {name}"))
+            .is_default
+    };
+
+    assert!(is_default("origin/main"));
+    assert!(!is_default("origin/feature"));
+    assert!(is_default("upstream/develop"));
+}
+
 // ---------------------------------------------------------------- commits ---
 
 #[test]
