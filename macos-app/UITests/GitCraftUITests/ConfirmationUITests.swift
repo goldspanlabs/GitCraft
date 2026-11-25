@@ -58,6 +58,10 @@ final class ConfirmationUITests: XCTestCase {
             "main is reset to the clicked commit"
         )
         XCTAssertFalse(try fixture.isModified("README.md"), "the hard reset discards uncommitted changes")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: (fixture.mainPath as NSString).appendingPathComponent("main.txt")),
+            "main.txt, added after \"initial\" and edited since, is gone"
+        )
         // #12: confirming used to re-open the same dialog instead of finishing.
         XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 3), "the dialog doesn't come back")
     }
@@ -65,7 +69,8 @@ final class ConfirmationUITests: XCTestCase {
     // MARK: Discard file changes
 
     func testDiscardChangesAsksFirstThenRevertsOnlyThatFile() throws {
-        let file = app.staticTexts["README.md"]
+        // The diff header shows the selected file's path too, so find the row in the file list.
+        let file = element("unstaged-file:README.md")
         XCTAssertTrue(file.waitForExistence(timeout: 60), "the edited file is listed")
         rightClick(file)
         let discard = app.menuItems["Discard Changes…"]
@@ -113,6 +118,10 @@ final class ConfirmationUITests: XCTestCase {
     /// report as not hittable even when they are on screen.
     private func rightClick(_ element: XCUIElement) {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+    }
+
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {

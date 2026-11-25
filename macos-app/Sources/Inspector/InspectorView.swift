@@ -341,6 +341,10 @@ private struct WorkingFileRow: View {
         .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .cornerRadius(4)
         .contentShape(Rectangle())
+        // One accessibility element per row, so UI tests can tell the file list apart from the
+        // diff header, which shows the same path.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("\(isStaged ? "staged" : "unstaged")-file:\(file.path)")
         .onTapGesture(perform: onSelect)
         .padding(.horizontal, 10)
     }
