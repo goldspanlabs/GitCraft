@@ -294,6 +294,67 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: active))
     }
 
+    @MainActor
+    func testFallbackNestedInsideRemovalTargetIsNotUsed() throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // The only other checkout lives inside the active one, so removing the active one
+        // would delete it too.
+        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let bare = root.appendingPathComponent("origin.git", isDirectory: true)
+        try git(["clone", "--bare", source.path, bare.path], in: root)
+        let outer = root.appendingPathComponent("outer", isDirectory: true)
+        try git(["worktree", "add", outer.path, "main"], in: bare)
+        let nested = outer.appendingPathComponent("nested", isDirectory: true)
+        try git(["worktree", "add", "-b", "nested", nested.path], in: bare)
+
+        let tab = try RepoTab(url: outer)
+        defer { tab.stopWatcher() }
+        let active = try XCTUnwrap(tab.worktrees.first { $0.path == tab.activeCheckoutPath })
+
+        XCTAssertNil(tab.fallbackCheckoutPath(excluding: active.path))
+        XCTAssertFalse(tab.canRemoveWorktree(active))
+        tab.removeWorktree(path: active.path, label: "main", force: true)
+        XCTAssertNotNil(tab.errorMessage)
+        XCTAssertFalse(tab.isBusy)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: active.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: nested.path))
+    }
+
+    @MainActor
+    func testRemovingActiveWorktreeIsRefusedWhenFallbackIsAnotherRepository() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let bare = root.appendingPathComponent("origin.git", isDirectory: true)
+        try git(["clone", "--bare", source.path, bare.path], in: root)
+        let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
+        let wt2 = root.appendingPathComponent("wt2", isDirectory: true)
+        try git(["worktree", "add", wt1.path, "main"], in: bare)
+        try git(["worktree", "add", "-b", "second", wt2.path], in: bare)
+
+        let tab = try RepoTab(url: wt1)
+        defer { tab.stopWatcher() }
+        let active = tab.activeCheckoutPath
+        let other = try XCTUnwrap(tab.worktrees.first { $0.path != active })
+
+        // An unrelated repository now sits where the fallback checkout was.
+        try FileManager.default.removeItem(atPath: other.path)
+        _ = try makeRepo(at: URL(fileURLWithPath: other.path, isDirectory: true))
+
+        tab.removeWorktree(path: active, label: "main", force: false)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && tab.isBusy {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTAssertNotNil(tab.errorMessage)
+        XCTAssertEqual(tab.activeCheckoutPath, active)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: active))
+    }
+
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)

@@ -308,6 +308,8 @@ final class RepoTab: ObservableObject, Identifiable {
         let canonical = Self.canonicalPath(for: path)
         func isSurviving(_ worktree: WorktreeInfo) -> Bool {
             worktree.path != canonical
+                // A checkout nested inside the one being removed is deleted along with it.
+                && !worktree.path.hasPrefix(canonical + "/")
                 && !worktree.isPrunable
                 && FileManager.default.fileExists(atPath: worktree.path)
         }

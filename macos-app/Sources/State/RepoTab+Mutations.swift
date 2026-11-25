@@ -400,10 +400,18 @@ extension RepoTab {
             fallbackSession = nil
         }
         performMutation({ session in
-            if wasActive, let fallback, !FileManager.default.fileExists(atPath: fallback) {
-                throw GitCraftError.Message(
-                    msg: "Can't remove the checkout this tab shows, because \(fallback) is no longer there to switch to."
-                )
+            if let fallback, let fallbackSession {
+                // The fallback must still be there and still be a checkout of this repository:
+                // its own worktree list has to include the checkout being removed.
+                let sameRepository = FileManager.default.fileExists(atPath: fallback)
+                    && (try? fallbackSession.listWorktreeEntries())?
+                        .contains(where: { $0.path == canonical }) == true
+                guard sameRepository else {
+                    throw GitCraftError.Message(
+                        msg: "Can't remove the checkout this tab shows, because \(fallback) is no longer "
+                            + "a checkout of this repository to switch to."
+                    )
+                }
             }
             try session.removeWorktree(path: canonical, force: force)
         }, onSuccess: { [weak self] in
