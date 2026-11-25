@@ -56,6 +56,8 @@ final class RemoteUITests: XCTestCase {
 
     func testCommitAndPushPushesTheNewCommit() throws {
         try launch(fixture: FixtureRepository.make(stagedChange: true, bareRemote: true))
+        // The fixture pushed main already, so the remote matches it before anything happens.
+        let mainBefore = try fixture.commitID("main")
 
         let summary = app.textFields["commit-summary"]
         XCTAssertTrue(summary.waitForExistence(timeout: 60))
@@ -72,7 +74,7 @@ final class RemoteUITests: XCTestCase {
 
         XCTAssertTrue(
             waitUntil(timeout: 30) {
-                guard let local = try? self.fixture.commitID("main") else { return false }
+                guard let local = try? self.fixture.commitID("main"), local != mainBefore else { return false }
                 return self.fixture.remoteCommitID("refs/heads/main") == local
             },
             "the remote's main is the new local commit"
