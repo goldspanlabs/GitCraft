@@ -444,7 +444,7 @@ private struct WorktreeRowView: View {
     }
 }
 
-/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with no branch name.
+/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with a detached chip.
 private struct DetachedHeadRowView: View {
     @ObservedObject var tab: RepoTab
     let oidHex: String
@@ -455,11 +455,18 @@ private struct DetachedHeadRowView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
 
-            Text("HEAD (detached)")
-                .font(.system(size: 13, weight: .semibold))
+            Text(String(oidHex.prefix(7)))
                 .lineLimit(1)
 
             Spacer()
+
+            Text("detached")
+                .font(.caption2)
+                .foregroundStyle(.yellow)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.yellow.opacity(0.15))
+                .clipShape(Capsule())
         }
         .contentShape(Rectangle())
         .onTapGesture {

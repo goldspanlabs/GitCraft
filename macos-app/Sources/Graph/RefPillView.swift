@@ -152,7 +152,7 @@ final class RefPillView: NSView {
         let baseColor: NSColor = switch badge.kind {
         case .localBranch, .remoteBranch: laneColor ?? .systemGray
         case .tag: .systemBrown
-        case .head: .systemRed
+        case .head: .systemYellow
         }
 
         // Opaque pastel fill (like Fork) so the chip stays legible even when the row is
