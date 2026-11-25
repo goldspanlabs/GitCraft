@@ -124,14 +124,14 @@ final class RepoTab: ObservableObject, Identifiable {
                     : "This will remove the tag from your local repository."
             case let .removeWorktree(path, _, isActive):
                 if isActive {
-                    return "This will delete \"\(path)\" from disk and switch this tab to another checkout of this repository. Committed history on its branch is kept."
+                    return "This will delete \"\((path as NSString).abbreviatingWithTildeInPath)\" from disk and switch this tab to another checkout of this repository. Committed history on its branch is kept."
                 }
-                return "This will delete \"\(path)\" from disk. Committed history on its branch is kept."
+                return "This will delete \"\((path as NSString).abbreviatingWithTildeInPath)\" from disk. Committed history on its branch is kept."
             case let .forceRemoveWorktree(path, _, isActive):
                 if isActive {
-                    return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted, and this tab will switch to another checkout of this repository. Uncommitted changes can't be recovered from GitCraft."
+                    return "Modified, staged, or untracked files in \"\((path as NSString).abbreviatingWithTildeInPath)\" will be permanently deleted, and this tab will switch to another checkout of this repository. Uncommitted changes can't be recovered from GitCraft."
                 }
-                return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted. Uncommitted changes can't be recovered from GitCraft."
+                return "Modified, staged, or untracked files in \"\((path as NSString).abbreviatingWithTildeInPath)\" will be permanently deleted. Uncommitted changes can't be recovered from GitCraft."
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
             case .abortRebase:
@@ -359,7 +359,8 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func requestRemoveWorktree(_ worktree: WorktreeInfo) {
         guard canRemoveWorktree(worktree) else { return }
-        let label = worktree.branch ?? URL(fileURLWithPath: worktree.path).lastPathComponent
+        // Worktrees are identified by their folder, as in the sidebar.
+        let label = URL(fileURLWithPath: worktree.path).lastPathComponent
         pendingConfirmation = .removeWorktree(
             path: worktree.path,
             label: label,

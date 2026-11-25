@@ -472,6 +472,84 @@ fn remove_worktree_requires_force_for_modified_staged_and_untracked_files() {
 }
 
 #[test]
+fn remove_worktree_deletes_ignored_files_without_needing_force() {
+    // Git doesn't count ignored files (build output, caches) as "unclean", so a plain remove
+    // deletes them with no refusal. The confirmation dialog is the only warning.
+    let repo = repo_with_commit();
+    fs::write(repo.path().join(".gitignore"), "build/\n").unwrap();
+    run_git(repo.path(), &["add", ".gitignore"]);
+    run_git(repo.path(), &["commit", "-m", "ignore build output"]);
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let wt = parent.path().join("wt-ignored");
+    session
+        .add_worktree(
+            wt.to_string_lossy().into_owned(),
+            Some("wt-ignored".into()),
+            None,
+            false,
+        )
+        .unwrap();
+    fs::create_dir(wt.join("build")).unwrap();
+    fs::write(wt.join("build").join("out.o"), "compiled\n").unwrap();
+    assert!(
+        run_git(&wt, &["status", "--porcelain"]).trim().is_empty(),
+        "ignored files must not show up as changes"
+    );
+
+    session.remove_worktree(canonical(&wt), false).unwrap();
+
+    assert!(!wt.exists(), "the folder and its ignored files are deleted");
+    assert!(session
+        .list_branches()
+        .unwrap()
+        .iter()
+        .any(|b| b.name == "wt-ignored"));
+}
+
+#[test]
+fn forced_removal_of_a_dirty_worktree_keeps_the_branch_and_its_commits() {
+    let repo = repo_with_commit();
+    let session = RepoSession::open(repo.path()).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let wt = parent.path().join("wt-keep");
+    session
+        .add_worktree(
+            wt.to_string_lossy().into_owned(),
+            Some("wt-keep".into()),
+            None,
+            false,
+        )
+        .unwrap();
+
+    // One committed change on the worktree's branch, then uncommitted work on top of it.
+    fs::write(wt.join("committed.txt"), "committed\n").unwrap();
+    run_git(&wt, &["add", "committed.txt"]);
+    run_git(&wt, &["commit", "-m", "work done in the worktree"]);
+    let tip = run_git(repo.path(), &["rev-parse", "wt-keep"])
+        .trim()
+        .to_owned();
+    fs::write(wt.join("README.md"), "uncommitted edit\n").unwrap();
+    fs::write(wt.join("scratch.txt"), "untracked\n").unwrap();
+
+    session.remove_worktree(canonical(&wt), true).unwrap();
+
+    assert!(!wt.exists(), "uncommitted and untracked files are gone");
+    let branch = session
+        .list_branches()
+        .unwrap()
+        .into_iter()
+        .find(|b| b.name == "wt-keep")
+        .expect("the branch survives removing its worktree");
+    assert_eq!(
+        branch.target_oid_hex, tip,
+        "the branch still points at its tip"
+    );
+    assert!(run_git(repo.path(), &["log", "--format=%s", "wt-keep"])
+        .contains("work done in the worktree"));
+}
+
+#[test]
 fn remove_worktree_refuses_primary_locked_and_unlisted_paths() {
     let repo = repo_with_commit();
     let session = RepoSession::open(repo.path()).unwrap();

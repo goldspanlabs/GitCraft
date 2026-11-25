@@ -119,7 +119,7 @@ final class WorktreeTabTests: XCTestCase {
             return XCTFail("expected .removeWorktree confirmation")
         }
         XCTAssertEqual(path, activeWt.path)
-        XCTAssertEqual(label, "linked")
+        XCTAssertEqual(label, URL(fileURLWithPath: activeWt.path).lastPathComponent)
         XCTAssertTrue(isActive)
     }
 
@@ -147,6 +147,75 @@ final class WorktreeTabTests: XCTestCase {
 
         XCTAssertEqual(tab.activeCheckoutPath, tab.repoPath)
         XCTAssertFalse(FileManager.default.fileExists(atPath: activeWt.path))
+    }
+
+    @MainActor
+    func testRemovingADirtyWorktreeAsksForForceConfirmationBeforeDeletingAnything() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+        try "unsaved work\n".write(
+            to: linked.appendingPathComponent("scratch.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let worktree = try XCTUnwrap(tab.worktrees.first { !$0.isMain })
+
+        // The safe remove is refused by git, so the tab escalates to the force prompt.
+        tab.requestRemoveWorktree(worktree)
+        let first = try XCTUnwrap(tab.pendingConfirmation)
+        tab.executeConfirmed(first)
+
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !tab.isForceRemovePrompt {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard case let .forceRemoveWorktree(path, label, isActive) = tab.pendingConfirmation else {
+            return XCTFail("expected the force-remove confirmation, got \(String(describing: tab.pendingConfirmation))")
+        }
+        XCTAssertEqual(path, worktree.path)
+        XCTAssertEqual(label, "linked", "the prompt names the folder")
+        XCTAssertFalse(isActive)
+        XCTAssertTrue(
+            tab.pendingConfirmation?.message.contains("permanently deleted") == true,
+            "the prompt warns that the files can't be recovered"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: linked.path), "nothing is deleted before the user confirms")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: linked.appendingPathComponent("scratch.txt").path))
+
+        // Confirming the force prompt deletes the folder; the branch stays.
+        tab.executeConfirmed(try XCTUnwrap(tab.pendingConfirmation))
+        let removalDeadline = Date().addingTimeInterval(10)
+        while Date() < removalDeadline, FileManager.default.fileExists(atPath: linked.path) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: linked.path))
+        XCTAssertTrue(try git(["branch", "--list", "linked"], in: repo).contains("linked"))
+    }
+
+    func testRemoveWorktreeConfirmationShortensTheHomeFolderToATilde() {
+        let path = NSHomeDirectory() + "/Documents/projects/GitCraft-feature"
+        let expected = "\"~/Documents/projects/GitCraft-feature\""
+
+        for action in [
+            RepoTab.DestructiveAction.removeWorktree(path: path, label: "GitCraft-feature", isActive: false),
+            .removeWorktree(path: path, label: "GitCraft-feature", isActive: true),
+            .forceRemoveWorktree(path: path, label: "GitCraft-feature", isActive: false),
+            .forceRemoveWorktree(path: path, label: "GitCraft-feature", isActive: true),
+        ] {
+            XCTAssertTrue(action.message.contains(expected), "unexpected message: \(action.message)")
+            XCTAssertFalse(action.message.contains(NSHomeDirectory()))
+        }
+        XCTAssertEqual(
+            RepoTab.DestructiveAction.removeWorktree(path: path, label: "GitCraft-feature", isActive: false).title,
+            "Remove worktree \"GitCraft-feature\"?"
+        )
     }
 
     @MainActor
@@ -509,5 +578,13 @@ final class WorktreeTabTests: XCTestCase {
         process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed: \(output)")
         return output
+    }
+}
+
+private extension RepoTab {
+    /// True while the "has uncommitted changes" prompt for a worktree removal is showing.
+    var isForceRemovePrompt: Bool {
+        if case .forceRemoveWorktree = pendingConfirmation { return true }
+        return false
     }
 }

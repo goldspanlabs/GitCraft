@@ -11,7 +11,14 @@ struct FixtureRepository {
     /// Where `make(linkedWorktree: true)` puts the linked checkout.
     var linkedPath: String { root.appendingPathComponent("repo-ui", isDirectory: true).path }
 
-    static func make(stagedChange: Bool = false, linkedWorktree: Bool = false) throws -> FixtureRepository {
+    /// The untracked file `make(dirtyLinkedWorktree: true)` leaves in the linked checkout.
+    var linkedScratchPath: String { (linkedPath as NSString).appendingPathComponent("scratch.txt") }
+
+    static func make(
+        stagedChange: Bool = false,
+        linkedWorktree: Bool = false,
+        dirtyLinkedWorktree: Bool = false
+    ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
         let main = root.appendingPathComponent("repo", isDirectory: true)
@@ -25,9 +32,17 @@ struct FixtureRepository {
         try git(["add", "README.md"], in: main)
         try git(["commit", "-m", "initial"], in: main)
 
-        if linkedWorktree {
+        if linkedWorktree || dirtyLinkedWorktree {
             let linked = root.appendingPathComponent("repo-ui", isDirectory: true)
             try git(["worktree", "add", "-b", linkedBranch, linked.path], in: main)
+            if dirtyLinkedWorktree {
+                // An untracked file is enough to make git refuse a plain `worktree remove`.
+                try "unsaved work\n".write(
+                    to: linked.appendingPathComponent("scratch.txt"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
         }
 
         if stagedChange {

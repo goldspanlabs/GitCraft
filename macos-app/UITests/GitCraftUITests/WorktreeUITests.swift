@@ -8,7 +8,9 @@ final class WorktreeUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        fixture = try FixtureRepository.make(linkedWorktree: true)
+        // The dirty-removal test needs uncommitted work in the linked checkout.
+        let dirty = name.contains("Dirty")
+        fixture = try FixtureRepository.make(linkedWorktree: true, dirtyLinkedWorktree: dirty)
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         // Force the WORKTREES section open: its expanded state is a persisted user preference.
         app.launchArguments = [
@@ -95,6 +97,64 @@ final class WorktreeUITests: XCTestCase {
         )
         XCTAssertTrue(element("worktree-row:main").exists)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
+    }
+
+    func testRemovingADirtyWorktreeAsksAgainAndCancelKeepsTheFiles() throws {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linkedScratchPath))
+
+        // First prompt: the ordinary confirmation. Git then refuses the unclean worktree.
+        rightClick(linked)
+        let remove = app.menuItems["Remove Worktree…"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        remove.click()
+        let confirm = app.sheets.buttons["Remove"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.click()
+
+        // Second prompt: it warns the uncommitted files will be permanently deleted.
+        let warning = app.sheets.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS 'permanently deleted'"))
+            .firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 30), "a dirty worktree asks for a second, stronger confirmation")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linkedScratchPath), "nothing is deleted yet")
+
+        // Cancelling leaves the worktree and the uncommitted file alone.
+        let cancel = app.sheets.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.click()
+        XCTAssertTrue(wait(for: warning, toSatisfy: "exists == false", timeout: 10))
+        XCTAssertTrue(linked.exists)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linkedScratchPath))
+    }
+
+    func testRemovingADirtyWorktreeForceRemovesItAfterTheSecondConfirmation() throws {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+
+        rightClick(linked)
+        let remove = app.menuItems["Remove Worktree…"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        remove.click()
+        let firstConfirm = app.sheets.buttons["Remove"]
+        XCTAssertTrue(firstConfirm.waitForExistence(timeout: 10))
+        firstConfirm.click()
+
+        let warning = app.sheets.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS 'permanently deleted'"))
+            .firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 30))
+        let secondConfirm = app.sheets.buttons["Force Remove"]
+        XCTAssertTrue(secondConfirm.waitForExistence(timeout: 10))
+        secondConfirm.click()
+
+        XCTAssertTrue(
+            wait(for: linked, toSatisfy: "exists == false", timeout: 30),
+            "the row disappears once the forced removal finishes"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder and its uncommitted file are deleted")
+        XCTAssertTrue(element("worktree-row:main").exists)
     }
 
     /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
