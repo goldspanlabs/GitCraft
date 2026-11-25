@@ -401,8 +401,7 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 20), "main's history has loaded")
         XCTAssertFalse(app.staticTexts["Linked work"].exists, "main's history has no linked-only commit")
 
-        // Switch from the row menu. A double-click also counts as a single click, which selects
-        // the worktree's head commit, so the panel would show that commit instead of the changes.
+        // Switch from the row menu. Switching by double-click has its own test below.
         rightClick(linked)
         let switchItem = app.menuItems["Switch to Worktree"]
         XCTAssertTrue(switchItem.waitForExistence(timeout: 10))
@@ -420,6 +419,22 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(
             app.staticTexts["Linked work"].waitForExistence(timeout: 20),
             "the history switches to the linked checkout's branch"
+        )
+    }
+
+    func testDoubleClickingADirtyWorktreeShowsItsChangesNotItsHeadCommit() throws {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 20), "main's history has loaded")
+
+        // Each click of a double-click is also a single click, which selects the row's head
+        // commit. The switch must still end on the linked checkout's Working Changes.
+        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
+
+        XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            element("unstaged-file:scratch.txt").waitForExistence(timeout: 20),
+            "the panel shows the linked checkout's changes, not its head commit"
         )
     }
 
