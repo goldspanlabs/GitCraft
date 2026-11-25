@@ -12,6 +12,7 @@ final class ConfirmationUITests: XCTestCase {
         fixture = try FixtureRepository.make(twoBranches: true, unstagedFiles: ["README.md", "main.txt"])
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 
@@ -89,12 +90,55 @@ final class ConfirmationUITests: XCTestCase {
         XCTAssertTrue(try fixture.isModified("main.txt"), "the other edited file is left alone")
     }
 
+    // MARK: Dialog details
+
+    func testTheDialogNamesTheBranchAndTheCommitClickedEachTime() throws {
+        let initial = String(try fixture.commitID("main~1").prefix(7))
+        let mainWork = String(try fixture.commitID("main").prefix(7))
+
+        openHardResetConfirmation(on: "initial")
+        XCTAssertTrue(
+            sheetText(containing: "Reset \"main\" to \(initial)").waitForExistence(timeout: 10),
+            "the title names main and the clicked commit"
+        )
+        app.sheets.buttons["Cancel"].click()
+        XCTAssertTrue(wait(for: app.sheets.firstMatch, toSatisfy: "exists == false", timeout: 10))
+
+        // A second dialog for another commit must not keep the first one's text.
+        openHardResetConfirmation(on: "main work")
+        XCTAssertTrue(
+            sheetText(containing: "Reset \"main\" to \(mainWork)").waitForExistence(timeout: 10),
+            "the title names the newly clicked commit"
+        )
+        XCTAssertFalse(sheetText(containing: initial).exists, "nothing is left over from the first dialog")
+        app.sheets.buttons["Cancel"].click()
+    }
+
+    func testAnOpenDialogBlocksStartingAnotherDestructiveAction() throws {
+        let mainBefore = try fixture.commitID("main")
+        XCTAssertTrue(element("unstaged-file:README.md").waitForExistence(timeout: 60))
+        openHardResetConfirmation()
+
+        // With the dialog up, the changes list can't open its own Discard confirmation.
+        rightClick(element("unstaged-file:README.md"))
+        XCTAssertFalse(
+            app.menuItems["Discard Changes…"].waitForExistence(timeout: 3),
+            "the window behind the dialog doesn't take clicks"
+        )
+        XCTAssertEqual(app.sheets.count, 1, "only one dialog is open")
+
+        app.sheets.buttons["Cancel"].click()
+        XCTAssertTrue(wait(for: app.sheets.firstMatch, toSatisfy: "exists == false", timeout: 10))
+        assertNothingChanged(since: mainBefore)
+    }
+
     // MARK: Helpers
 
-    /// Right-clicks "initial" in the history and picks Reset 'main' to Here… → Hard.
-    private func openHardResetConfirmation() {
-        let row = app.staticTexts["initial"]
-        XCTAssertTrue(row.waitForExistence(timeout: 60), "the first commit is in the history")
+    /// Right-clicks `commit` (by its summary) in the history and picks Reset 'main' to Here… →
+    /// Hard.
+    private func openHardResetConfirmation(on commit: String = "initial") {
+        let row = app.staticTexts[commit]
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "\(commit) is in the history")
         rightClick(row)
         let submenu = app.menuItems["Reset 'main' to Here…"]
         XCTAssertTrue(submenu.waitForExistence(timeout: 10))
@@ -103,6 +147,13 @@ final class ConfirmationUITests: XCTestCase {
         XCTAssertTrue(hard.waitForExistence(timeout: 10))
         hard.click()
         XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: 10), "hard reset asks first")
+    }
+
+    /// Text in the frontmost sheet whose value or label contains `fragment`.
+    private func sheetText(containing fragment: String) -> XCUIElement {
+        app.sheets.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", fragment, fragment))
+            .firstMatch
     }
 
     private func assertNothingChanged(since mainBefore: String, file: StaticString = #filePath, line: UInt = #line) {
