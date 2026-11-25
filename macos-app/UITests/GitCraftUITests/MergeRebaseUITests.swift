@@ -12,7 +12,11 @@ final class MergeRebaseUITests: XCTestCase {
         // `main` and `feature` each have one commit on top of "initial", in different files.
         fixture = try FixtureRepository.make(twoBranches: true)
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
-        app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
+        app.launchArguments = [
+            "-UITestOpenRepository", fixture.mainPath,
+            // Branch rows only exist while LOCAL BRANCHES is open, a persisted user preference.
+            "-sidebar.localBranchesExpanded", "YES",
+        ]
         app.launch()
     }
 
@@ -116,6 +120,13 @@ final class MergeRebaseUITests: XCTestCase {
 
     /// Right-clicks the feature commit in the history and picks Rebase 'main' to Here….
     private func openRebaseConfirmation() {
+        // The graph starts scoped to the current branch, which leaves out the divergent feature
+        // commit. Switch it to All first.
+        let scope = element("graph-scope-toggle")
+        XCTAssertTrue(scope.waitForExistence(timeout: 60))
+        XCTAssertTrue(app.staticTexts["main work"].waitForExistence(timeout: 60), "the graph has loaded")
+        scope.click()
+
         let row = app.staticTexts["feature work"]
         XCTAssertTrue(row.waitForExistence(timeout: 60), "the feature commit is in the history")
         rightClick(row)

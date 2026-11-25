@@ -59,6 +59,7 @@ struct RepoToolbarActionsView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("graph-scope-toggle")
             .help(tab.scopeToCurrentBranch
                 ? "Showing the current branch and its base branch — click to show all branches"
                 : "Showing all branches — click to show only the current branch and its base branch")
