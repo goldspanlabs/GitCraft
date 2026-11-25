@@ -159,9 +159,15 @@ final class RemoteUITests: XCTestCase {
         pull.click()
 
         // The pull failure replaces the push one, so a changed message shows the pull explained itself.
+        var pullMessage = pushMessage
+        let explained = waitUntil(timeout: 30) {
+            guard toast.exists else { return false }
+            pullMessage = toast.staticTexts.firstMatch.label
+            return pullMessage != pushMessage
+        }
         XCTAssertTrue(
-            waitUntil(timeout: 30) { toast.exists && toast.staticTexts.firstMatch.label != pushMessage },
-            "the pull failure is explained too"
+            explained,
+            "the pull failure is explained too (push toast: \"\(pushMessage)\", toast after pull: \"\(pullMessage)\")"
         )
         XCTAssertEqual(try fixture.commitID("HEAD"), headBefore)
     }
