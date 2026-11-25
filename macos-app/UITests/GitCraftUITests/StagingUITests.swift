@@ -39,7 +39,7 @@ final class StagingUITests: XCTestCase {
         try launchWithMixedChanges()
         XCTAssertTrue(element("unstaged-file:\(FixtureRepository.untrackedFileName)").waitForExistence(timeout: 60))
 
-        let stageAll = app.buttons["Stage All"].firstMatch
+        let stageAll = element("stage-all")
         XCTAssertTrue(stageAll.waitForExistence(timeout: 10))
         stageAll.click()
 
@@ -51,7 +51,7 @@ final class StagingUITests: XCTestCase {
         XCTAssertTrue(element("staged-file:\(FixtureRepository.untrackedFileName)").waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["Working tree clean"].waitForExistence(timeout: 20), "nothing is left unstaged")
 
-        let unstageAll = app.buttons["Unstage All"].firstMatch
+        let unstageAll = element("unstage-all")
         XCTAssertTrue(unstageAll.waitForExistence(timeout: 10))
         unstageAll.click()
 
