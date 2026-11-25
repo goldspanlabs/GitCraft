@@ -195,6 +195,7 @@ struct SidebarView: View {
                                 Spacer()
                             }
                             .contentShape(Rectangle())
+                            .sidebarRowHighlight()
                             .onTapGesture {
                                 tab.scrollToCommit(oidHex: tag.targetOidHex)
                             }
@@ -244,6 +245,7 @@ struct SidebarView: View {
                                 Spacer()
                             }
                             .contentShape(Rectangle())
+                            .sidebarRowHighlight(showsPress: false)
                             // One accessibility element per row, so UI tests can find a stash by index.
                             .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("stash-row:\(stash.index)")
@@ -296,11 +298,13 @@ private struct BranchFolderRowView: View {
     let isTopLevelRemote: Bool
     let onToggle: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isHovered ? .primary : .secondary)
                 .frame(width: 10, alignment: .center)
 
             PhosphorIcon(glyph: isTopLevelRemote ? .cloud : .folder)
@@ -315,6 +319,8 @@ private struct BranchFolderRowView: View {
         }
         .padding(.leading, CGFloat(depth) * 14)
         .contentShape(Rectangle())
+        .sidebarRowHighlight()
+        .onHover { isHovered = $0 }
         .onTapGesture(perform: onToggle)
     }
 }
@@ -399,6 +405,7 @@ private struct WorktreeRowView: View {
             }
         }
         .contentShape(Rectangle())
+        .sidebarRowHighlight()
         .help("\(worktree.path)\n\(branchLabel)")
         // Make the row its own accessibility element. Without this the identifier is pushed
         // down onto the leaf views (the folder icon) and overwrites the CURRENT badge's own.
@@ -487,6 +494,7 @@ private struct DetachedHeadRowView: View {
                 .clipShape(Capsule())
         }
         .contentShape(Rectangle())
+        .sidebarRowHighlight()
         .onTapGesture {
             tab.scrollToCommit(oidHex: oidHex)
         }
@@ -526,6 +534,7 @@ private struct BranchRowContainer<Trailing: View>: View {
         }
         .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
         .contentShape(Rectangle())
+        .sidebarRowHighlight()
         // One accessibility element per row, so UI tests can find it by branch name.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("branch-row:\(branch.name)")
@@ -682,3 +691,56 @@ private struct RemoteBranchRowView: View {
         }
     }
 }
+
+/// Subtle hover and transient press highlight for sidebar rows without interfering
+/// with single-click, double-click, right-click, or accessibility containment.
+private struct SidebarRowHighlightModifier: ViewModifier {
+    let showsPress: Bool
+    @State private var isHovered = false
+    @State private var isPressed = false
+
+    private var highlightColor: Color {
+        if isPressed {
+            return Color.primary.opacity(0.12)
+        }
+        if isHovered {
+            return Color.primary.opacity(0.06)
+        }
+        return .clear
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let base = content
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(highlightColor)
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -3)
+            }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+            .onHover { isHovered = $0 }
+
+        if showsPress {
+            base.simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isPressed { isPressed = true }
+                    }
+                    .onEnded { _ in
+                        isPressed = false
+                    }
+            )
+        } else {
+            base
+        }
+    }
+}
+
+private extension View {
+    func sidebarRowHighlight(showsPress: Bool = true) -> some View {
+        modifier(SidebarRowHighlightModifier(showsPress: showsPress))
+    }
+}
+
