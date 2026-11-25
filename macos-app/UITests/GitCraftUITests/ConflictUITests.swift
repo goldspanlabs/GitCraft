@@ -78,6 +78,12 @@ final class ConflictUITests: XCTestCase {
             "main is checked out again"
         )
         XCTAssertEqual(try fixture.commitID("HEAD"), mainBefore, "main is back where it was")
+        XCTAssertFalse(try fixture.isModified("README.md"), "no conflicted changes are left in the index or working tree")
+        XCTAssertEqual(
+            try String(contentsOfFile: (fixture.mainPath as NSString).appendingPathComponent("README.md"), encoding: .utf8),
+            "main\n",
+            "README.md is main's version again"
+        )
         XCTAssertTrue(
             wait(for: text(containing: "Rebase stopped"), toSatisfy: "exists == false", timeout: 20),
             "the banner goes away"
