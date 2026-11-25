@@ -12,7 +12,7 @@ final class WorktreeUITests: XCTestCase {
         // a locked one, and the from-branch test a local branch that no worktree has checked out.
         // That last test skips the linked worktree: git can't hold both `feature` and
         // `feature/ui` as branch names.
-        let fromBranch = name.contains("FromABranch")
+        let fromBranch = name.contains("FromABranchChecksOutThatBranch")
         fixture = try FixtureRepository.make(
             linkedWorktree: !fromBranch,
             dirtyLinkedWorktree: name.contains("Dirty"),
@@ -20,6 +20,10 @@ final class WorktreeUITests: XCTestCase {
             detachedLinkedWorktree: name.contains("DetachedWorktreeRow"),
             twoBranches: fromBranch
         )
+        if name.contains("SwitchingToADirtyWorktree") {
+            // A commit only the linked checkout's branch has, so its history differs from main's.
+            _ = try fixture.git(["-C", fixture.linkedPath, "commit", "--allow-empty", "-m", "Linked work"])
+        }
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         // Force the WORKTREES section open: its expanded state is a persisted user preference.
         app.launchArguments = [
@@ -380,6 +384,9 @@ final class WorktreeUITests: XCTestCase {
         let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
         XCTAssertTrue(linked.waitForExistence(timeout: 60))
         XCTAssertFalse(element("unstaged-file:scratch.txt").exists, "the main checkout has no scratch.txt")
+        // The history shows only the checked-out branch by default, so main's leaves this out.
+        XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 20), "main's history has loaded")
+        XCTAssertFalse(app.staticTexts["Linked work"].exists, "main's history has no linked-only commit")
 
         linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
 
@@ -392,7 +399,10 @@ final class WorktreeUITests: XCTestCase {
             wait(for: app.windows.firstMatch, toSatisfy: "title CONTAINS 'repo-ui'", timeout: 20),
             "the window title names the linked checkout"
         )
-        XCTAssertTrue(app.staticTexts["initial"].exists, "the history is shown for the linked checkout")
+        XCTAssertTrue(
+            app.staticTexts["Linked work"].waitForExistence(timeout: 20),
+            "the history switches to the linked checkout's branch"
+        )
     }
 
     func testDeletingTheActiveWorktreeFolderOutsideTheAppMovesTheTab() throws {
