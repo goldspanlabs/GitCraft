@@ -330,7 +330,7 @@ mod tests {
         let rows: Vec<_> = (1..=9u8)
             .map(|i| lanes.assign_commit(&raw(i, &[100 + i], "tip"), vec![]))
             .collect();
-        assert!(rows.iter().all(|r| r.color_idx < 8));
-        assert_eq!(rows[0].color_idx, rows[8].color_idx);
+        let colors: Vec<u8> = rows.iter().map(|r| r.color_idx).collect();
+        assert_eq!(colors, vec![0, 1, 2, 3, 4, 5, 6, 7, 0]);
     }
 }
