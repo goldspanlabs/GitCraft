@@ -2,7 +2,7 @@ import XCTest
 @testable import GitCraft
 
 final class BranchTreeTests: XCTestCase {
-    private func branch(_ name: String, remote: Bool = false) -> BranchInfo {
+    private func branch(_ name: String, remote: Bool = false, isDefault: Bool = false) -> BranchInfo {
         let prefix = remote ? "refs/remotes/" : "refs/heads/"
         return BranchInfo(
             name: name,
@@ -13,7 +13,7 @@ final class BranchTreeTests: XCTestCase {
             ahead: 0,
             behind: 0,
             isMerged: false,
-            isDefault: false
+            isDefault: isDefault
         )
     }
 
@@ -46,8 +46,14 @@ final class BranchTreeTests: XCTestCase {
         XCTAssertEqual(describe(rows), ["0 branch:dev", "0 branch:main"])
     }
 
-    func testDirectBranchesSortAboveFolders() {
-        let rows = flatten([branch("feature/a"), branch("feature/b"), branch("main")])
+    func testDefaultBranchFirstThenFoldersThenDirectBranches() {
+        let rows = flatten([
+            branch("alpha"),
+            branch("feature/a"),
+            branch("feature/b"),
+            branch("main", isDefault: true),
+            branch("zeta"),
+        ])
         XCTAssertEqual(
             describe(rows),
             [
@@ -55,6 +61,31 @@ final class BranchTreeTests: XCTestCase {
                 "0 folder:feature",
                 "1 branch:a",
                 "1 branch:b",
+                "0 branch:alpha",
+                "0 branch:zeta",
+            ]
+        )
+    }
+
+    func testRemoteBranchesSortDefaultFirstThenFoldersThenDirectBranches() {
+        let rows = flatten(
+            [
+                branch("origin/alpha", remote: true),
+                branch("origin/feature/x", remote: true),
+                branch("origin/main", remote: true, isDefault: true),
+                branch("origin/beta", remote: true),
+            ],
+            scope: "remote"
+        )
+        XCTAssertEqual(
+            describe(rows),
+            [
+                "0 folder:origin",
+                "1 branch:main",
+                "1 folder:feature",
+                "2 branch:x",
+                "1 branch:alpha",
+                "1 branch:beta",
             ]
         )
     }
@@ -76,7 +107,7 @@ final class BranchTreeTests: XCTestCase {
 
     func testCollapsedFolderHidesItsChildren() {
         let rows = flatten(
-            [branch("feature/a"), branch("feature/b"), branch("main")],
+            [branch("feature/a"), branch("feature/b"), branch("main", isDefault: true)],
             collapsed: ["folder:local:feature"]
         )
         XCTAssertEqual(describe(rows), ["0 branch:main", "0 folder:feature"])

@@ -227,16 +227,20 @@ pub fn list_branches(
     let mut branches = Vec::with_capacity(local_entries.len() + remote_entries.len());
 
     // Branches are "merged" when fully contained in origin's default branch.
-    let base_ref = remote_head_targets
-        .get("refs/remotes/origin/HEAD")
-        .cloned()
-        .filter(|r| remote_oids.contains_key(r))
-        .or_else(|| {
-            DEFAULT_BRANCH_FALLBACKS
-                .into_iter()
-                .map(|n| format!("refs/remotes/origin/{n}"))
-                .find(|r| remote_oids.contains_key(r))
-        });
+    let default_remote_ref = |remote: &str| -> Option<String> {
+        let head_key = format!("refs/remotes/{remote}/HEAD");
+        remote_head_targets
+            .get(&head_key)
+            .filter(|r| remote_oids.contains_key(*r))
+            .cloned()
+            .or_else(|| {
+                DEFAULT_BRANCH_FALLBACKS
+                    .into_iter()
+                    .map(|n| format!("refs/remotes/{remote}/{n}"))
+                    .find(|r| remote_oids.contains_key(r))
+            })
+    };
+    let base_ref = default_remote_ref("origin");
     let base_oid = base_ref.as_ref().and_then(|r| remote_oids.get(r)).copied();
 
     // The local branch the sidebar pins first: the one origin's default branch names,
@@ -291,7 +295,14 @@ pub fn list_branches(
         });
     }
 
+    let mut remote_defaults: HashMap<String, Option<String>> = HashMap::new();
     for (name, full_ref, oid) in remote_entries {
+        let is_default = name.split_once('/').and_then(|(remote, _)| {
+            remote_defaults
+                .entry(remote.to_owned())
+                .or_insert_with(|| default_remote_ref(remote))
+                .as_deref()
+        }) == Some(full_ref.as_str());
         branches.push(BranchInfo {
             name,
             full_ref,
@@ -301,7 +312,7 @@ pub fn list_branches(
             ahead: 0,
             behind: 0,
             is_merged: false,
-            is_default: false,
+            is_default,
         });
     }
 
