@@ -216,7 +216,8 @@ struct CommitTableView: NSViewRepresentable {
             let oid = commit.oidHex
             let branch = currentBranch
             // Detached HEAD has no branch to merge into, rebase or reset.
-            let isDetached = branch.isEmpty || branch == "HEAD" || branch.hasPrefix("(")
+            // The Rust core reports a detached HEAD as "HEAD (detached)" (see `clean_branch_header`).
+            let isDetached = branch.isEmpty || branch == "HEAD" || branch.hasPrefix("HEAD (") || branch.hasPrefix("(")
 
             var entries: [MenuEntry] = []
 
