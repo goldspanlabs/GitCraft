@@ -132,12 +132,12 @@ struct AvatarView: View {
     var size: CGFloat = 36
 
     @AppStorage(showAvatarsStorageKey) private var showAvatars = true
-    @State private var image: NSImage?
-    @State private var loadedEmail = ""
+    @State private var loaded: (email: String, image: NSImage)?
 
     var body: some View {
         let displayedImage: NSImage? = if showAvatars {
-            AvatarLoader.shared.cachedImage(for: email) ?? (loadedEmail == email ? image : nil)
+            AvatarLoader.shared.cachedImage(for: email)
+                ?? (loaded?.email == email ? loaded?.image : nil)
         } else {
             nil
         }
@@ -158,18 +158,18 @@ struct AvatarView: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         .task(id: "\(email)|\(showAvatars)") {
             guard showAvatars, !email.isEmpty else {
-                image = nil
-                loadedEmail = ""
+                loaded = nil
                 return
             }
             if let cached = AvatarLoader.shared.cachedImage(for: email) {
-                image = cached
-                loadedEmail = email
+                loaded = (email, cached)
                 return
             }
-            image = nil
-            loadedEmail = email
-            image = await AvatarLoader.shared.image(for: email)
+            loaded = nil
+            let requested = email
+            let fetched = await AvatarLoader.shared.image(for: requested)
+            guard !Task.isCancelled else { return }
+            loaded = fetched.map { (requested, $0) }
         }
     }
 }
