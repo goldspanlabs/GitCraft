@@ -250,6 +250,7 @@ final class RepoTab: ObservableObject, Identifiable {
     var hasMoreCommits = true
     let pageSize: UInt32 = 500
     var revealTask: Task<Void, Never>?
+    var searchDebounceTask: Task<Void, Never>?
     /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
     /// page fetches that started against the old list can detect they are stale.
     var graphGeneration = 0

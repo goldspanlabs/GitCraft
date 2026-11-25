@@ -66,7 +66,19 @@ extension RepoTab {
         }
     }
 
+    /// Runs the search once typing pauses, so each keystroke doesn't start a history walk.
+    func updateSearchDebounced(_ query: String) {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            self?.updateSearch(query)
+        }
+    }
+
     func updateSearch(_ query: String) {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = nil
         searchQuery = query
         graphGeneration += 1  // invalidate in-flight page fetches and older searches
         let requestGeneration = graphGeneration
