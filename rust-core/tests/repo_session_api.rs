@@ -7,7 +7,7 @@ mod common;
 use std::{fs, path::Path, process::Command};
 
 use common::{init_repo, init_repo_with_commit, open, run_git, write};
-use gitcraft_core::PullStrategy;
+use gitcraft_core::{GitCraftError, MergeType, PullStrategy};
 
 // ---------------------------------------------------------------- staging ---
 
@@ -1490,4 +1490,137 @@ fn revert_can_be_continued_after_resolving_conflicts() {
     assert!(
         run_git(dir.path(), &["log", "-1", "--format=%s"]).starts_with("Revert \"main change\"")
     );
+}
+
+// MARK: merge_commit, one behavior per merge type
+
+/// `main` has one commit; `feature` adds `feature.txt` on top. With `diverged`, `main` also
+/// gets its own commit, so a fast-forward is impossible. HEAD is left on `main`.
+fn merge_fixture(diverged: bool) -> tempfile::TempDir {
+    let dir = init_repo_with_commit();
+    // Merge results must not depend on the machine's merge.ff setting.
+    run_git(dir.path(), &["config", "merge.ff", "true"]);
+    run_git(dir.path(), &["checkout", "-b", "feature"]);
+    write(dir.path(), "feature.txt", "feature\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "feature work"]);
+    run_git(dir.path(), &["checkout", "main"]);
+    if diverged {
+        write(dir.path(), "main.txt", "main\n");
+        run_git(dir.path(), &["add", "-A"]);
+        run_git(dir.path(), &["commit", "-m", "main work"]);
+    }
+    dir
+}
+
+fn rev(dir: &Path, name: &str) -> String {
+    run_git(dir, &["rev-parse", name]).trim().to_owned()
+}
+
+fn parents(dir: &Path, name: &str) -> Vec<String> {
+    run_git(dir, &["rev-list", "--parents", "-n1", name])
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn default_merge_fast_forwards_when_it_can() {
+    let dir = merge_fixture(false);
+    let feature = rev(dir.path(), "feature");
+
+    open(dir.path())
+        .merge_commit("feature".into(), MergeType::Default)
+        .unwrap();
+
+    assert_eq!(rev(dir.path(), "main"), feature, "no merge commit is made");
+}
+
+#[test]
+fn default_merge_of_diverged_branches_makes_a_merge_commit() {
+    let dir = merge_fixture(true);
+    let (main, feature) = (rev(dir.path(), "main"), rev(dir.path(), "feature"));
+
+    open(dir.path())
+        .merge_commit("feature".into(), MergeType::Default)
+        .unwrap();
+
+    assert_eq!(parents(dir.path(), "main"), vec![main, feature]);
+}
+
+#[test]
+fn no_fast_forward_merge_makes_a_merge_commit_even_when_it_could_fast_forward() {
+    let dir = merge_fixture(false);
+    let (main, feature) = (rev(dir.path(), "main"), rev(dir.path(), "feature"));
+
+    open(dir.path())
+        .merge_commit("feature".into(), MergeType::NoFastForward)
+        .unwrap();
+
+    assert_eq!(parents(dir.path(), "main"), vec![main, feature]);
+}
+
+#[test]
+fn fast_forward_only_fast_forwards_when_it_can() {
+    let dir = merge_fixture(false);
+    let feature = rev(dir.path(), "feature");
+
+    open(dir.path())
+        .merge_commit("feature".into(), MergeType::FastForwardOnly)
+        .unwrap();
+
+    assert_eq!(rev(dir.path(), "main"), feature);
+}
+
+#[test]
+fn fast_forward_only_refuses_diverged_branches_and_leaves_main_alone() {
+    let dir = merge_fixture(true);
+    let main = rev(dir.path(), "main");
+
+    let err = open(dir.path())
+        .merge_commit("feature".into(), MergeType::FastForwardOnly)
+        .unwrap_err();
+
+    assert!(
+        err.to_string().to_lowercase().contains("fast-forward"),
+        "git's refusal is surfaced, got: {err}"
+    );
+    assert_eq!(rev(dir.path(), "main"), main);
+    assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn squash_merge_stages_the_changes_without_committing() {
+    let dir = merge_fixture(true);
+    let main = rev(dir.path(), "main");
+
+    open(dir.path())
+        .merge_commit("feature".into(), MergeType::Squash)
+        .unwrap();
+
+    assert_eq!(rev(dir.path(), "main"), main, "no commit is made");
+    assert_eq!(
+        run_git(dir.path(), &["diff", "--cached", "--name-only"]).trim(),
+        "feature.txt"
+    );
+    assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn merging_a_branch_that_is_already_merged_warns_and_makes_no_commit() {
+    let dir = merge_fixture(true);
+    run_git(dir.path(), &["branch", "old-work", "HEAD~1"]);
+    let main = rev(dir.path(), "main");
+
+    let err = open(dir.path())
+        .merge_commit("old-work".into(), MergeType::NoFastForward)
+        .unwrap_err();
+
+    assert!(
+        matches!(err, GitCraftError::Warning { .. }),
+        "reported as a warning, got: {err:?}"
+    );
+    assert!(err.to_string().contains("nothing to merge"));
+    assert_eq!(rev(dir.path(), "main"), main, "no empty merge commit");
 }

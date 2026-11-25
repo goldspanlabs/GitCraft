@@ -54,21 +54,6 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(element("worktree-current:main").exists, "the main checkout starts as current")
     }
 
-    func testDoubleTapSwitchesToLinkedWorktree() {
-        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
-        XCTAssertTrue(linked.waitForExistence(timeout: 60))
-
-        // The row is a container, so XCUITest reports it as not hittable even though it is on
-        // screen. Click its centre by coordinate; the row's double-tap gesture still receives it.
-        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
-
-        XCTAssertTrue(
-            element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20),
-            "double-tap should make the linked worktree current"
-        )
-        XCTAssertFalse(element("worktree-current:main").exists)
-    }
-
     func testCreateWorktreeFromSectionMenuAddsAndSwitchesToIt() throws {
         XCTAssertTrue(element("worktree-row:main").waitForExistence(timeout: 60))
 
@@ -408,6 +393,7 @@ final class WorktreeUITests: XCTestCase {
         switchItem.click()
 
         XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
+        XCTAssertFalse(element("worktree-current:main").exists, "main is no longer the current worktree")
         XCTAssertTrue(
             element("unstaged-file:scratch.txt").waitForExistence(timeout: 20),
             "the changes list shows the linked checkout's untracked file"
@@ -432,6 +418,7 @@ final class WorktreeUITests: XCTestCase {
         linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
 
         XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
+        XCTAssertFalse(element("worktree-current:main").exists, "main is no longer the current worktree")
         XCTAssertTrue(
             element("unstaged-file:scratch.txt").waitForExistence(timeout: 20),
             "the panel shows the linked checkout's changes, not its head commit"

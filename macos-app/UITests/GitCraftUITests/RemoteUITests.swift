@@ -120,30 +120,31 @@ final class RemoteUITests: XCTestCase {
 
     // MARK: No remote
 
-    func testPushWithNoRemoteExplainsWhy() throws {
+    func testPushAndPullWithNoRemoteExplainWhy() throws {
         try launch(fixture: FixtureRepository.make())
         XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 60))
+        let headBefore = try fixture.commitID("HEAD")
 
         let push = app.buttons["Push"].firstMatch
         XCTAssertTrue(push.waitForExistence(timeout: 20))
         XCTAssertTrue(wait(for: push, toSatisfy: "isEnabled == true", timeout: 20))
         push.click()
 
-        XCTAssertTrue(element("error-toast").waitForExistence(timeout: 30), "the failure is explained, not silent")
+        let toast = element("error-toast")
+        XCTAssertTrue(toast.waitForExistence(timeout: 30), "the push failure is explained, not silent")
+        let pushMessage = toast.staticTexts.firstMatch.label
         XCTAssertEqual(try fixture.git(["remote"]), "", "no remote is added behind the user's back")
-    }
-
-    func testPullWithNoRemoteExplainsWhy() throws {
-        try launch(fixture: FixtureRepository.make())
-        XCTAssertTrue(app.staticTexts["initial"].waitForExistence(timeout: 60))
-        let headBefore = try fixture.commitID("HEAD")
 
         let pull = app.buttons["Pull"].firstMatch
         XCTAssertTrue(pull.waitForExistence(timeout: 20))
         XCTAssertTrue(wait(for: pull, toSatisfy: "isEnabled == true", timeout: 20))
         pull.click()
 
-        XCTAssertTrue(element("error-toast").waitForExistence(timeout: 30), "the failure is explained, not silent")
+        // The pull failure replaces the push one, so a changed message shows the pull explained itself.
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { toast.exists && toast.staticTexts.firstMatch.label != pushMessage },
+            "the pull failure is explained too"
+        )
         XCTAssertEqual(try fixture.commitID("HEAD"), headBefore)
     }
 
