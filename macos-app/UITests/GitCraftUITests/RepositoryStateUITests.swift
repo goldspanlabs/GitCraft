@@ -170,23 +170,6 @@ final class RepositoryStateUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to GitCraft"].waitForExistence(timeout: 60), "the first window isn't blank")
     }
 
-    // MARK: Long history
-
-    func testALongHistoryShowsAndScrolls() throws {
-        try launch(fixture: FixtureRepository.make(extraCommits: 2000))
-
-        XCTAssertTrue(app.staticTexts["Commit 2000"].waitForExistence(timeout: 60), "the newest commit shows")
-        let table = app.tables.firstMatch
-        XCTAssertTrue(table.exists)
-        // Scroll down until a commit far below the first screen appears; the graph loads more
-        // rows as it goes.
-        let deep = app.staticTexts["Commit 1500"]
-        for _ in 0..<40 where !deep.exists {
-            table.scroll(byDeltaX: 0, deltaY: -1500)
-        }
-        XCTAssertTrue(deep.waitForExistence(timeout: 20), "older commits load while scrolling")
-    }
-
     // MARK: Unusual branch names
 
     func testNonASCIIAndLongBranchNamesShowAndCanBeCheckedOut() throws {

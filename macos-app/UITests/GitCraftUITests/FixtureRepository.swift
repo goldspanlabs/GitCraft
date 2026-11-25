@@ -47,7 +47,6 @@ struct FixtureRepository {
         featureAhead: Bool = false,
         extraBranches: [String] = [],
         bareRemote: Bool = false,
-        extraCommits: Int = 0,
         mergedBranch: Bool = false,
         unstagedFiles: [String] = [],
         untrackedFile: Bool = false,
@@ -93,22 +92,6 @@ struct FixtureRepository {
             try git(["add", "feature.txt"], in: main)
             try git(["commit", "-m", "feature work"], in: main)
             try git(["switch", "main"], in: main)
-        }
-
-        if extraCommits > 0 {
-            // A long history on main, "Commit 1" (oldest) to "Commit N" (newest), written with
-            // fast-import in one call so it takes seconds rather than a commit per process.
-            var stream = ""
-            for number in 1...extraCommits {
-                let message = "Commit \(number)\n"
-                stream += "commit refs/heads/main\n"
-                stream += "committer GitCraft UI Tests <ui-tests@gitcraft.local> \(1_700_000_000 + number) +0000\n"
-                stream += "data \(message.utf8.count)\n\(message)"
-                if number == 1 { stream += "from refs/heads/main^0\n" }
-                stream += "\n"
-            }
-            try git(["fast-import", "--quiet"], in: main, input: stream)
-            try git(["reset", "--hard", "main"], in: main)
         }
 
         for branch in extraBranches {

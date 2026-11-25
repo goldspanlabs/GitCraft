@@ -1,8 +1,8 @@
 import XCTest
 
-/// End-to-end checks for the Merge sheet's merge types, its conflict check, and merges git
-/// refuses or has nothing to do for. Each test merges `feature` (or another branch) into `main`
-/// from the sidebar and then checks the result with git.
+/// End-to-end checks for the Merge sheet: the no-fast-forward and squash merge types and its
+/// conflict check. What each merge type does in git, including refusals and already-merged
+/// branches, is covered by the Rust core's `merge_commit` tests.
 final class MergeTypeUITests: XCTestCase {
     private var fixture: FixtureRepository!
     private var app: XCUIApplication!
@@ -17,19 +17,6 @@ final class MergeTypeUITests: XCTestCase {
     }
 
     // MARK: Merge types on a branch that can fast-forward
-
-    func testDefaultMergeFastForwardsWhenItCan() throws {
-        try launch(fixture: FixtureRepository.make(featureAhead: true))
-        let featureCommit = try fixture.commitID(FixtureRepository.featureBranch)
-
-        openMergeSheet()
-        confirmMerge()
-
-        XCTAssertTrue(
-            waitUntil(timeout: 30) { (try? self.fixture.commitID("main")) == featureCommit },
-            "main fast-forwards to the feature commit, with no merge commit"
-        )
-    }
 
     func testNoFastForwardAlwaysMakesAMergeCommit() throws {
         try launch(fixture: FixtureRepository.make(featureAhead: true))
@@ -51,37 +38,7 @@ final class MergeTypeUITests: XCTestCase {
         )
     }
 
-    func testFastForwardOnlyFastForwardsWhenItCan() throws {
-        try launch(fixture: FixtureRepository.make(featureAhead: true))
-        let featureCommit = try fixture.commitID(FixtureRepository.featureBranch)
-
-        openMergeSheet()
-        chooseMergeType("Fast-forward only")
-        confirmMerge()
-
-        XCTAssertTrue(
-            waitUntil(timeout: 30) { (try? self.fixture.commitID("main")) == featureCommit },
-            "main fast-forwards to the feature commit"
-        )
-    }
-
-    // MARK: Merge types on diverged branches
-
-    func testFastForwardOnlyOnDivergedBranchesShowsAnErrorAndMergesNothing() throws {
-        try launch(fixture: FixtureRepository.make(twoBranches: true))
-        let mainBefore = try fixture.commitID("main")
-
-        openMergeSheet()
-        chooseMergeType("Fast-forward only")
-        confirmMerge()
-
-        XCTAssertTrue(
-            text(containing: "fast-forward", outsideSheets: true).waitForExistence(timeout: 30),
-            "git's refusal is shown, rather than a silent merge commit"
-        )
-        XCTAssertEqual(try fixture.commitID("main"), mainBefore, "main stays where it was")
-        XCTAssertFalse(fixture.gitDirContains("MERGE_HEAD"), "no merge is left in progress")
-    }
+    // MARK: Squash
 
     func testSquashStagesTheChangesWithoutCommitting() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true))
@@ -124,22 +81,6 @@ final class MergeTypeUITests: XCTestCase {
         XCTAssertEqual(try fixture.commitID("main"), mainBefore, "the check doesn't touch the branch")
         XCTAssertFalse(fixture.gitDirContains("MERGE_HEAD"), "the check doesn't start a merge")
         XCTAssertFalse(try fixture.isModified("README.md"), "the check doesn't touch the working tree")
-    }
-
-    func testMergingABranchThatIsAlreadyMergedSaysSoAndMakesNoCommit() throws {
-        // `old-work` points at "initial", which main already contains.
-        try launch(fixture: FixtureRepository.make(twoBranches: true, mergedBranch: true))
-        let mainBefore = try fixture.commitID("main")
-
-        openMergeSheet(branch: FixtureRepository.mergedBranchName)
-        chooseMergeType("No fast-forward (always create a merge commit)")
-        confirmMerge()
-
-        XCTAssertTrue(
-            text(containing: "nothing to merge", outsideSheets: true).waitForExistence(timeout: 30),
-            "the app explains why nothing happened"
-        )
-        XCTAssertEqual(try fixture.commitID("main"), mainBefore, "no empty merge commit is made")
     }
 
     // MARK: Helpers

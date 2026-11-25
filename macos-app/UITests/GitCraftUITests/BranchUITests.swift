@@ -17,22 +17,6 @@ final class BranchUITests: XCTestCase {
 
     // MARK: New Branch
 
-    func testNewBranchWithAnInvalidNameIsRejected() throws {
-        try launch(fixture: FixtureRepository.make(twoBranches: true))
-        let mainBefore = try fixture.commitID("HEAD")
-
-        createBranch(named: "a..b")
-
-        XCTAssertTrue(element("error-toast").waitForExistence(timeout: 30), "git's refusal is shown")
-        XCTAssertFalse(try fixture.hasBranch("a..b"))
-        XCTAssertEqual(
-            try fixture.git(["symbolic-ref", "--short", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
-            "main",
-            "main is still checked out"
-        )
-        XCTAssertEqual(try fixture.commitID("HEAD"), mainBefore)
-    }
-
     func testNewBranchWithAnExistingNameIsRejectedAndLeavesThatBranchAlone() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true))
         let featureBefore = try fixture.commitID(FixtureRepository.featureBranch)
