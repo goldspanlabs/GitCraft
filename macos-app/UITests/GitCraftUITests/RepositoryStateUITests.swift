@@ -74,28 +74,72 @@ final class RepositoryStateUITests: XCTestCase {
     // MARK: Checkout Commit
 
     func testCheckoutCommitWithDontChangeDetachesAndKeepsTheEdit() throws {
-        try checkOutInitial(choosing: "Don't change")
+        // README.md is the same at "initial" and main, so a plain checkout carries the edit over.
+        try launch(fixture: FixtureRepository.make(twoBranches: true, unstagedFiles: ["README.md"]))
+        XCTAssertTrue(element("unstaged-file:README.md").waitForExistence(timeout: 60))
+        try checkOut("initial", choosing: "Don't change")
         XCTAssertTrue(try fixture.isModified("README.md"), "the edit comes along")
         XCTAssertEqual(try fixture.stashMessages().count, 0)
     }
 
     func testCheckoutCommitWithStashAndReapplyDetachesAndBringsTheEditBack() throws {
-        try checkOutInitial(choosing: "Stash and reapply")
+        // story.txt differs between "add story" and main, so a plain checkout would refuse to
+        // overwrite the local edit. Stashing first lets it through, and the edit is far enough
+        // from main's change that reapplying it merges cleanly.
+        let fixture = try FixtureRepository.make()
+        let lines = ["one", "two", "three", "four", "five", "six"]
+        try fixture.commitFile("story.txt", contents: lines.joined(separator: "\n") + "\n", message: "add story")
+        var mainLines = lines
+        mainLines[5] = "six (main)"
+        try fixture.commitFile("story.txt", contents: mainLines.joined(separator: "\n") + "\n", message: "edit story")
+        var localLines = mainLines
+        localLines[0] = "one (local)"
+        let story = (fixture.mainPath as NSString).appendingPathComponent("story.txt")
+        try (localLines.joined(separator: "\n") + "\n").write(toFile: story, atomically: true, encoding: .utf8)
+
+        try launch(fixture: fixture)
+        XCTAssertTrue(element("unstaged-file:story.txt").waitForExistence(timeout: 60))
+        try checkOut("add story", choosing: "Stash and reapply")
+
+        var expected = lines
+        expected[0] = "one (local)"
+        let reapplied = expected.joined(separator: "\n") + "\n"
         XCTAssertTrue(
-            waitUntil(timeout: 20) { (try? self.fixture.isModified("README.md")) == true },
-            "the edit is reapplied"
+            waitUntil(timeout: 20) { (try? String(contentsOfFile: story, encoding: .utf8)) == reapplied },
+            "the edit is reapplied on top of the checked-out commit"
         )
-        XCTAssertEqual(try fixture.stashMessages().count, 0, "the temporary stash is popped, not left behind")
+        XCTAssertTrue(
+            waitUntil(timeout: 20) { (try? self.fixture.stashMessages().count) == 0 },
+            "the temporary stash is popped, not left behind"
+        )
     }
 
-    func testCheckoutCommitWithDiscardAsksAgainThenDropsTheEdit() throws {
-        try checkOutInitial(choosing: "Discard") {
+    func testCheckoutCommitWithDiscardAsksAgainThenDropsAllLocalChanges() throws {
+        // A staged edit to README.md, an unstaged one to main.txt, and untracked notes.txt.
+        try launch(fixture: FixtureRepository.make(
+            stagedChange: true,
+            twoBranches: true,
+            unstagedFiles: ["main.txt"],
+            untrackedFile: true
+        ))
+        let untracked = (fixture.mainPath as NSString).appendingPathComponent(FixtureRepository.untrackedFileName)
+        XCTAssertTrue(element("staged-file:README.md").waitForExistence(timeout: 60))
+        try checkOut("initial", choosing: "Discard") {
             let confirm = self.app.buttons["Discard Changes and Checkout"].firstMatch
             XCTAssertTrue(confirm.waitForExistence(timeout: 10), "discarding asks a second time")
-            XCTAssertTrue(try self.fixture.isModified("README.md"), "nothing is discarded while it asks")
+            XCTAssertEqual(try self.fixture.stagedFiles(), ["README.md"], "the staged edit is kept while it asks")
+            XCTAssertTrue(try self.fixture.isModified("main.txt"), "the unstaged edit is kept while it asks")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: untracked), "the untracked file is kept while it asks")
             confirm.click()
         }
-        XCTAssertFalse(try fixture.isModified("README.md"), "the edit is discarded")
+        XCTAssertEqual(try fixture.stagedFiles(), [], "nothing is left staged")
+        XCTAssertEqual(try fixture.git(["show", ":README.md"]), "hello\n", "the staged edit is discarded")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: untracked), "the untracked file is removed")
+        XCTAssertEqual(
+            try fixture.git(["status", "--porcelain"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "",
+            "the working tree is clean"
+        )
     }
 
     // MARK: No repository
@@ -173,15 +217,19 @@ final class RepositoryStateUITests: XCTestCase {
 
     // MARK: Helpers
 
-    /// Opens a repo where main has "initial" and "main work", and README.md has an unstaged
-    /// edit, then checks out "initial" from its menu with `option` for local changes. `confirm`
-    /// handles any second prompt. Checks that HEAD ends up detached at "initial".
-    private func checkOutInitial(choosing option: String, confirm: (() throws -> Void)? = nil) throws {
-        try launch(fixture: FixtureRepository.make(twoBranches: true, unstagedFiles: ["README.md"]))
-        let initial = try fixture.commitID("main~1")
-        XCTAssertTrue(element("unstaged-file:README.md").waitForExistence(timeout: 60))
+    /// Checks out the history row whose summary is `summary` from its menu, picking `option` for
+    /// local changes. `confirm` handles any second prompt. Checks that HEAD ends up detached at
+    /// that commit, and that main still points where it did.
+    private func checkOut(
+        _ summary: String,
+        choosing option: String,
+        confirm: (() throws -> Void)? = nil
+    ) throws {
+        let target = try fixture.git(["log", "-1", "--format=%H", "--fixed-strings", "--grep=\(summary)", "main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let mainBefore = try fixture.commitID("refs/heads/main")
 
-        let row = app.staticTexts["initial"]
+        let row = app.staticTexts[summary]
         XCTAssertTrue(row.waitForExistence(timeout: 60))
         rightClick(row)
         let item = app.menuItems["Checkout Commit…"]
@@ -203,8 +251,8 @@ final class RepositoryStateUITests: XCTestCase {
             },
             "HEAD is detached"
         )
-        XCTAssertEqual(try fixture.commitID("HEAD"), initial, "at the chosen commit")
-        XCTAssertNotNil(try? fixture.commitID("refs/heads/main"), "main is left where it was")
+        XCTAssertEqual(try fixture.commitID("HEAD"), target, "at the chosen commit")
+        XCTAssertEqual(try fixture.commitID("refs/heads/main"), mainBefore, "main is left where it was")
     }
 
     private func launch(fixture: FixtureRepository, extraArguments: [String] = []) throws {
