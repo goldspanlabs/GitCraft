@@ -13,7 +13,11 @@ final class RepositoryStateUITests: XCTestCase {
 
     func testARepositoryWithNoCommitsOpensAndMakesTheFirstCommit() throws {
         // An unborn main with an untracked README.md; auto-staging (the default) stages it.
-        try launch(fixture: FixtureRepository.make(noCommits: true))
+        try launch(
+            fixture: FixtureRepository.make(noCommits: true),
+            // Auto-staging is a persisted preference; force it on so the untracked file counts.
+            extraArguments: ["-autoStageOnCommit", "YES"]
+        )
 
         XCTAssertTrue(
             text(containing: "No commits yet").waitForExistence(timeout: 60),
@@ -56,7 +60,11 @@ final class RepositoryStateUITests: XCTestCase {
         rightClick(row)
         XCTAssertTrue(app.menuItems["Cherry Pick Commit"].waitForExistence(timeout: 10), "the commit menu is open")
         let branchActions = app.menuItems.matching(
-            NSPredicate(format: "title CONTAINS 'to Here' OR title BEGINSWITH 'Merge into'")
+            // Menu items expose their text as title, and on some OS versions as label too.
+            NSPredicate(
+                format: "title CONTAINS %@ OR title BEGINSWITH %@ OR label CONTAINS %@ OR label BEGINSWITH %@",
+                "to Here", "Merge into", "to Here", "Merge into"
+            )
         )
         XCTAssertEqual(branchActions.count, 0, "no merge, rebase or reset items while detached")
         app.typeKey(.escape, modifierFlags: [])
