@@ -66,6 +66,12 @@ final class MergeRebaseUITests: XCTestCase {
             waitUntil(timeout: 30) { self.fixture.isAncestor(featureCommit, of: "main") },
             "main is rebased on top of the feature commit"
         )
+        // A merge would also make the feature commit an ancestor. A rebase replays main's own
+        // commit, so main's tip has exactly one parent: the commit it was rebased onto.
+        let parents = try fixture.git(["rev-list", "--parents", "-n", "1", "main"])
+            .split(whereSeparator: \.isWhitespace)
+            .dropFirst()
+        XCTAssertEqual(Array(parents), [Substring(featureCommit)], "main was rebased, not merged")
         XCTAssertTrue(
             app.staticTexts["main work"].waitForExistence(timeout: 20),
             "the rebased commit is still in the history"
@@ -112,7 +118,7 @@ final class MergeRebaseUITests: XCTestCase {
         )
         // The branches diverged, so the default merge type makes a merge commit with two parents.
         let parents = try fixture.git(["rev-list", "--parents", "-n", "1", "main"])
-            .split(separator: " ")
+            .split(whereSeparator: \.isWhitespace)
         XCTAssertEqual(parents.count, 3, "main's tip is a merge commit")
     }
 
