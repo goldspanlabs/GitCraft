@@ -1,43 +1,19 @@
 import AppKit
 import SwiftUI
 
-/// The app icon matching the appearance: the light icon in light mode, the dark one in dark mode.
-enum AppIconImage {
-    static func image(for scheme: ColorScheme) -> NSImage {
-        let name = scheme == .dark ? "AppIcon-Dark" : "AppIcon-Light"
-        if let url = Bundle.main.url(forResource: name, withExtension: "png"),
-           let image = NSImage(contentsOf: url)
-        {
-            return image
-        }
-        return NSApp.applicationIconImage
-    }
-}
-
-/// Shared macOS action-sheet chrome: optional app icon, title/subtitle header,
+/// Shared macOS action-sheet chrome: title/subtitle header,
 /// body content, and Cancel / Primary action buttons.
 struct ActionSheetLayout<Content: View>: View {
     let title: String
     let subtitle: String
-    var showsAppIcon = true
     let confirmLabel: String
     var confirmDisabled = false
     let onCancel: () -> Void
     let onConfirm: () -> Void
     @ViewBuilder var content: () -> Content
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            if showsAppIcon {
-                Image(nsImage: AppIconImage.image(for: colorScheme))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 64, height: 64)
-                    .padding(.top, 2)
-            }
-
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)

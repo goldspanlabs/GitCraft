@@ -13,11 +13,13 @@ final class RefPillView: NSView {
     private let host: RemoteHost?
 
     /// `showsUnpushedDot` swaps the checked-out branch's check mark for an orange dot.
+    /// `inOtherWorktree` marks a local branch checked out in a different worktree with a folder icon.
     /// `iconOnly` draws just the host mark, for a remote branch whose name is shown in a chip beside it.
     init(
         badge: RefBadge,
         host: RemoteHost? = nil,
         showsUnpushedDot: Bool = false,
+        inOtherWorktree: Bool = false,
         iconOnly: Bool = false,
         laneColor: NSColor? = nil
     ) {
@@ -58,6 +60,9 @@ final class RefPillView: NSView {
             let check = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Current branch")?
                 .withSymbolConfiguration(config)
             configureLeadingIcon(check, size: 13, iconOnly: false, withDivider: false, labelSpacing: 4)
+        } else if inOtherWorktree, badge.kind == .localBranch, !badge.isCurrent {
+            // Checked out in another worktree: a folder mark set off by a divider, like tags.
+            configureLeadingIcon(PhosphorIcon.nsImage(for: .folder), size: 12, iconOnly: false, withDivider: true)
         } else if badge.kind == .tag {
             // Tags lead with a tag glyph, set off by a thin divider like the host marks on remote chips.
             configureLeadingIcon(PhosphorIcon.nsImage(for: .tag), size: 12, iconOnly: false, withDivider: true)

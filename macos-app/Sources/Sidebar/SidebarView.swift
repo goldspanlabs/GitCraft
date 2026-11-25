@@ -320,12 +320,20 @@ private struct WorktreeRowView: View {
         tab.activeCheckoutPath == worktree.path
     }
 
-    private var title: String {
+    /// What's checked out here: the branch, or the commit when HEAD is detached.
+    private var branchLabel: String {
         worktree.branch ?? "detached at \(worktree.headOidHex.prefix(7))"
     }
 
-    private var subtitle: String {
-        worktree.isMain ? "main checkout" : URL(fileURLWithPath: worktree.path).lastPathComponent
+    /// A worktree is identified by its folder, like the repository's own name for the main checkout.
+    private var title: String {
+        URL(fileURLWithPath: worktree.path).lastPathComponent
+    }
+
+    /// The branch is already listed under Local Branches, so only a detached HEAD, which has
+    /// no branch there, gets a subtitle.
+    private var subtitle: String? {
+        worktree.branch == nil ? branchLabel : nil
     }
 
     var body: some View {
@@ -338,11 +346,13 @@ private struct WorktreeRowView: View {
                 Text(title)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
 
             Spacer()
@@ -376,14 +386,15 @@ private struct WorktreeRowView: View {
                     .padding(.vertical, 2)
                     .background(Color.secondary.opacity(0.2))
                     .clipShape(Capsule())
-                    .accessibilityIdentifier("worktree-current:\(title)")
+                    .accessibilityIdentifier("worktree-current:\(branchLabel)")
             }
         }
         .contentShape(Rectangle())
+        .help("\(worktree.path)\n\(branchLabel)")
         // Make the row its own accessibility element. Without this the identifier is pushed
         // down onto the leaf views (the folder icon) and overwrites the CURRENT badge's own.
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("worktree-row:\(title)")
+        .accessibilityIdentifier("worktree-row:\(branchLabel)")
         // Single tap must fire immediately, as on branch rows (see BranchRowContainer).
         .onTapGesture {
             tab.scrollToCommit(oidHex: worktree.headOidHex)
@@ -461,15 +472,19 @@ private struct BranchRowContainer<Trailing: View>: View {
     let branch: BranchInfo
     let displayName: String
     let depth: Int
+    /// The leading icon. A local branch checked out in another worktree swaps the branch glyph for a folder.
+    var glyph: PhosphorGlyph = .branch
+    var glyphHelp = ""
     let menuEntries: () -> [MenuEntry]
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         HStack(spacing: 6) {
             // Align leaf branch icon under folder icon when nested, or flush when top-level
-            PhosphorIcon(glyph: .branch)
+            PhosphorIcon(glyph: glyph)
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
+                .help(glyphHelp)
 
             Text(displayName)
                 .lineLimit(1)
@@ -507,6 +522,8 @@ private struct LocalBranchRowView: View {
             branch: branch,
             displayName: displayName,
             depth: depth,
+            glyph: otherWorktree == nil ? .branch : .folder,
+            glyphHelp: otherWorktree.map { "Checked out in \(URL(fileURLWithPath: $0.path).lastPathComponent)" } ?? "",
             menuEntries: { menuEntries }
         ) {
             if branch.isMerged {
@@ -549,6 +566,13 @@ private struct LocalBranchRowView: View {
         }
     }
 
+    /// The worktree that has this branch checked out, when it isn't the checkout being viewed.
+    private var otherWorktree: WorktreeInfo? {
+        tab.worktrees.first {
+            $0.branch == branch.name && !$0.isPrunable && $0.path != tab.activeCheckoutPath
+        }
+    }
+
     private var menuEntries: [MenuEntry] {
         let branchWorktree = tab.worktrees.first { $0.branch == branch.name }
         var entries: [MenuEntry] = []
@@ -569,7 +593,7 @@ private struct LocalBranchRowView: View {
         entries.append(.item("New Branch…") {
             tab.presentNewBranch(startPoint: branch.name)
         })
-        entries.append(.item("New Worktree…", enabled: !tab.isBusy) {
+        entries.append(.item("New Worktree from Branch…", enabled: !tab.isBusy) {
             tab.presentNewWorktree(source: .localBranch(name: branch.name, isCheckedOut: branchWorktree != nil))
         })
         if let wt = branchWorktree, !wt.isMain {
@@ -607,7 +631,7 @@ private struct RemoteBranchRowView: View {
                 .item("New Branch…") {
                     tab.presentNewBranch(startPoint: branch.name)
                 },
-                .item("New Worktree…", enabled: !tab.isBusy) {
+                .item("New Worktree from Branch…", enabled: !tab.isBusy) {
                     tab.presentNewWorktree(source: .remoteBranch(name: branch.name))
                 },
                 .separator,

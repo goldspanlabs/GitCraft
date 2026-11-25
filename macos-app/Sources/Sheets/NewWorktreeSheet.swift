@@ -57,6 +57,13 @@ struct NewWorktreeSheet: View {
         }
     }
 
+    /// Opened from a local branch that no worktree has checked out: there's nothing to choose,
+    /// the branch is simply checked out in a new folder.
+    private var isPlainBranchCheckout: Bool {
+        if case .localBranch(_, false) = source { return true }
+        return false
+    }
+
     private var startPoint: String? {
         switch source {
         case .head:
@@ -108,34 +115,42 @@ struct NewWorktreeSheet: View {
     var body: some View {
         ActionSheetLayout(
             title: "Create Worktree",
-            subtitle: "Check out another working directory sharing this repository's Git history.",
+            subtitle: isPlainBranchCheckout
+                ? "Check out this branch in a separate working directory."
+                : "Check out another working directory sharing this repository's Git history.",
             confirmLabel: switchAfterCreate ? "Create and Switch" : "Create",
             confirmDisabled: confirmDisabled,
             onCancel: { dismiss() },
             onConfirm: createWorktreeNow
         ) {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
-                GridRow {
-                    Text("Checkout:")
-                        .font(.system(size: 13))
-                        .gridColumnAlignment(.trailing)
+                if !isPlainBranchCheckout {
+                    GridRow {
+                        Text("Checkout:")
+                            .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .gridColumnAlignment(.trailing)
 
-                    Picker("", selection: $mode) {
-                        if canUseExistingBranchMode {
-                            Text("Existing Branch").tag(Mode.existingBranch)
+                        Picker("", selection: $mode) {
+                            if canUseExistingBranchMode {
+                                Text("Existing Branch").tag(Mode.existingBranch)
+                            }
+                            Text("New Branch").tag(Mode.newBranch)
+                            Text("Detached HEAD").tag(Mode.detached)
                         }
-                        Text("New Branch").tag(Mode.newBranch)
-                        Text("Detached HEAD").tag(Mode.detached)
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 440)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 340)
                 }
 
                 if mode != .existingBranch {
                     GridRow {
                         Text("Start at:")
                             .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         if case let .commit(oid) = source {
                             CommitPreviewRow(
@@ -157,8 +172,10 @@ struct NewWorktreeSheet: View {
 
                 if mode == .existingBranch {
                     GridRow {
-                        Text("Branch:")
+                        Text(isPlainBranchCheckout ? "Local branch:" : "Branch:")
                             .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         if case let .localBranch(name, false) = source {
                             HStack(spacing: 5) {
@@ -176,13 +193,15 @@ struct NewWorktreeSheet: View {
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 340)
+                            .frame(width: 440)
                         }
                     }
                 } else if mode == .newBranch {
                     GridRow {
                         Text("Branch name:")
                             .font(.system(size: 13))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         HStack(spacing: 6) {
                             PhosphorIcon(glyph: .branch)
@@ -203,7 +222,7 @@ struct NewWorktreeSheet: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .frame(width: 340)
+                        .frame(width: 440)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(Color(nsColor: .textBackgroundColor))
@@ -223,6 +242,9 @@ struct NewWorktreeSheet: View {
                 GridRow {
                     Text("Folder:")
                         .font(.system(size: 13))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .gridColumnAlignment(.trailing)
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
@@ -238,7 +260,7 @@ struct NewWorktreeSheet: View {
                             )
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
-                            .frame(width: 264)
+                            .frame(width: 364)
                             .accessibilityIdentifier("new-worktree-folder")
 
                             Button("Choose…", action: chooseFolder)

@@ -18,7 +18,6 @@ struct MergeCommitSheet: View {
         ActionSheetLayout(
             title: "Merge",
             subtitle: "Merge a commit into the checked-out branch",
-            showsAppIcon: false,
             confirmLabel: "Merge",
             onCancel: { dismiss() },
             onConfirm: {

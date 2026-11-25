@@ -89,6 +89,7 @@ struct CommitTableView: NSViewRepresentable {
         let dataChanged = coordinator.lastGraphRevision != graphRevision
             || coordinator.workingChangesCount != workingChangesCount
             || coordinator.remoteHosts != remoteHosts
+            || coordinator.worktreeBranches != Set(worktrees.filter { !$0.isPrunable }.compactMap(\.branch))
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowBefore = table.selectedRow
@@ -239,7 +240,7 @@ struct CommitTableView: NSViewRepresentable {
             // Creating references or checkouts that point at the commit.
             entries.append(.item("New Branch…") { [weak self] in self?.onCreateBranchAtCommit(oid) })
             entries.append(.item("New Tag…") { [weak self] in self?.onCreateTagAtCommit(oid) })
-            entries.append(.item("New Worktree…", enabled: !isBusy) { [weak self] in
+            entries.append(.item("New Worktree from Commit…", enabled: !isBusy) { [weak self] in
                 self?.onCreateWorktreeAtCommit(oid)
             })
             entries.append(.item("Checkout Commit…") { [weak self] in self?.onCheckoutCommit(oid) })
@@ -290,6 +291,12 @@ struct CommitTableView: NSViewRepresentable {
             }
         }
 
+        /// Branches checked out in some worktree. The viewed checkout's own branch carries the
+        /// check mark instead, so the chip ignores this set for it.
+        var worktreeBranches: Set<String> {
+            Set(worktrees.filter { !$0.isPrunable }.compactMap(\.branch))
+        }
+
         func numberOfRows(in _: NSTableView) -> Int {
             // Row 0 is pinned as synthetic "Working Changes".
             1 + rows.count
@@ -308,6 +315,7 @@ struct CommitTableView: NSViewRepresentable {
                 cell.configure(
                     commit: commit,
                     hasIncomingLine: hasIncomingLine,
+                    otherWorktreeBranches: worktreeBranches,
                     remoteHosts: remoteHosts
                 )
             }

@@ -99,7 +99,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.setContentSize(Self.savedContentSize())
         window.contentMinSize = NSSize(width: 1040, height: 680)
-        window.title = tab.name
+        window.title = tab.checkoutName
         window.subtitle = tab.currentBranch
 
         super.init(window: window)
@@ -126,9 +126,9 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func reveal() { WindowTabs.reveal(window!) }
 
     private func refreshChrome() {
-        window?.title = tab.name
+        window?.title = tab.checkoutName
         window?.subtitle = tab.currentBranch
-        titleLabel.stringValue = tab.name
+        titleLabel.stringValue = tab.checkoutName
         subtitleLabel.stringValue = tab.currentBranch
         if tab.isBusy {
             spinner.startAnimation(nil)
@@ -138,8 +138,8 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         dot.isDirty = true
         window?.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
         window?.tab.toolTip = tab.totalChangesCount > 0
-            ? "\(tab.name): \(tab.totalChangesCount) uncommitted changes"
-            : "\(tab.name): clean"
+            ? "\(tab.checkoutName): \(tab.totalChangesCount) uncommitted changes"
+            : "\(tab.checkoutName): clean"
     }
 
     /// The tab bar's "+" button asks the responder chain for this.

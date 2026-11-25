@@ -119,6 +119,7 @@ final class CommitRowCellView: NSTableCellView {
     func configure(
         commit: CommitRow,
         hasIncomingLine: Bool,
+        otherWorktreeBranches: Set<String> = [],
         remoteHosts: [String: RemoteHost] = [:]
     ) {
         let lanes = max(1, Int(commit.maxLanes))
@@ -155,27 +156,42 @@ final class CommitRowCellView: NSTableCellView {
                 badges.first { $0.kind == .localBranch && $0.name == branchNameOf(remote) }
             }
             let mirroredLocalNames = Set(mirrored.map(\.name))
+            // Remote chips lead the row, then the rest in their usual order (current branch first).
+            var remoteChips: [NSView] = []
+            var otherChips: [NSView] = []
             for badge in badges {
                 if badge.kind == .localBranch, mirroredLocalNames.contains(badge.name) {
                     continue // drawn right after its remote's icon chip
                 }
                 if badge.kind == .remoteBranch, let local = mirrored.first(where: { $0.name == branchNameOf(badge) }) {
-                    badgesStack.addArrangedSubview(
+                    remoteChips.append(
                         RefPillView(badge: badge, host: hostFor(badge), iconOnly: true, laneColor: laneColor)
                     )
-                    badgesStack.addArrangedSubview(
-                        RefPillView(badge: local, showsUnpushedDot: commit.isUnpushed, laneColor: laneColor)
-                    )
-                } else {
-                    badgesStack.addArrangedSubview(
+                    remoteChips.append(
                         RefPillView(
-                            badge: badge,
-                            host: hostFor(badge),
+                            badge: local,
                             showsUnpushedDot: commit.isUnpushed,
+                            inOtherWorktree: otherWorktreeBranches.contains(local.name),
                             laneColor: laneColor
                         )
                     )
+                } else {
+                    let chip = RefPillView(
+                        badge: badge,
+                        host: hostFor(badge),
+                        showsUnpushedDot: commit.isUnpushed,
+                        inOtherWorktree: badge.kind == .localBranch && otherWorktreeBranches.contains(badge.name),
+                        laneColor: laneColor
+                    )
+                    if badge.kind == .remoteBranch {
+                        remoteChips.append(chip)
+                    } else {
+                        otherChips.append(chip)
+                    }
                 }
+            }
+            for chip in remoteChips + otherChips {
+                badgesStack.addArrangedSubview(chip)
             }
         }
 

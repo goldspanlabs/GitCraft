@@ -172,6 +172,8 @@ final class RepoTab: ObservableObject, Identifiable {
     /// Called after the shown checkout changes, so the window can save it for relaunch.
     var onCheckoutChanged: (() -> Void)?
     var name: String { URL(fileURLWithPath: repoPath).lastPathComponent }
+    /// The folder of the checkout this tab shows: the repository's own folder, or a linked worktree's.
+    var checkoutName: String { URL(fileURLWithPath: activeCheckoutPath).lastPathComponent }
 
     @Published var currentBranch = ""
     @Published var isMerging = false
