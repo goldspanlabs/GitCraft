@@ -238,6 +238,9 @@ struct SidebarView: View {
                                 Spacer()
                             }
                             .contentShape(Rectangle())
+                            // One accessibility element per row, so UI tests can find a stash by index.
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("stash-row:\(stash.index)")
                             .nativeContextMenu {
                                 [.item("Pop \(stash.name)") {
                                     tab.stashPop(stash.index)
