@@ -276,11 +276,16 @@ final class WorktreeTabTests: XCTestCase {
         let other = try XCTUnwrap(tab.worktrees.first { $0.path != active })
         XCTAssertTrue(tab.canRemoveWorktree(try XCTUnwrap(tab.worktrees.first { $0.path == active })))
 
-        // The fallback's folder is still there but is no longer a checkout: opening it fails.
+        // The fallback's folder is still there but is no longer a checkout: opening it fails in
+        // the background work, before anything is removed.
         try FileManager.default.removeItem(atPath: other.path + "/.git")
         tab.removeWorktree(path: active, label: "main", force: false)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline && tab.isBusy {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(tab.isBusy)
         XCTAssertNotNil(tab.errorMessage)
-        XCTAssertFalse(tab.isBusy, "nothing should have been started")
         XCTAssertEqual(tab.activeCheckoutPath, active)
         XCTAssertTrue(FileManager.default.fileExists(atPath: active))
 
