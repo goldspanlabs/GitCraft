@@ -59,6 +59,7 @@ struct RepoDetailView: View {
                     CommitTableView(
                         rows: tab.commits,
                         graphRevision: tab.graphRevision,
+                        graphGeneration: tab.graphGeneration,
                         workingChangesCount: tab.totalChangesCount,
                         remoteHosts: Dictionary(
                             tab.remotes.map { ($0.name, RemoteHost(url: $0.fetchUrl)) },

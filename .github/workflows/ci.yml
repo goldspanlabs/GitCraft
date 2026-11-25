@@ -26,12 +26,6 @@ jobs:
         run: cargo test --manifest-path rust-core/Cargo.toml
       - name: Run Swift tests
         run: make test-swift
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-      - name: Rust coverage summary (report only)
-        run: cargo llvm-cov --manifest-path rust-core/Cargo.toml --summary-only
       - name: Build GitCraft.app
         run: make
 
