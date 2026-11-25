@@ -4,6 +4,8 @@ import Foundation
 /// the commit composer has something to commit.
 struct FixtureRepository {
     static let linkedBranch = "feature/ui"
+    /// The branch `make(twoBranches: true)` creates next to `main`.
+    static let featureBranch = "feature"
 
     let root: URL
     let mainPath: String
@@ -17,7 +19,8 @@ struct FixtureRepository {
     static func make(
         stagedChange: Bool = false,
         linkedWorktree: Bool = false,
-        dirtyLinkedWorktree: Bool = false
+        dirtyLinkedWorktree: Bool = false,
+        twoBranches: Bool = false
     ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
@@ -31,6 +34,19 @@ struct FixtureRepository {
         try "hello\n".write(to: readme, atomically: true, encoding: .utf8)
         try git(["add", "README.md"], in: main)
         try git(["commit", "-m", "initial"], in: main)
+
+        if twoBranches {
+            // `feature` and `main` each get one commit on top of "initial", touching different
+            // files, so merging or rebasing either way is conflict-free.
+            try git(["switch", "-c", featureBranch], in: main)
+            try "feature\n".write(to: main.appendingPathComponent("feature.txt"), atomically: true, encoding: .utf8)
+            try git(["add", "feature.txt"], in: main)
+            try git(["commit", "-m", "feature work"], in: main)
+            try git(["switch", "main"], in: main)
+            try "main\n".write(to: main.appendingPathComponent("main.txt"), atomically: true, encoding: .utf8)
+            try git(["add", "main.txt"], in: main)
+            try git(["commit", "-m", "main work"], in: main)
+        }
 
         if linkedWorktree || dirtyLinkedWorktree {
             let linked = root.appendingPathComponent("repo-ui", isDirectory: true)
@@ -50,6 +66,22 @@ struct FixtureRepository {
             try git(["add", "README.md"], in: main)
         }
         return FixtureRepository(root: root, mainPath: main.path)
+    }
+
+    /// Runs git in the main checkout, for tests that check the repository after a UI action.
+    @discardableResult
+    func git(_ arguments: [String]) throws -> String {
+        try Self.git(arguments, in: URL(fileURLWithPath: mainPath, isDirectory: true))
+    }
+
+    /// The full commit id `ref` points at.
+    func commitID(_ ref: String) throws -> String {
+        try git(["rev-parse", ref]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether `ancestor` is reachable from `descendant`.
+    func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
+        (try? git(["merge-base", "--is-ancestor", ancestor, descendant])) != nil
     }
 
     @discardableResult
