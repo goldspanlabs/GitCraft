@@ -2,13 +2,15 @@
 """Decide which CI jobs a change needs, so costly macOS runners only start when useful.
 
 Writes these outputs to $GITHUB_OUTPUT:
-  rust         'true' if the Linux Rust job should run
+  rust         'true' if the Linux Rust job should run (fmt + clippy)
+  rust_tests   'true' if that job should also run the Rust tests
   macos        'true' if the macOS app build + UI tests should run
   swift_tests  'true' if Swift unit tests should run in the app build
   ui_matrix    JSON list of {"shard": n, "classes": "A B C"} for the UI test jobs ('[]' = none)
 
 Environment:
   EVENT_NAME   github.event_name
+  LABELS       JSON list of the pull request's label names (pull requests only)
   CHANGED      newline-separated changed file paths (pull requests only)
   TEST_CLASS   optional workflow_dispatch input: comma-separated UI test classes or Class/testMethod
 """
@@ -21,6 +23,9 @@ import sys
 
 UI_DIR = "macos-app/UITests/GitCraftUITests"
 UI_TEST_FILE = re.compile(re.escape(UI_DIR) + r"/[A-Za-z0-9_]+UITests\.swift$")
+# Tests run on main, on manual runs, and on pull requests carrying this label. Other pull
+# requests only get the non-test checks (formatting and lint).
+RUN_TESTS_LABEL = "run-ui-tests"
 MAX_SHARDS = 3
 TESTS_PER_SHARD = 10  # don't spin up another macOS runner for fewer tests than this
 
@@ -94,13 +99,17 @@ def plan():
         if unknown:
             sys.exit(f"Unknown UI test class: {', '.join(unknown)}. Known: {', '.join(all_classes)}")
         matrix = balance(requested, counts, shard_count_for(requested, counts))
-        return dict(rust=False, macos=True, swift_tests=False, matrix=matrix)
+        return dict(rust=False, rust_tests=False, macos=True, swift_tests=False, matrix=matrix)
 
     changed = [p.strip() for p in os.environ.get("CHANGED", "").splitlines() if p.strip()]
     if event != "pull_request" or not changed or any(p in CI_FILES for p in changed):
         # Pushes to main, manual runs and CI changes always run everything.
         return dict(
-            rust=True, macos=True, swift_tests=True, matrix=balance(all_classes, counts, MAX_SHARDS)
+            rust=True,
+            rust_tests=True,
+            macos=True,
+            swift_tests=True,
+            matrix=balance(all_classes, counts, MAX_SHARDS),
         )
 
     relevant = [p for p in changed if not ignored(p)]
@@ -108,8 +117,16 @@ def plan():
     needs_app = [p for p in relevant if p not in rust_only]
 
     rust = any(p.startswith("rust-core/") for p in relevant)
+    try:
+        labels = json.loads(os.environ.get("LABELS") or "[]")
+    except ValueError:
+        labels = []
+    opted_in = RUN_TESTS_LABEL in labels
     if not needs_app:
-        return dict(rust=rust, macos=False, swift_tests=False, matrix=[])
+        return dict(rust=rust, rust_tests=rust and opted_in, macos=False, swift_tests=False, matrix=[])
+    if not opted_in:
+        # No tests on a plain pull request: only the Linux formatting and lint checks.
+        return dict(rust=rust, rust_tests=False, macos=False, swift_tests=False, matrix=[])
 
     ui_only = all(UI_TEST_FILE.match(p) for p in relevant)
     if ui_only:
@@ -117,10 +134,14 @@ def plan():
         touched = [os.path.basename(p).removesuffix(".swift") for p in needs_app]
         existing = [c for c in touched if c in counts]
         matrix = balance(existing, counts, shard_count_for(existing, counts)) if existing else []
-        return dict(rust=rust, macos=bool(matrix), swift_tests=False, matrix=matrix)
+        return dict(rust=rust, rust_tests=rust, macos=bool(matrix), swift_tests=False, matrix=matrix)
 
     return dict(
-        rust=True, macos=True, swift_tests=True, matrix=balance(all_classes, counts, MAX_SHARDS)
+        rust=True,
+        rust_tests=True,
+        macos=True,
+        swift_tests=True,
+        matrix=balance(all_classes, counts, MAX_SHARDS),
     )
 
 
@@ -128,6 +149,7 @@ def main():
     result = plan()
     outputs = {
         "rust": str(result["rust"]).lower(),
+        "rust_tests": str(result["rust_tests"]).lower(),
         "macos": str(result["macos"]).lower(),
         "swift_tests": str(result["swift_tests"]).lower(),
         "ui_matrix": json.dumps(result["matrix"], separators=(",", ":")),

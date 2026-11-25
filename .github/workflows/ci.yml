@@ -5,6 +5,8 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+    # `labeled` lets adding the run-ui-tests label start the tests on an open PR.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       test_class:
@@ -15,7 +17,8 @@ on:
         default: ""
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Adding an unrelated label gets its own group, so it can't cancel a run in progress.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'run-ui-tests') && github.run_id || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -24,6 +27,8 @@ permissions:
 jobs:
   # Cheap Linux job that decides what the rest needs, so macOS runners only start when useful.
   changes:
+    # Labelling a PR with anything but run-ui-tests changes nothing about what CI should run.
+    if: github.event.action != 'labeled' || github.event.label.name == 'run-ui-tests'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -31,6 +36,7 @@ jobs:
       pull-requests: read
     outputs:
       rust: ${{ steps.plan.outputs.rust }}
+      rust_tests: ${{ steps.plan.outputs.rust_tests }}
       macos: ${{ steps.plan.outputs.macos }}
       swift_tests: ${{ steps.plan.outputs.swift_tests }}
       ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
@@ -43,6 +49,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           TEST_CLASS: ${{ inputs.test_class }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           if [ "$EVENT_NAME" = "pull_request" ]; then
             CHANGED="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"
@@ -73,6 +80,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings
       - name: Run Rust tests
+        if: needs.changes.outputs.rust_tests == 'true'
         run: cargo test --manifest-path rust-core/Cargo.toml
 
   build-app:
