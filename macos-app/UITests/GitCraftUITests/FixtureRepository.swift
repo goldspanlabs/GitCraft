@@ -8,6 +8,9 @@ struct FixtureRepository {
     let root: URL
     let mainPath: String
 
+    /// Where `make(linkedWorktree: true)` puts the linked checkout.
+    var linkedPath: String { root.appendingPathComponent("repo-ui", isDirectory: true).path }
+
     static func make(stagedChange: Bool = false, linkedWorktree: Bool = false) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
