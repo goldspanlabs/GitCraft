@@ -408,19 +408,19 @@ private struct LocalBranchRowView: View {
     private var menuEntries: [MenuEntry] {
         var entries: [MenuEntry] = []
         if !branch.isHead {
-            entries.append(.item("Checkout...") {
+            entries.append(.item("Checkout") {
                 tab.checkoutBranch(branch.name)
             })
-            entries.append(.item("Merge into '\(tab.currentBranch)'") {
-                tab.mergeBranch(branch.name)
+            entries.append(.item("Merge into '\(tab.currentBranch)'…") {
+                tab.requestMergeCommit(branch.targetOidHex)
             })
         }
-        entries.append(.item("New Branch...") {
+        entries.append(.item("New Branch…") {
             tab.presentNewBranch(startPoint: branch.name)
         })
         if !branch.isHead {
             entries.append(.separator)
-            entries.append(.item("Delete...") {
+            entries.append(.item("Delete…") {
                 tab.pendingConfirmation = .deleteBranch(name: branch.name, force: false)
             })
         }
@@ -441,12 +441,12 @@ private struct RemoteBranchRowView: View {
             displayName: displayName,
             depth: depth
         ) {
-            [.item("Checkout...") {
+            [.item("Checkout") {
                 tab.checkoutBranch(branch.name)
-            }, .item("New Branch...") {
+            }, .item("New Branch…") {
                 tab.presentNewBranch(startPoint: branch.name)
             }, .separator,
-             .item("Delete '\(branch.name)'") {
+             .item("Delete '\(branch.name)'…") {
                 tab.pendingConfirmation = .deleteRemoteBranch(name: branch.name)
              }]
         } trailing: {
