@@ -30,7 +30,9 @@ final class WorktreeUITests: XCTestCase {
         let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
         XCTAssertTrue(linked.waitForExistence(timeout: 60))
 
-        linked.doubleClick()
+        // The row is a container, so XCUITest reports it as not hittable even though it is on
+        // screen. Click its centre by coordinate; the row's double-tap gesture still receives it.
+        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
 
         XCTAssertTrue(
             element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20),
