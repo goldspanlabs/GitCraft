@@ -11,21 +11,26 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    runs-on: macos-latest
+  rust:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
+      - name: Cache Rust builds
+        uses: actions/cache@v4
+        with:
+          path: rust-core/target
+          key: ${{ runner.os }}-rust-${{ hashFiles('rust-core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
       - name: Check formatting
         run: cargo fmt --manifest-path rust-core/Cargo.toml --check
       - name: Run clippy
         run: cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings
       - name: Run Rust tests
         run: cargo test --manifest-path rust-core/Cargo.toml
-      - name: Run Swift tests
-        run: make test-swift
 
   build-app:
     runs-on: macos-latest
@@ -41,6 +46,8 @@ jobs:
           key: ${{ runner.os }}-app-${{ hashFiles('rust-core/Cargo.lock', 'macos-app/Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-app-
+      - name: Run Swift tests
+        run: make test-swift
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Build GitCraft.app
@@ -63,7 +70,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
       - name: Download app bundle
@@ -78,7 +85,7 @@ jobs:
       - name: Run UI tests (shard ${{ matrix.shard }})
         env:
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_COUNT: 4
+          SHARD_COUNT: 3
           TEST_RUNNER_GITCRAFT_APP_PATH: ${{ github.workspace }}/build/GitCraft.app
         run: |
           # Distribute UI test classes evenly across shards by test count so new test files
