@@ -191,6 +191,7 @@ struct NewWorktreeSheet: View {
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 13))
                                 .focused($isBranchNameFocused)
+                                .accessibilityIdentifier("new-worktree-branch")
                                 .onChange(of: branchName) { _, newValue in
                                     if let replacement = BranchSpaceReplacement.current.replacement,
                                        newValue.contains(" ")
@@ -238,6 +239,7 @@ struct NewWorktreeSheet: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12, design: .monospaced))
                             .frame(width: 264)
+                            .accessibilityIdentifier("new-worktree-folder")
 
                             Button("Choose…", action: chooseFolder)
                                 .controlSize(.regular)

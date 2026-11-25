@@ -376,9 +376,14 @@ private struct WorktreeRowView: View {
                     .padding(.vertical, 2)
                     .background(Color.secondary.opacity(0.2))
                     .clipShape(Capsule())
+                    .accessibilityIdentifier("worktree-current:\(title)")
             }
         }
         .contentShape(Rectangle())
+        // Make the row its own accessibility element. Without this the identifier is pushed
+        // down onto the leaf views (the folder icon) and overwrites the CURRENT badge's own.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("worktree-row:\(title)")
         // Single tap must fire immediately, as on branch rows (see BranchRowContainer).
         .onTapGesture {
             tab.scrollToCommit(oidHex: worktree.headOidHex)
