@@ -125,7 +125,7 @@ final class RepositoryStateUITests: XCTestCase {
         let untracked = (fixture.mainPath as NSString).appendingPathComponent(FixtureRepository.untrackedFileName)
         XCTAssertTrue(element("staged-file:README.md").waitForExistence(timeout: 60))
         try checkOut("initial", choosing: "Discard") {
-            let confirm = self.app.buttons["Discard Changes and Checkout"].firstMatch
+            let confirm = self.app.sheets.buttons["Discard Changes and Checkout"].firstMatch
             XCTAssertTrue(confirm.waitForExistence(timeout: 10), "discarding asks a second time")
             XCTAssertEqual(try self.fixture.stagedFiles(), ["README.md"], "the staged edit is kept while it asks")
             XCTAssertTrue(try self.fixture.isModified("main.txt"), "the unstaged edit is kept while it asks")
