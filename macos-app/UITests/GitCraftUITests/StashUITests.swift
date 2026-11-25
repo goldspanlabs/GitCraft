@@ -7,10 +7,17 @@ final class StashUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // The save test needs changes to stash; the drop test needs stashes to drop.
-        fixture = name.contains("Save")
-            ? try FixtureRepository.make(unstagedFiles: ["README.md"], untrackedFile: true)
-            : try FixtureRepository.make(stashes: true)
+        // The save test needs changes to stash, the no-changes test needs none, and the
+        // conflicting pop needs stashes plus a local edit to the file they change.
+        if name.contains("Save") {
+            fixture = try FixtureRepository.make(unstagedFiles: ["README.md"], untrackedFile: true)
+        } else if name.contains("NoChanges") {
+            fixture = try FixtureRepository.make()
+        } else if name.contains("Conflicts") {
+            fixture = try FixtureRepository.make(unstagedFiles: ["README.md"], stashes: true)
+        } else {
+            fixture = try FixtureRepository.make(stashes: true)
+        }
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = [
             "-UITestOpenRepository", fixture.mainPath,
@@ -83,7 +90,77 @@ final class StashUITests: XCTestCase {
         XCTAssertTrue(left.first?.hasSuffix("second stash") == true, "the newer stash is the one kept, got \(left)")
     }
 
+    func testPopRemovesTheStashAndRestoresItsChanges() throws {
+        let row = element("stash-row:0")
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "the stashes are listed")
+        rightClick(row)
+        let pop = app.menuItems["Pop stash@{0}"]
+        XCTAssertTrue(pop.waitForExistence(timeout: 10))
+        pop.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { (try? self.fixture.stashMessages().count) == 1 },
+            "popping removes the stash"
+        )
+        XCTAssertTrue(try fixture.stashMessages().first?.hasSuffix("first stash") == true, "the older stash is kept")
+        XCTAssertEqual(try readme(), "second stash\n", "the newest stash's change is back in the working tree")
+    }
+
+    func testApplyRestoresTheChangesAndKeepsTheStash() throws {
+        let row = element("stash-row:0")
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "the stashes are listed")
+        rightClick(row)
+        let apply = app.menuItems["Apply stash@{0}"]
+        XCTAssertTrue(apply.waitForExistence(timeout: 10))
+        apply.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { (try? self.readme()) == "second stash\n" },
+            "the newest stash's change is back in the working tree"
+        )
+        XCTAssertFalse(
+            waitUntil(timeout: 3) { (try? self.fixture.stashMessages().count) != 2 },
+            "applying keeps both stashes"
+        )
+        XCTAssertTrue(element("stash-row:0").exists, "the applied stash is still listed")
+    }
+
+    func testStashChangesIsDisabledWithNoChanges() throws {
+        let header = app.staticTexts["STASHES"]
+        XCTAssertTrue(header.waitForExistence(timeout: 60))
+        // Wait for the app to load the (clean) working tree before reading the menu.
+        XCTAssertTrue(app.staticTexts["Working tree clean"].waitForExistence(timeout: 60))
+        rightClick(header)
+        let item = app.menuItems["Stash Changes…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 10))
+        XCTAssertFalse(item.isEnabled, "there is nothing to stash")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(app.buttons["Stash…"].firstMatch.isEnabled, "the composer's Stash button is disabled too")
+    }
+
+    func testPopThatConflictsWithLocalEditsKeepsTheStashAndTheEdits() throws {
+        // README.md has an unstaged edit, and stash@{0} changes README.md too.
+        let editedBefore = try readme()
+        let row = element("stash-row:0")
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "the stashes are listed")
+        XCTAssertTrue(element("unstaged-file:README.md").waitForExistence(timeout: 60))
+        rightClick(row)
+        let pop = app.menuItems["Pop stash@{0}"]
+        XCTAssertTrue(pop.waitForExistence(timeout: 10))
+        pop.click()
+
+        XCTAssertTrue(element("error-toast").waitForExistence(timeout: 30), "the failed pop is reported")
+        XCTAssertEqual(try fixture.stashMessages().count, 2, "a failed pop keeps the stash")
+        XCTAssertEqual(try readme(), editedBefore, "the local edit is left alone")
+        XCTAssertFalse(fixture.gitDirContains("MERGE_HEAD"))
+    }
+
     // MARK: Helpers
+
+    /// README.md in the main checkout.
+    private func readme() throws -> String {
+        try String(contentsOfFile: (fixture.mainPath as NSString).appendingPathComponent("README.md"), encoding: .utf8)
+    }
 
     /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
     /// XCUITest can report as not hittable even when they are on screen.
