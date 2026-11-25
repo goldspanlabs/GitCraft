@@ -151,7 +151,8 @@ final class AvatarLoaderTests: XCTestCase {
         let email = "fetch-ok@example.com"
 
         XCTAssertNil(loader.cachedImage(for: email))
-        let first = try XCTUnwrap(await loader.image(for: email))
+        let fetched = await loader.image(for: email)
+        let first = try XCTUnwrap(fetched)
         // The 8x8 fixture, not the GitHub fallback tile a failed decode would produce.
         XCTAssertEqual(first.size, NSSize(width: 8, height: 8))
         XCTAssertEqual(loader.cachedImage(for: " FETCH-OK@example.com ")?.size, NSSize(width: 8, height: 8))
