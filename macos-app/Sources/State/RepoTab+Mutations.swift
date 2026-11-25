@@ -378,15 +378,41 @@ extension RepoTab {
         let canonical = Self.canonicalPath(for: path)
         let wasActive = (canonical == activeCheckoutPath)
         let fallback = fallbackCheckoutPath(excluding: canonical)
+        // Removing the checkout this tab shows needs somewhere to go afterwards. The menu only
+        // offers it when a fallback exists, but that was checked against a list that may be
+        // stale by now (and the force-remove prompt comes back here too), so check again and
+        // open the fallback's session before deleting anything. If either fails, nothing is
+        // removed and the tab stays where it is.
+        let fallbackSession: RepoSession?
+        if wasActive {
+            guard let fallback else {
+                errorMessage = "Can't remove the checkout this tab shows, because no other checkout "
+                    + "of this repository is available to switch to."
+                return
+            }
+            do {
+                fallbackSession = try RepoSession(path: fallback)
+            } catch {
+                showError(error)
+                return
+            }
+        } else {
+            fallbackSession = nil
+        }
         performMutation({ session in
+            if wasActive, let fallback, !FileManager.default.fileExists(atPath: fallback) {
+                throw GitCraftError.Message(
+                    msg: "Can't remove the checkout this tab shows, because \(fallback) is no longer there to switch to."
+                )
+            }
             try session.removeWorktree(path: canonical, force: force)
         }, onSuccess: { [weak self] in
             guard let self else { return }
             if self.repoPath == canonical, let fallback {
                 self.repoPath = fallback
             }
-            if wasActive, let fallback {
-                self.switchCheckout(to: fallback)
+            if let fallback, let fallbackSession {
+                self.switchCheckout(to: fallback, using: fallbackSession)
             }
         }, onFailure: { [weak self] error in
             // A safe remove refused because the worktree has modified, staged, or untracked

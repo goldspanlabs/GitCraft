@@ -466,6 +466,20 @@ final class RepoTab: ObservableObject, Identifiable {
             showError(error)
             return
         }
+        attach(next, at: canonical)
+    }
+
+    /// Switches to a checkout whose session the caller already opened, so the switch itself
+    /// can't fail. Removing the active worktree uses this: it opens the fallback before
+    /// deleting anything, so the tab isn't left on a folder that no longer exists. It skips
+    /// the busy check because it runs as the last step of that removal.
+    func switchCheckout(to path: String, using next: RepoSession) {
+        let canonical = Self.canonicalPath(for: path)
+        guard canonical != activeCheckoutPath else { return }
+        attach(next, at: canonical)
+    }
+
+    private func attach(_ next: RepoSession, at canonical: String) {
         watcherTask?.cancel()
         autoFetchTask?.cancel()
         revealTask?.cancel()

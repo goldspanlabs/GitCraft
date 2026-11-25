@@ -256,6 +256,44 @@ final class WorktreeTabTests: XCTestCase {
         XCTAssertFalse(tab.canRemoveWorktree(sole), "cannot remove the sole remaining checkout")
     }
 
+    @MainActor
+    func testRemovingActiveWorktreeIsRefusedWhenFallbackIsNoLongerUsable() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // A bare-backed repository has no primary checkout, so the only fallback for wt1 is wt2.
+        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let bare = root.appendingPathComponent("origin.git", isDirectory: true)
+        try git(["clone", "--bare", source.path, bare.path], in: root)
+        let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
+        let wt2 = root.appendingPathComponent("wt2", isDirectory: true)
+        try git(["worktree", "add", wt1.path, "main"], in: bare)
+        try git(["worktree", "add", "-b", "second", wt2.path], in: bare)
+
+        let tab = try RepoTab(url: wt1)
+        defer { tab.stopWatcher() }
+        let active = tab.activeCheckoutPath
+        let other = try XCTUnwrap(tab.worktrees.first { $0.path != active })
+        XCTAssertTrue(tab.canRemoveWorktree(try XCTUnwrap(tab.worktrees.first { $0.path == active })))
+
+        // The fallback's folder is still there but is no longer a checkout: opening it fails.
+        try FileManager.default.removeItem(atPath: other.path + "/.git")
+        tab.removeWorktree(path: active, label: "main", force: false)
+        XCTAssertNotNil(tab.errorMessage)
+        XCTAssertFalse(tab.isBusy, "nothing should have been started")
+        XCTAssertEqual(tab.activeCheckoutPath, active)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: active))
+
+        // The fallback's folder is gone entirely, though the cached list still offers it.
+        tab.errorMessage = nil
+        try FileManager.default.removeItem(atPath: other.path)
+        tab.removeWorktree(path: active, label: "main", force: true)
+        XCTAssertNotNil(tab.errorMessage)
+        XCTAssertFalse(tab.isBusy, "nothing should have been started")
+        XCTAssertEqual(tab.activeCheckoutPath, active)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: active))
+    }
+
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)
