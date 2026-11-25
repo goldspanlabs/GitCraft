@@ -68,7 +68,10 @@ impl RepoSession {
         if let Some(name) = remote {
             args.push(name);
         }
-        self.mutate(&args)
+        // No mutation lock: fetch only updates remote-tracking refs (git locks those itself) and
+        // can run for minutes, which must not hold up staging or committing.
+        git_cli::mutate(&self.path, &args)?;
+        Ok(())
     }
 
     pub fn fetch_remote(&self, name: String, include_tags: bool) -> Result<(), GitCraftError> {

@@ -58,23 +58,31 @@ pub fn get_commit_detail(
         .map_err(|e| GitCraftError::message(e.to_string()))?;
 
     let meta = extract_commit_metadata(&commit, true);
-    let parent_oids = commit
+    let parent_oids: Vec<String> = commit
         .parent_ids()
         .map(|p| p.detach().to_hex().to_string())
         .collect();
 
-    let files_output = crate::git_cli::run(
-        repo_path,
-        &[
-            "diff-tree",
-            "--no-commit-id",
-            "--name-status",
-            "-z",
-            "-r",
-            "--root",
-            oid_hex,
-        ],
-    )?;
+    // `diff-tree <commit>` prints nothing for a merge, so a merge lists its changes against
+    // its first parent, matching the diff the inspector shows.
+    let files_output = match parent_oids.as_slice() {
+        [first, _, ..] => crate::git_cli::run(
+            repo_path,
+            &["diff-tree", "--name-status", "-z", "-r", first, oid_hex],
+        )?,
+        _ => crate::git_cli::run(
+            repo_path,
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--name-status",
+                "-z",
+                "-r",
+                "--root",
+                oid_hex,
+            ],
+        )?,
+    };
 
     // -z output is "<status>\0<path>\0" per file, with no quoting of unusual paths.
     let mut files = Vec::new();

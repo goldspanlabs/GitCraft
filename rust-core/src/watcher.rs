@@ -44,6 +44,11 @@ fn relative_slash_path(path: &Path, base: &Path) -> Option<String> {
 }
 
 fn classify_inside_git_dir(inside: &str, is_active_worktree: bool) -> Change {
+    // Git's own lock files (`index.lock`, `HEAD.lock`, ...) only exist mid-write. Working-tree
+    // files such as `Cargo.lock` are real content and are classified by the caller.
+    if inside.ends_with(".lock") {
+        return Change::Irrelevant;
+    }
     if inside.starts_with("objects/") || inside.starts_with("logs/") {
         return Change::Irrelevant;
     }
@@ -81,13 +86,6 @@ fn classify_path(
     common_dir: &Path,
     sibling_worktrees: &[PathBuf],
 ) -> Change {
-    if path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".lock"))
-    {
-        return Change::Irrelevant;
-    }
     if let Some(inside) = relative_slash_path(path, git_dir) {
         return classify_inside_git_dir(&inside, true);
     }
@@ -285,6 +283,10 @@ mod tests {
         assert_eq!(classify("/r/target/debug/foo"), Change::Status);
         assert_eq!(classify("/r/.git/index"), Change::Status);
         assert_eq!(classify("/r/.git/index.lock"), Change::Irrelevant);
+        assert_eq!(classify("/r/.git/refs/heads/main.lock"), Change::Irrelevant);
+        // Lock files in the working tree are ordinary content.
+        assert_eq!(classify("/r/Cargo.lock"), Change::Status);
+        assert_eq!(classify("/r/app/Podfile.lock"), Change::Status);
         assert_eq!(classify("/r/.git/objects/ab/cdef"), Change::Irrelevant);
         assert_eq!(classify("/r/.git/logs/HEAD"), Change::Irrelevant);
         assert_eq!(classify("/r/.git/HEAD"), Change::Graph);
