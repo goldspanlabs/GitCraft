@@ -19,6 +19,7 @@ struct CommitTableView: NSViewRepresentable {
     let remoteHosts: [String: RemoteHost]
     let worktrees: [WorktreeInfo]
     let showTags: Bool
+    let showAvatars: Bool
     let isBusy: Bool
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
@@ -94,6 +95,7 @@ struct CommitTableView: NSViewRepresentable {
             || coordinator.remoteHosts != remoteHosts
             || coordinator.worktreeBranches != newWorktreeBranches
             || coordinator.showTags != showTags
+            || coordinator.showAvatars != showAvatars
         let dataChanged = revisionChanged || metadataChanged
 
         let oldRowCount = coordinator.rows.count
@@ -126,6 +128,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.worktrees = worktrees
         coordinator.worktreeBranches = newWorktreeBranches
         coordinator.showTags = showTags
+        coordinator.showAvatars = showAvatars
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
@@ -193,6 +196,7 @@ struct CommitTableView: NSViewRepresentable {
         /// Branches checked out in some worktree. Cached here rather than recomputed per row.
         var worktreeBranches: Set<String> = []
         var showTags = true
+        var showAvatars = AvatarPreference.isEnabled()
         var isBusy = false
         var lastGraphRevision: UUID?
         var lastGraphGeneration: Int?
