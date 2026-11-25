@@ -619,6 +619,11 @@ private struct LocalBranchRowView: View {
                     tab.checkoutBranch(branch.name)
                 })
             }
+            if branchWorktree == nil && branch.behind > 0 && branch.ahead == 0 {
+                entries.append(.item("Fast-Forward '\(branch.name)'", enabled: !tab.isBusy) {
+                    tab.fastForwardBranch(branch.name)
+                })
+            }
             entries.append(.item("Merge into '\(tab.currentBranch)'…") {
                 tab.requestMergeCommit(branch.targetOidHex)
             })

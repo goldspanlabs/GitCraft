@@ -245,6 +245,9 @@ interface RepoSession {
   void delete_remote_branch(string branch_name);
 
   [Throws=GitCraftError]
+  void fast_forward_branch(string branch_name);
+
+  [Throws=GitCraftError]
   void merge_branch(string branch_name);
 
   [Throws=GitCraftError]

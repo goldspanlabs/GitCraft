@@ -1,7 +1,7 @@
 use crate::{
     git_cli,
     validation::{format_ref_display, ref_exists, validate_ref_arg, validate_remote_arg},
-    GitCraftError, MergeType, RepoSession, ResetMode,
+    worktree, GitCraftError, MergeType, RepoSession, ResetMode,
 };
 
 impl RepoSession {
@@ -63,6 +63,104 @@ impl RepoSession {
         let remote = validate_remote_arg(remote)?;
         let branch = validate_ref_arg(branch)?;
         self.mutate(&["push", &remote, "--delete", &branch])
+    }
+
+    /// Fast-forwards a non-checked-out local branch to its upstream remote-tracking ref
+    /// without touching the working tree or hitting the network.
+    pub fn fast_forward_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
+        let branch_name = validate_ref_arg(&branch_name)?;
+        self.with_mutation_lock(|| {
+            let local_ref = format!("refs/heads/{branch_name}");
+            let local_oid = git_cli::run(
+                &self.path,
+                &["rev-parse", "--verify", &format!("{local_ref}^{{commit}}")],
+            )
+            .map_err(|_| GitCraftError::message(format!("Branch '{branch_name}' does not exist")))?
+            .trim()
+            .to_owned();
+
+            // Moving a branch that is checked out anywhere would desync that worktree's
+            // index and working tree from its HEAD.
+            let worktrees = worktree::list_entries(&self.path)?;
+            if worktrees
+                .iter()
+                .any(|wt| wt.branch.as_deref() == Some(branch_name.as_str()))
+            {
+                return Err(GitCraftError::message(format!(
+                    "Cannot fast-forward '{branch_name}' while it is checked out; pull from that checkout instead"
+                )));
+            }
+
+            // Match `list_branches`'s upstream resolution: configured upstream first,
+            // falling back to `refs/remotes/origin/<branch>` if present.
+            let upstream_ref = git_cli::run(
+                &self.path,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--symbolic-full-name",
+                    &format!("{branch_name}@{{u}}"),
+                ],
+            )
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|r| !r.is_empty() && ref_exists(&self.path, r))
+            .or_else(|| {
+                let fallback = format!("refs/remotes/origin/{branch_name}");
+                ref_exists(&self.path, &fallback).then_some(fallback)
+            })
+            .ok_or_else(|| {
+                GitCraftError::message(format!(
+                    "Branch '{branch_name}' has no upstream branch to fast-forward to"
+                ))
+            })?;
+
+            let upstream_oid = git_cli::run(
+                &self.path,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    &format!("{upstream_ref}^{{commit}}"),
+                ],
+            )
+            .map_err(|e| GitCraftError::message(e.to_string()))?
+            .trim()
+            .to_owned();
+
+            if local_oid == upstream_oid {
+                return Err(GitCraftError::warning(format!(
+                    "'{branch_name}' is already up to date"
+                )));
+            }
+
+            if git_cli::run(
+                &self.path,
+                &["merge-base", "--is-ancestor", &local_oid, &upstream_oid],
+            )
+            .is_err()
+            {
+                return Err(GitCraftError::message(format!(
+                    "Cannot fast-forward '{branch_name}': it has diverged from its upstream"
+                )));
+            }
+
+            let upstream_display = upstream_ref
+                .strip_prefix("refs/remotes/")
+                .unwrap_or(&upstream_ref);
+            let reflog_msg = format!("fast-forward to {upstream_display}");
+            git_cli::mutate(
+                &self.path,
+                &[
+                    "update-ref",
+                    "-m",
+                    &reflog_msg,
+                    &local_ref,
+                    &upstream_oid,
+                    &local_oid,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn merge_branch(&self, branch_name: String) -> Result<(), GitCraftError> {

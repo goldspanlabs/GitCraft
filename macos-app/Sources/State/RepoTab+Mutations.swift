@@ -209,6 +209,10 @@ extension RepoTab {
         performMutation { try $0.deleteRemoteBranch(branchName: branchName) }
     }
 
+    func fastForwardBranch(_ branchName: String) {
+        performMutation { try $0.fastForwardBranch(branchName: branchName) }
+    }
+
     func mergeBranch(_ branchName: String) {
         performMutation { try $0.mergeBranch(branchName: branchName) }
     }
