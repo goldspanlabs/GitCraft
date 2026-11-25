@@ -99,34 +99,6 @@ struct SidebarView: View {
                 }
             }
 
-            Section(isExpanded: $isWorktreesExpanded) {
-                if isWorktreesExpanded {
-                    if !tab.worktrees.contains(where: { !$0.isMain }) {
-                        Text("No worktrees")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(tab.worktrees, id: \.path) { worktree in
-                            WorktreeRowView(tab: tab, worktree: worktree)
-                        }
-                    }
-                }
-            } header: {
-                SectionHeaderLabel(title: "WORKTREES") {
-                    [
-                        .item("New Worktree…", enabled: !tab.isBusy) {
-                            tab.presentNewWorktree(source: .head)
-                        },
-                        .item(
-                            "Prune Stale Worktrees",
-                            enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
-                        ) {
-                            tab.pruneWorktrees()
-                        },
-                    ]
-                }
-            }
-
             Section(isExpanded: $isRemotesExpanded) {
                 if isRemotesExpanded {
                     if tab.remotes.isEmpty {
@@ -174,6 +146,34 @@ struct SidebarView: View {
                         }
                     }
                     return entries
+                }
+            }
+
+            Section(isExpanded: $isWorktreesExpanded) {
+                if isWorktreesExpanded {
+                    if !tab.worktrees.contains(where: { !$0.isMain }) {
+                        Text("No worktrees")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(tab.worktrees, id: \.path) { worktree in
+                            WorktreeRowView(tab: tab, worktree: worktree)
+                        }
+                    }
+                }
+            } header: {
+                SectionHeaderLabel(title: "WORKTREES") {
+                    [
+                        .item("New Worktree…", enabled: !tab.isBusy) {
+                            tab.presentNewWorktree(source: .head)
+                        },
+                        .item(
+                            "Prune Stale Worktrees",
+                            enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
+                        ) {
+                            tab.pruneWorktrees()
+                        },
+                    ]
                 }
             }
 
