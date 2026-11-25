@@ -23,8 +23,8 @@ import sys
 
 UI_DIR = "macos-app/UITests/GitCraftUITests"
 UI_TEST_FILE = re.compile(re.escape(UI_DIR) + r"/[A-Za-z0-9_]+UITests\.swift$")
-# Tests run on main, on manual runs, and on pull requests carrying this label. Other pull
-# requests only get the non-test checks (formatting and lint).
+# The macOS build and tests run on main, on manual runs, and on pull requests carrying this
+# label. Other pull requests only get the Linux Rust checks.
 RUN_TESTS_LABEL = "run-ui-tests"
 MAX_SHARDS = 3
 TESTS_PER_SHARD = 10  # don't spin up another macOS runner for fewer tests than this
@@ -123,10 +123,10 @@ def plan():
         labels = []
     opted_in = RUN_TESTS_LABEL in labels
     if not needs_app:
-        return dict(rust=rust, rust_tests=rust and opted_in, macos=False, swift_tests=False, matrix=[])
+        return dict(rust=rust, rust_tests=rust, macos=False, swift_tests=False, matrix=[])
     if not opted_in:
-        # No tests on a plain pull request: only the Linux formatting and lint checks.
-        return dict(rust=rust, rust_tests=False, macos=False, swift_tests=False, matrix=[])
+        # No macOS tests on a plain pull request. The Linux Rust job, tests included, is cheap.
+        return dict(rust=rust, rust_tests=rust, macos=False, swift_tests=False, matrix=[])
 
     ui_only = all(UI_TEST_FILE.match(p) for p in relevant)
     if ui_only:
