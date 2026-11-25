@@ -1265,6 +1265,25 @@ fn unpushed_commits_on_the_current_branch_are_marked() {
 }
 
 #[test]
+fn commits_are_not_marked_unpushed_once_the_upstream_branch_is_gone() {
+    let (dir, _origin) = repo_with_bare_origin();
+    run_git(dir.path(), &["checkout", "-qb", "topic"]);
+    run_git(dir.path(), &["push", "-q", "-u", "origin", "topic"]);
+    write(dir.path(), "x.txt", "1\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-qm", "squashed away"]);
+    let session = open(dir.path());
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert!(rows.iter().any(|r| r.is_unpushed));
+
+    // The remote branch is deleted after a merge and pruned locally.
+    run_git(dir.path(), &["push", "-q", "origin", "--delete", "topic"]);
+    run_git(dir.path(), &["fetch", "-q", "--prune"]);
+    let rows = session.get_commit_graph(0, 10, None).unwrap();
+    assert!(rows.iter().all(|r| !r.is_unpushed));
+}
+
+#[test]
 fn nothing_is_marked_unpushed_without_remote_branches() {
     let dir = init_repo_with_commit();
     let rows = open(dir.path()).get_commit_graph(0, 10, None).unwrap();

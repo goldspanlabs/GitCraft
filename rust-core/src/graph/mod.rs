@@ -4,6 +4,8 @@ mod refs;
 
 use std::collections::{HashMap, HashSet};
 
+use gix::bstr::ByteSlice;
+
 use crate::{CommitRow, CommitSort, GitCraftError, RefBadge, RefKind};
 
 pub use detail::get_commit_detail;
@@ -11,7 +13,7 @@ pub use refs::{list_branches, list_tags};
 
 use detail::extract_commit_metadata;
 use lanes::{LaneState, RawCommit};
-use refs::{collect_refs_and_tips, default_base};
+use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
 
 pub fn get_commit_graph(
     sync_repo: &gix::ThreadSafeRepository,
@@ -187,8 +189,16 @@ fn unpushed_head_commits(
     let Ok(head) = repo.head() else {
         return HashSet::new();
     };
-    if head.referent_name().is_none() {
+    let Some(head_ref) = head.referent_name() else {
         return HashSet::new();
+    };
+    // A deleted upstream usually means the branch was merged (and perhaps squashed, so its
+    // commits never reach a remote branch). Marking them unpushed would be misleading.
+    let branch = head_ref.as_bstr().to_str_lossy();
+    if let Some(name) = branch.strip_prefix("refs/heads/") {
+        if upstream_is_gone(repo, name) {
+            return HashSet::new();
+        }
     }
     let Some(head_id) = head.id() else {
         return HashSet::new();

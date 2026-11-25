@@ -368,6 +368,14 @@ fn tag_created_seconds(
         .unwrap_or_default()
 }
 
+/// True when `branch_name` has an upstream configured whose remote-tracking ref no longer
+/// exists, typically because the remote branch was deleted (and pruned) after a merge.
+pub(crate) fn upstream_is_gone(repo: &gix::Repository, branch_name: &str) -> bool {
+    let config = repo.config_snapshot();
+    resolve_upstream_ref(&config, branch_name)
+        .is_some_and(|up| !matches!(repo.try_find_reference(up.as_str()), Ok(Some(_))))
+}
+
 fn resolve_upstream_ref(config: &gix::config::Snapshot<'_>, branch_name: &str) -> Option<String> {
     let remote = config
         .string(&format!("branch.{branch_name}.remote"))?
