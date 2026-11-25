@@ -63,7 +63,16 @@ fn execute_raw(
         // The app matches some of git's messages (for example "divergent branches"), so keep
         // them in English whatever the system language is.
         .env("LC_MESSAGES", "C")
-        .env_remove("LANGUAGE")
+        .env_remove("LANGUAGE");
+    // An inherited LC_ALL would override LC_MESSAGES. Drop it, keeping its value as the
+    // character-type locale so hooks still see the encoding they had.
+    if let Some(all) = std::env::var_os("LC_ALL") {
+        command.env_remove("LC_ALL");
+        if std::env::var_os("LC_CTYPE").is_none() {
+            command.env("LC_CTYPE", all);
+        }
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

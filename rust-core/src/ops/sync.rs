@@ -61,7 +61,9 @@ impl RepoSession {
     }
 
     fn fetch_impl(&self, remote: Option<&str>, include_tags: bool) -> Result<(), GitCraftError> {
-        let mut args = vec!["fetch", "--prune"];
+        // `--no-write-fetch-head` keeps this unlocked fetch from rewriting FETCH_HEAD under a
+        // `pull` that is reading it (nothing here uses FETCH_HEAD).
+        let mut args = vec!["fetch", "--prune", "--no-write-fetch-head"];
         if include_tags {
             args.push("--tags");
         }
