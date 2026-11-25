@@ -104,16 +104,6 @@ cargo test --manifest-path rust-core/Cargo.toml
 
 See [AGENTS.md](AGENTS.md) for the project layout and the full list of build and test commands.
 
-### Screenshots
-
-The screenshots in this README come from a fictional demo repository. To recreate it:
-
-```sh
-scripts/make-demo-repo.sh ~/GitCraftDemo
-```
-
-Then open `~/GitCraftDemo/nimbus` in GitCraft.
-
 ## Contributing
 
 Bug reports, feature ideas and pull requests are welcome. Please
