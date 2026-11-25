@@ -56,8 +56,11 @@ fn classify_inside_git_dir(inside: &str, is_active_worktree: bool) -> Change {
     }
     // Changes under another linked worktree's metadata: reflogs are ignored, index/merge
     // edits refresh sidebar worktree dirty counts, and structural changes (HEAD, locked,
-    // new/removed worktrees) still refresh the graph and worktree list.
-    if !is_active_worktree && inside.starts_with("worktrees/") {
+    // new/removed worktrees) still refresh the graph and worktree list. This applies in the
+    // primary checkout too, where `worktrees/` sits inside the active git dir. A linked
+    // session's own metadata never reaches here as `worktrees/...`, because it matches its
+    // own git dir first.
+    if inside.starts_with("worktrees/") {
         if inside.contains("/logs/") {
             return Change::Irrelevant;
         }
@@ -149,14 +152,23 @@ fn current_siblings(worktree: &Path, initial: &[PathBuf], common_dir: &Path) -> 
         .collect()
 }
 
-/// Adds watches for siblings that are not watched yet. Siblings inside the active checkout are
-/// already covered by its recursive watch.
+/// Brings the sibling watches in line with `siblings`: drops watches for checkouts that are
+/// gone, so one re-created at the same path is watched afresh, and adds watches for new ones.
+/// Siblings inside the active checkout are already covered by its recursive watch.
 fn sync_sibling_watches(
     watcher: &mut RecommendedWatcher,
     watched: &mut Vec<PathBuf>,
     worktree: &Path,
     siblings: &[PathBuf],
 ) {
+    watched.retain(|path| {
+        if siblings.contains(path) {
+            return true;
+        }
+        // The backend may already have dropped the watch when the folder was deleted.
+        let _ = watcher.unwatch(path);
+        false
+    });
     for sibling in siblings {
         if sibling.starts_with(worktree) || watched.contains(sibling) {
             continue;
@@ -280,6 +292,26 @@ mod tests {
         assert_eq!(classify("/r/.git/packed-refs"), Change::Graph);
         assert_eq!(classify("/r/.git/config"), Change::Graph);
         assert_eq!(classify("/wt/feature/README.md"), Change::Worktrees);
+        // A sibling's metadata lives inside the primary checkout's git dir: index, merge state
+        // and reflogs only touch sidebar dirty counts, while structural changes still reload.
+        assert_eq!(
+            classify("/r/.git/worktrees/feature/index"),
+            Change::Worktrees
+        );
+        assert_eq!(
+            classify("/r/.git/worktrees/feature/MERGE_HEAD"),
+            Change::Worktrees
+        );
+        assert_eq!(
+            classify("/r/.git/worktrees/feature/MERGE_MSG"),
+            Change::Worktrees
+        );
+        assert_eq!(
+            classify("/r/.git/worktrees/feature/logs/HEAD"),
+            Change::Irrelevant
+        );
+        assert_eq!(classify("/r/.git/worktrees/feature/HEAD"), Change::Graph);
+        assert_eq!(classify("/r/.git/worktrees/feature/locked"), Change::Graph);
     }
 
     #[test]

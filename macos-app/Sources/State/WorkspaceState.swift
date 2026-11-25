@@ -66,13 +66,13 @@ final class WorkspaceState: ObservableObject {
         let resolvedPath = RepoTab.canonicalPath(for: url.path)
         let resolved = URL(fileURLWithPath: resolvedPath)
         if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
-            existing.reveal()
+            reveal(existing, checkout: resolvedPath)
             return true
         }
         do {
             let tab = try RepoTab(url: resolved)
             if let existing = repoControllers.first(where: { $0.tab.repoPath == tab.repoPath }) {
-                existing.reveal()
+                reveal(existing, checkout: tab.activeCheckoutPath)
                 return true
             }
             openError = nil
@@ -87,6 +87,17 @@ final class WorkspaceState: ObservableObject {
         } catch {
             openError = "Unable to open \(resolved.lastPathComponent): \(error.displayMessage)"
             return false
+        }
+    }
+
+    /// Brings an existing tab to the front showing `checkout`, so opening a specific worktree
+    /// folder lands on that checkout rather than whichever one the tab last showed.
+    private func reveal(_ controller: RepoWindowController, checkout: String) {
+        controller.reveal()
+        let tab = controller.tab
+        // Only switch to a checkout git lists; a subfolder or unknown path just reveals the tab.
+        if tab.activeCheckoutPath != checkout, tab.worktrees.contains(where: { $0.path == checkout }) {
+            tab.switchCheckout(to: checkout)
         }
     }
 

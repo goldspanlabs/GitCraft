@@ -121,12 +121,12 @@ final class RepoTab: ObservableObject, Identifiable {
                     : "This will remove the tag from your local repository."
             case let .removeWorktree(path, _, isActive):
                 if isActive {
-                    return "This will delete \"\(path)\" from disk and switch this tab back to the main checkout. Committed history on its branch is kept."
+                    return "This will delete \"\(path)\" from disk and switch this tab to another checkout of this repository. Committed history on its branch is kept."
                 }
                 return "This will delete \"\(path)\" from disk. Committed history on its branch is kept."
             case let .forceRemoveWorktree(path, _, isActive):
                 if isActive {
-                    return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted, and this tab will switch back to the main checkout. Uncommitted changes can't be recovered from GitCraft."
+                    return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted, and this tab will switch to another checkout of this repository. Uncommitted changes can't be recovered from GitCraft."
                 }
                 return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted. Uncommitted changes can't be recovered from GitCraft."
             case .abortMerge:

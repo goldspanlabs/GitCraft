@@ -1,5 +1,5 @@
-//! Linked worktrees: listing them and the lifecycle operations that do not change
-//! branches or history (lock, unlock, prune). Creating and removing worktrees comes later.
+//! Linked worktrees: listing them and parsing `git worktree list --porcelain`.
+//! The mutating operations (add, remove, lock, unlock, prune) live in `ops/worktrees.rs`.
 
 use std::path::Path;
 
