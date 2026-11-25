@@ -116,4 +116,128 @@ final class AvatarLoaderTests: XCTestCase {
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "d" }?.value, "404")
         XCTAssertEqual(url, AvatarLoader.avatarURL(for: "someone@example.com"))
     }
+    // MARK: - Faked network
+
+    private static func pngData() throws -> Data {
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8, bitsPerSample: 8,
+                samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            )
+        )
+        return try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+    }
+
+    private final class FetchCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.withLock { value } }
+        func increment() { lock.withLock { value += 1 } }
+    }
+
+    private static func response(_ status: Int, for request: URLRequest) -> URLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+    }
+
+    @MainActor
+    func testFetchedAvatarIsCachedAndServedSynchronouslyAfterwards() async throws {
+        let png = try Self.pngData()
+        let counter = FetchCounter()
+        let loader = AvatarLoader(fetch: { request in
+            counter.increment()
+            return (png, Self.response(200, for: request))
+        })
+        let email = "fetch-ok@example.com"
+
+        XCTAssertNil(loader.cachedImage(for: email))
+        let first = await loader.image(for: email)
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(loader.cachedImage(for: " FETCH-OK@example.com "))
+        _ = await loader.image(for: email)
+        XCTAssertEqual(counter.count, 1)
+    }
+
+    @MainActor
+    func testConcurrentRequestsForTheSameAddressShareOneFetch() async throws {
+        let png = try Self.pngData()
+        let counter = FetchCounter()
+        let loader = AvatarLoader(fetch: { request in
+            counter.increment()
+            try await Task.sleep(nanoseconds: 50_000_000)
+            return (png, Self.response(200, for: request))
+        })
+        async let a = loader.image(for: "shared@example.com")
+        async let b = loader.image(for: "shared@example.com")
+        let (imageA, imageB) = await (a, b)
+        XCTAssertNotNil(imageA)
+        XCTAssertNotNil(imageB)
+        XCTAssertEqual(counter.count, 1)
+    }
+
+    @MainActor
+    func testNotFoundFallsBackToGitHubMarkAndIsCached() async {
+        let counter = FetchCounter()
+        let loader = AvatarLoader(fetch: { request in
+            counter.increment()
+            return (Data(), Self.response(404, for: request))
+        })
+        let image = await loader.image(for: "no-avatar@example.com")
+        XCTAssertNotNil(image)
+        XCTAssertNotNil(loader.cachedImage(for: "no-avatar@example.com"))
+        _ = await loader.image(for: "no-avatar@example.com")
+        XCTAssertEqual(counter.count, 1)
+    }
+
+    @MainActor
+    func testFailedLookupReturnsNilThenRetriesAfterAMinute() async throws {
+        let png = try Self.pngData()
+        let counter = FetchCounter()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let loader = AvatarLoader(
+            fetch: { request in
+                counter.increment()
+                if counter.count == 1 { throw URLError(.notConnectedToInternet) }
+                return (png, Self.response(200, for: request))
+            },
+            now: { clock }
+        )
+        let email = "flaky@example.com"
+
+        let failed = await loader.image(for: email)
+        XCTAssertNil(failed)
+        XCTAssertNil(loader.cachedImage(for: email))
+
+        clock.addTimeInterval(30)
+        let stillBackedOff = await loader.image(for: email)
+        XCTAssertNil(stillBackedOff)
+        XCTAssertEqual(counter.count, 1)
+
+        clock.addTimeInterval(31)
+        let retried = await loader.image(for: email)
+        XCTAssertNotNil(retried)
+        XCTAssertEqual(counter.count, 2)
+    }
+
+    @MainActor
+    func testServerErrorIsTreatedAsFailureNotAsMissingAvatar() async {
+        let loader = AvatarLoader(fetch: { request in
+            (Data(), Self.response(500, for: request))
+        })
+        let image = await loader.image(for: "server-error@example.com")
+        XCTAssertNil(image)
+        XCTAssertNil(loader.cachedImage(for: "server-error@example.com"))
+    }
+
+    @MainActor
+    func testGitHubMarkAddressNeverHitsTheNetwork() async {
+        let counter = FetchCounter()
+        let loader = AvatarLoader(fetch: { request in
+            counter.increment()
+            return (Data(), Self.response(200, for: request))
+        })
+        let image = await loader.image(for: "noreply@github.com")
+        XCTAssertNotNil(image)
+        XCTAssertEqual(counter.count, 0)
+    }
 }
