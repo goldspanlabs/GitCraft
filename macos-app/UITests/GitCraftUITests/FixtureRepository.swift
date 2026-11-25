@@ -37,7 +37,9 @@ struct FixtureRepository {
         unstagedFiles: [String] = [],
         untrackedFile: Bool = false,
         stashes: Bool = false,
-        conflict: Conflict? = nil
+        conflict: Conflict? = nil,
+        noCommits: Bool = false,
+        detachedHead: Bool = false
     ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
@@ -49,6 +51,10 @@ struct FixtureRepository {
         try git(["config", "user.email", "ui-tests@gitcraft.local"], in: main)
         let readme = main.appendingPathComponent("README.md")
         try "hello\n".write(to: readme, atomically: true, encoding: .utf8)
+        if noCommits {
+            // A brand-new repository: an unborn `main` and one untracked file to commit first.
+            return FixtureRepository(root: root, mainPath: main.path)
+        }
         try git(["add", "README.md"], in: main)
         try git(["commit", "-m", "initial"], in: main)
 
@@ -119,6 +125,11 @@ struct FixtureRepository {
                     encoding: .utf8
                 )
             }
+        }
+
+        if detachedHead {
+            // Check out the commit before main's tip, leaving no branch checked out.
+            try git(["switch", "--detach", "main~1"], in: main)
         }
 
         if stagedChange {

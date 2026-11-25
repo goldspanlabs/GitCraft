@@ -53,6 +53,8 @@ final class StashUITests: XCTestCase {
             },
             "one stash is saved, holding the tracked edit and the untracked file"
         )
+        let trackedDiff = try fixture.git(["diff", "stash@{0}^1", "stash@{0}", "--", "README.md"])
+        XCTAssertTrue(trackedDiff.contains("+edited"), "the stash holds the tracked edit")
         let stashed = try fixture.git(["show", "--name-only", "--format=", "stash@{0}^3"])
         XCTAssertTrue(stashed.contains(FixtureRepository.untrackedFileName), "the stash holds the untracked file")
         XCTAssertTrue(element("stash-row:0").waitForExistence(timeout: 20), "the stash is listed in the sidebar")
