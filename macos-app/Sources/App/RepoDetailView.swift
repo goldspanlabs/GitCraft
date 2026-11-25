@@ -66,6 +66,7 @@ struct RepoDetailView: View {
                             uniquingKeysWith: { first, _ in first }
                         ),
                         worktrees: tab.worktrees,
+                        showTags: tab.showTags,
                         isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },

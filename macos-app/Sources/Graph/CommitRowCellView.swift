@@ -160,7 +160,8 @@ final class CommitRowCellView: NSTableCellView {
         commit: CommitRow,
         hasIncomingLine: Bool,
         otherWorktreeBranches: Set<String> = [],
-        remoteHosts: [String: RemoteHost] = [:]
+        remoteHosts: [String: RemoteHost] = [:],
+        showTags: Bool = true
     ) {
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
@@ -172,11 +173,11 @@ final class CommitRowCellView: NSTableCellView {
         )
 
         badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        if commit.refs.isEmpty {
+        let badges = Self.visibleRefs(from: commit.refs, showTags: showTags)
+        if badges.isEmpty {
             badgesStack.isHidden = true
         } else {
             badgesStack.isHidden = false
-            let badges = Array(commit.refs.prefix(4))
             // Branch chips take the colour of the commit's graph lane.
             let laneColor = GraphCellView.laneColor(for: commit.colorIdx)
             // "origin/main" -> the host behind the "origin" remote.
@@ -256,5 +257,10 @@ final class CommitRowCellView: NSTableCellView {
         hashLabel.font = isHeadCommit ? Self.hashBoldFont : Self.hashRegularFont
         timeLabel.font = columnFont
         timeLabel.stringValue = Self.formattedDate(for: commit.timestamp)
+    }
+
+    static func visibleRefs(from refs: [RefBadge], showTags: Bool) -> [RefBadge] {
+        let filtered = showTags ? refs : refs.filter { $0.kind != .tag }
+        return Array(filtered.prefix(4))
     }
 }

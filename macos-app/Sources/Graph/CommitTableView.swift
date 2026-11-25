@@ -18,6 +18,7 @@ struct CommitTableView: NSViewRepresentable {
     /// Hosting service per remote name, for the icon on remote-branch chips.
     let remoteHosts: [String: RemoteHost]
     let worktrees: [WorktreeInfo]
+    let showTags: Bool
     let isBusy: Bool
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
@@ -92,6 +93,7 @@ struct CommitTableView: NSViewRepresentable {
         let metadataChanged = coordinator.workingChangesCount != workingChangesCount
             || coordinator.remoteHosts != remoteHosts
             || coordinator.worktreeBranches != newWorktreeBranches
+            || coordinator.showTags != showTags
         let dataChanged = revisionChanged || metadataChanged
 
         let oldRowCount = coordinator.rows.count
@@ -123,6 +125,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.remoteHosts = remoteHosts
         coordinator.worktrees = worktrees
         coordinator.worktreeBranches = newWorktreeBranches
+        coordinator.showTags = showTags
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
@@ -189,6 +192,7 @@ struct CommitTableView: NSViewRepresentable {
         var worktrees: [WorktreeInfo] = []
         /// Branches checked out in some worktree. Cached here rather than recomputed per row.
         var worktreeBranches: Set<String> = []
+        var showTags = true
         var isBusy = false
         var lastGraphRevision: UUID?
         var lastGraphGeneration: Int?
@@ -340,7 +344,8 @@ struct CommitTableView: NSViewRepresentable {
                     commit: commit,
                     hasIncomingLine: hasIncomingLine,
                     otherWorktreeBranches: worktreeBranches,
-                    remoteHosts: remoteHosts
+                    remoteHosts: remoteHosts,
+                    showTags: showTags
                 )
             }
             return cell
