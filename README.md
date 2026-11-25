@@ -79,6 +79,18 @@ on a conflict, GitCraft tells you exactly where you are and lets you continue or
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install --cask goldspanlabs/tap/gitcraft
+```
+
+Update with `brew upgrade --cask gitcraft`. GitCraft isn't notarized by Apple, so the first time you
+open it macOS will say it can't verify the app. Open **System Settings → Privacy & Security** and
+click **Open Anyway**. You only need to do this once per install.
+
+### Download
+
 1. Download the latest `GitCraft-<version>.dmg` from
    [Releases](https://github.com/goldspanlabs/gitcraft/releases/latest).
 2. Open the DMG and drag **GitCraft** to your **Applications** folder.
