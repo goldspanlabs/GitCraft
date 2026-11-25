@@ -151,9 +151,10 @@ final class AvatarLoaderTests: XCTestCase {
         let email = "fetch-ok@example.com"
 
         XCTAssertNil(loader.cachedImage(for: email))
-        let first = await loader.image(for: email)
-        XCTAssertNotNil(first)
-        XCTAssertNotNil(loader.cachedImage(for: " FETCH-OK@example.com "))
+        let first = try XCTUnwrap(await loader.image(for: email))
+        // The 8x8 fixture, not the GitHub fallback tile a failed decode would produce.
+        XCTAssertEqual(first.size, NSSize(width: 8, height: 8))
+        XCTAssertEqual(loader.cachedImage(for: " FETCH-OK@example.com ")?.size, NSSize(width: 8, height: 8))
         _ = await loader.image(for: email)
         XCTAssertEqual(counter.count, 1)
     }
@@ -170,8 +171,8 @@ final class AvatarLoaderTests: XCTestCase {
         async let a = loader.image(for: "shared@example.com")
         async let b = loader.image(for: "shared@example.com")
         let (imageA, imageB) = await (a, b)
-        XCTAssertNotNil(imageA)
-        XCTAssertNotNil(imageB)
+        XCTAssertEqual(imageA?.size, NSSize(width: 8, height: 8))
+        XCTAssertEqual(imageB?.size, NSSize(width: 8, height: 8))
         XCTAssertEqual(counter.count, 1)
     }
 
@@ -215,7 +216,7 @@ final class AvatarLoaderTests: XCTestCase {
 
         clock.addTimeInterval(31)
         let retried = await loader.image(for: email)
-        XCTAssertNotNil(retried)
+        XCTAssertEqual(retried?.size, NSSize(width: 8, height: 8))
         XCTAssertEqual(counter.count, 2)
     }
 
