@@ -587,6 +587,66 @@ fn branch_graph_keeps_ref_badges_and_supports_search_and_paging() {
 }
 
 #[test]
+fn commit_graph_pages_through_a_long_linear_history_in_order_without_gaps() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    run_git(root, &["init", "-b", "main"]);
+    configure_git_identity(root);
+    common::commit_file(root, "base.txt", "base", "initial");
+
+    // 600 commits written in one fast-import call: "Commit 1" oldest to "Commit 600" newest.
+    let mut stream = String::new();
+    for n in 1..=600 {
+        let msg = format!("Commit {n}\n");
+        stream.push_str("commit refs/heads/main\n");
+        stream.push_str(&format!(
+            "committer Test <t@example.com> {} +0000\ndata {}\n{msg}",
+            1_700_000_000 + n,
+            msg.len()
+        ));
+        if n == 1 {
+            stream.push_str("from refs/heads/main^0\n");
+        }
+        stream.push('\n');
+    }
+    let mut child = Command::new("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stream.as_bytes())
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    run_git(root, &["reset", "--hard", "main"]);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+    let mut summaries_seen = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page = session.get_commit_graph(offset, 100, None).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        offset += page.len() as u32;
+        summaries_seen.extend(page.into_iter().map(|r| r.summary));
+    }
+
+    // Newest first, every commit exactly once, ending at the initial commit.
+    assert_eq!(summaries_seen.len(), 601);
+    assert_eq!(summaries_seen[0], "Commit 600");
+    assert_eq!(summaries_seen[599], "Commit 1");
+    assert_eq!(summaries_seen[600], "initial");
+}
+
+#[test]
 fn branch_graph_on_default_branch_shows_only_its_own_history() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
