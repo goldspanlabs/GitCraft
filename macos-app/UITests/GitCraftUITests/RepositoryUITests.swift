@@ -54,12 +54,4 @@ final class RepositoryUITests: XCTestCase {
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
         app.launch()
     }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
 }

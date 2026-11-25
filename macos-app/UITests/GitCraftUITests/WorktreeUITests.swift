@@ -431,20 +431,6 @@ final class WorktreeUITests: XCTestCase {
         )
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
-    /// XCUITest can report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     /// A segment of the Create Worktree sheet's mode picker. macOS reports segments as radio
     /// buttons or as buttons, depending on the OS version.
     private func segment(_ title: String) -> XCUIElement {
@@ -459,6 +445,6 @@ final class WorktreeUITests: XCTestCase {
     }
 
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }

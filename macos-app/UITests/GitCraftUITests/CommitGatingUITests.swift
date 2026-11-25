@@ -22,15 +22,12 @@ final class CommitGatingUITests: XCTestCase {
 
         let commit = app.buttons["commit-button"]
         XCTAssertTrue(commit.waitForExistence(timeout: 20))
-        XCTAssertFalse(
-            wait(for: commit, toSatisfy: "isEnabled == true", timeout: 3),
-            "a summary of only spaces doesn't count"
-        )
+        XCTAssertFalse(commit.isEnabled, "a summary of only spaces doesn't count")
 
         // Command-Return is the button's shortcut; it must be inert too.
         summary.typeKey(.return, modifierFlags: .command)
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("HEAD")) != headBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("HEAD")) != headBefore },
             "nothing is committed"
         )
 
@@ -55,13 +52,10 @@ final class CommitGatingUITests: XCTestCase {
 
         let commit = app.buttons["commit-button"]
         XCTAssertTrue(commit.waitForExistence(timeout: 20))
-        XCTAssertFalse(
-            wait(for: commit, toSatisfy: "isEnabled == true", timeout: 3),
-            "with auto-staging off, an unstaged edit isn't something to commit"
-        )
+        XCTAssertFalse(commit.isEnabled, "with auto-staging off, an unstaged edit isn't something to commit")
         summary.typeKey(.return, modifierFlags: .command)
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("HEAD")) != headBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("HEAD")) != headBefore },
             "nothing is committed"
         )
     }
@@ -75,25 +69,7 @@ final class CommitGatingUITests: XCTestCase {
         app.launch()
     }
 
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
-    /// on disk, which the UI changes asynchronously.
-    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in condition() },
-            object: nil
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }

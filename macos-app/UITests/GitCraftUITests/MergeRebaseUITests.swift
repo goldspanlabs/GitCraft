@@ -37,7 +37,7 @@ final class MergeRebaseUITests: XCTestCase {
         let title = sheetText(containing: "onto \(featureCommit.prefix(7))")
         XCTAssertTrue(title.waitForExistence(timeout: 10), "the confirmation names the target commit")
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("main")) != mainBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("main")) != mainBefore },
             "nothing is rebased while the confirmation is open"
         )
 
@@ -47,7 +47,7 @@ final class MergeRebaseUITests: XCTestCase {
 
         XCTAssertTrue(wait(for: title, toSatisfy: "exists == false", timeout: 10))
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("main")) != mainBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("main")) != mainBefore },
             "Cancel leaves main where it was"
         )
         XCTAssertFalse(fixture.isAncestor(featureCommit, of: "main"))
@@ -97,7 +97,7 @@ final class MergeRebaseUITests: XCTestCase {
 
         XCTAssertTrue(wait(for: app.sheets.firstMatch, toSatisfy: "exists == false", timeout: 10))
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("main")) != mainBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("main")) != mainBefore },
             "Cancel leaves main where it was"
         )
     }
@@ -160,31 +160,7 @@ final class MergeRebaseUITests: XCTestCase {
             .firstMatch
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows are containers that XCUITest can
-    /// report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
-    /// on disk, which the UI changes asynchronously.
-    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in condition() },
-            object: nil
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }
