@@ -6,6 +6,15 @@ struct FixtureRepository {
     static let linkedBranch = "feature/ui"
     /// The branch `make(twoBranches: true)` creates next to `main`.
     static let featureBranch = "feature"
+    /// The file `make(untrackedFile: true)` leaves in the main checkout without adding it.
+    static let untrackedFileName = "notes.txt"
+
+    /// Where `make(conflict:)` leaves git: stopped on a conflict in README.md.
+    enum Conflict {
+        case merge
+        case rebase
+    }
+
     /// The branch `make(mergedBranch: true)` creates. It needs `twoBranches`, which gives main a
     /// second commit, and points at "initial".
     static let mergedBranchName = "old-work"
@@ -25,7 +34,10 @@ struct FixtureRepository {
         dirtyLinkedWorktree: Bool = false,
         twoBranches: Bool = false,
         mergedBranch: Bool = false,
-        unstagedFiles: [String] = []
+        unstagedFiles: [String] = [],
+        untrackedFile: Bool = false,
+        stashes: Bool = false,
+        conflict: Conflict? = nil
     ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
@@ -56,6 +68,37 @@ struct FixtureRepository {
         if mergedBranch {
             // Points at "initial", which main already contains, so a plain delete succeeds.
             try git(["branch", mergedBranchName, "main~1"], in: main)
+        }
+
+        if let conflict {
+            // `feature` and `main` both rewrite README.md's only line, then git stops partway
+            // through merging or rebasing, leaving the conflict for the app to show.
+            try git(["switch", "-c", featureBranch], in: main)
+            try "feature\n".write(to: readme, atomically: true, encoding: .utf8)
+            try git(["commit", "-am", "feature edit"], in: main)
+            try git(["switch", "main"], in: main)
+            try "main\n".write(to: readme, atomically: true, encoding: .utf8)
+            try git(["commit", "-am", "main edit"], in: main)
+            switch conflict {
+            case .merge: try gitExpectingFailure(["merge", featureBranch], in: main)
+            case .rebase: try gitExpectingFailure(["rebase", featureBranch], in: main)
+            }
+        }
+
+        if stashes {
+            // stash@{1} is "first stash", stash@{0} is "second stash".
+            for label in ["first", "second"] {
+                try "\(label) stash\n".write(to: readme, atomically: true, encoding: .utf8)
+                try git(["stash", "push", "-m", "\(label) stash"], in: main)
+            }
+        }
+
+        if untrackedFile {
+            try "not yet added\n".write(
+                to: main.appendingPathComponent(untrackedFileName),
+                atomically: true,
+                encoding: .utf8
+            )
         }
 
         for file in unstagedFiles {
@@ -109,6 +152,28 @@ struct FixtureRepository {
     /// Whether `ancestor` is reachable from `descendant`.
     func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
         (try? git(["merge-base", "--is-ancestor", ancestor, descendant])) != nil
+    }
+
+    /// Whether `path`, relative to the main checkout's `.git` folder, exists.
+    func gitDirContains(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: "\(mainPath)/.git/\(path)")
+    }
+
+    /// The stash messages, newest first.
+    func stashMessages() throws -> [String] {
+        try git(["stash", "list", "--format=%s"])
+            .split(separator: "\n")
+            .map { String($0) }
+    }
+
+    /// Runs a git command that is meant to stop with an error, such as a conflicting merge.
+    private static func gitExpectingFailure(_ arguments: [String], in directory: URL) throws {
+        do {
+            try git(arguments, in: directory)
+        } catch FixtureError.gitFailed {
+            return
+        }
+        throw FixtureError.gitFailed(arguments.joined(separator: " "), "expected git to stop on a conflict, but it succeeded")
     }
 
     @discardableResult
