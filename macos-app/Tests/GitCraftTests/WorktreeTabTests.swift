@@ -415,6 +415,38 @@ final class WorktreeTabTests: XCTestCase {
     }
 
     @MainActor
+    func testRepoPathMovesWhenTheMissingCheckoutWasTheRepositoryPath() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // A bare-backed repository has no separate main folder, so the first checkout git lists
+        // doubles as the tab's `repoPath`.
+        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let bare = root.appendingPathComponent("origin.git", isDirectory: true)
+        try git(["clone", "--bare", source.path, bare.path], in: root)
+        let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
+        let wt2 = root.appendingPathComponent("wt2", isDirectory: true)
+        try git(["worktree", "add", wt1.path, "main"], in: bare)
+        try git(["worktree", "add", "-b", "second", wt2.path], in: bare)
+
+        let tab = try RepoTab(url: wt1)
+        tab.startWatcher()
+        defer { tab.stopWatcher() }
+        let missing = tab.activeCheckoutPath
+        XCTAssertEqual(tab.repoPath, missing)
+        let survivor = try XCTUnwrap(tab.worktrees.first { $0.path != missing })
+
+        try FileManager.default.removeItem(atPath: missing)
+
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline && tab.activeCheckoutPath != survivor.path {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(tab.activeCheckoutPath, survivor.path)
+        XCTAssertEqual(tab.repoPath, survivor.path)
+    }
+
+    @MainActor
     func testMissingSoleCheckoutIsReportedAndTabStaysPut() async throws {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
