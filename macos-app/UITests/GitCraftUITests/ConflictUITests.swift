@@ -193,8 +193,8 @@ final class ConflictUITests: XCTestCase {
         XCTAssertEqual(try fixture.parents(of: "main"), [featureCommit], "main's commit is replayed onto feature")
         XCTAssertEqual(try fixture.git(["show", "main:README.md"]), "resolved\n", "the resolution is committed")
         XCTAssertTrue(
-            wait(for: text(containing: "Rebase stopped"), toSatisfy: "exists == false", timeout: 20),
-            "the banner goes away"
+            wait(for: continueButton, toSatisfy: "exists == false", timeout: 20),
+            "the banner goes away (its text changes once the conflict is staged, so check its button)"
         )
     }
 
