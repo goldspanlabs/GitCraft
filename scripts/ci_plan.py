@@ -111,7 +111,7 @@ def plan():
     if not needs_app:
         return dict(rust=rust, macos=False, swift_tests=False, matrix=[])
 
-    ui_only = all(UI_TEST_FILE.match(p) for p in needs_app)
+    ui_only = all(UI_TEST_FILE.match(p) for p in relevant)
     if ui_only:
         # Only the touched test classes need to run; app and Swift unit tests are unchanged.
         touched = [os.path.basename(p).removesuffix(".swift") for p in needs_app]
@@ -120,7 +120,7 @@ def plan():
         return dict(rust=rust, macos=bool(matrix), swift_tests=False, matrix=matrix)
 
     return dict(
-        rust=rust, macos=True, swift_tests=True, matrix=balance(all_classes, counts, MAX_SHARDS)
+        rust=True, macos=True, swift_tests=True, matrix=balance(all_classes, counts, MAX_SHARDS)
     )
 
 
