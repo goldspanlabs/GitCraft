@@ -6,6 +6,9 @@ struct FixtureRepository {
     static let linkedBranch = "feature/ui"
     /// The branch `make(twoBranches: true)` creates next to `main`.
     static let featureBranch = "feature"
+    /// The branch `make(mergedBranch: true)` creates. It needs `twoBranches`, which gives main a
+    /// second commit, and points at "initial".
+    static let mergedBranchName = "old-work"
 
     let root: URL
     let mainPath: String
@@ -20,7 +23,9 @@ struct FixtureRepository {
         stagedChange: Bool = false,
         linkedWorktree: Bool = false,
         dirtyLinkedWorktree: Bool = false,
-        twoBranches: Bool = false
+        twoBranches: Bool = false,
+        mergedBranch: Bool = false,
+        unstagedFiles: [String] = []
     ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
@@ -46,6 +51,18 @@ struct FixtureRepository {
             try "main\n".write(to: main.appendingPathComponent("main.txt"), atomically: true, encoding: .utf8)
             try git(["add", "main.txt"], in: main)
             try git(["commit", "-m", "main work"], in: main)
+        }
+
+        if mergedBranch {
+            // Points at "initial", which main already contains, so a plain delete succeeds.
+            try git(["branch", mergedBranchName, "main~1"], in: main)
+        }
+
+        for file in unstagedFiles {
+            // Each file must already be committed; this leaves an unstaged edit to it.
+            let url = main.appendingPathComponent(file)
+            let edited = try String(contentsOf: url, encoding: .utf8) + "edited\n"
+            try edited.write(to: url, atomically: true, encoding: .utf8)
         }
 
         if linkedWorktree || dirtyLinkedWorktree {
@@ -77,6 +94,16 @@ struct FixtureRepository {
     /// The full commit id `ref` points at.
     func commitID(_ ref: String) throws -> String {
         try git(["rev-parse", ref]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether `file` in the main checkout has uncommitted changes.
+    func isModified(_ file: String) throws -> Bool {
+        !(try git(["status", "--porcelain", "--", file])).isEmpty
+    }
+
+    /// Whether a local branch called `name` exists.
+    func hasBranch(_ name: String) throws -> Bool {
+        !(try git(["branch", "--list", name])).isEmpty
     }
 
     /// Whether `ancestor` is reachable from `descendant`.
