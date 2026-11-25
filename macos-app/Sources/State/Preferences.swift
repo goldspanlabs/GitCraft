@@ -18,6 +18,35 @@ extension UserDefaultsEnum {
 /// UserDefaults key for the "show avatars" preference (Settings ▸ Commits).
 let showAvatarsStorageKey = "showAvatars"
 
+/// Author avatars are fetched from Gravatar and GitHub, so they are off until the person says
+/// yes (asked once on first launch, changeable in Settings). While off, no avatar is drawn.
+enum AvatarPreference {
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: showAvatarsStorageKey) as? Bool ?? false
+    }
+
+    /// True until the person has answered, either in the first-launch prompt or in Settings.
+    static func needsPrompt(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: showAvatarsStorageKey) == nil
+    }
+
+    /// Asks once whether to show avatars and stores the answer.
+    @MainActor
+    static func askIfNeeded() {
+        guard needsPrompt() else { return }
+        let alert = NSAlert()
+        alert.messageText = "Show author avatars?"
+        alert.informativeText = "GitCraft can load commit authors' pictures from Gravatar and GitHub. "
+            + "To do that it sends them a hash of each author's email address, or their GitHub "
+            + "username. If you choose not to, nothing is sent and no avatars are shown. "
+            + "You can change this later in Settings."
+        alert.addButton(withTitle: "Show Avatars")
+        alert.addButton(withTitle: "Don't Show")
+        let show = alert.runModal() == .alertFirstButtonReturn
+        UserDefaults.standard.set(show, forKey: showAvatarsStorageKey)
+    }
+}
+
 /// Persistence keys and collapsed dimensions for the bottom inspector split panel.
 enum BottomPanelDefaults {
     static let storageKey = "bottomPanelHeight"

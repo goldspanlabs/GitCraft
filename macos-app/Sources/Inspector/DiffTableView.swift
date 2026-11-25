@@ -47,14 +47,13 @@ struct DiffTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
-        let prev = context.coordinator.rows
-        let changed = prev.count != rows.count
-            || prev.first?.text != rows.first?.text
-            || prev.last?.text != rows.last?.text
-            || prev.first?.newLine != rows.first?.newLine
-            || prev.last?.newLine != rows.last?.newLine
+        // Compare every row: an edit in the middle of a hunk keeps the count and the first and
+        // last rows, and a partial check would leave the visible cells showing the old text.
+        let changed = context.coordinator.rows != rows
 
-        context.coordinator.rows = rows
+        if changed {
+            context.coordinator.rows = rows
+        }
         context.coordinator.updateColumnWidth(scrollView: scrollView, table: table)
 
         guard changed else { return }
@@ -62,7 +61,11 @@ struct DiffTableView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-        var rows: [DiffRow]
+        var rows: [DiffRow] {
+            didSet { longestLine = Self.longestLine(in: rows) }
+        }
+        /// Length of the widest row, cached so layout passes don't recount every row.
+        private var longestLine: Int
         private var frameObserver: NSObjectProtocol?
         private var boundsObserver: NSObjectProtocol?
         private var gutterOffset: CGFloat = 0
@@ -70,6 +73,11 @@ struct DiffTableView: NSViewRepresentable {
 
         init(rows: [DiffRow]) {
             self.rows = rows
+            self.longestLine = Self.longestLine(in: rows)
+        }
+
+        private static func longestLine(in rows: [DiffRow]) -> Int {
+            rows.reduce(0) { max($0, $1.text.utf16.count) }
         }
 
         deinit {
@@ -112,8 +120,7 @@ struct DiffTableView: NSViewRepresentable {
         }
 
         func updateColumnWidth(scrollView: NSScrollView, table: NSTableView) {
-            let maxChars = rows.reduce(0) { max($0, $1.text.count) }
-            let contentWidth = CGFloat(maxChars) * 7.6 + 130
+            let contentWidth = CGFloat(longestLine) * 7.6 + 130
             let visibleWidth = scrollView.contentView.bounds.width
             let targetWidth = max(visibleWidth, contentWidth, 400)
             if let col = table.tableColumns.first, abs(col.width - targetWidth) > 0.5 {

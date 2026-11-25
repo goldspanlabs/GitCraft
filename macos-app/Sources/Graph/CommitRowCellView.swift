@@ -9,6 +9,7 @@ final class CommitRowCellView: NSTableCellView {
     private let hashLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
+    private var avatarWidthConstraint: NSLayoutConstraint!
 
     private static let summaryRegularFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
     private static let summarySemiboldFont = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
@@ -100,6 +101,7 @@ final class CommitRowCellView: NSTableCellView {
         timeLabel.alignment = .left
 
         graphWidthConstraint = graphView.widthAnchor.constraint(equalToConstant: 24)
+        avatarWidthConstraint = avatarView.widthAnchor.constraint(equalToConstant: 18)
 
         NSLayoutConstraint.activate([
             graphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -115,7 +117,7 @@ final class CommitRowCellView: NSTableCellView {
             summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: avatarView.leadingAnchor, constant: -10),
 
             avatarView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            avatarView.widthAnchor.constraint(equalToConstant: 18),
+            avatarWidthConstraint,
             avatarView.heightAnchor.constraint(equalToConstant: 18),
             avatarView.trailingAnchor.constraint(equalTo: authorLabel.leadingAnchor, constant: -6),
 
@@ -154,6 +156,7 @@ final class CommitRowCellView: NSTableCellView {
         timeLabel.stringValue = ""
         avatarView.isHidden = true
         avatarView.clear()
+        avatarWidthConstraint.constant = 0
     }
 
     func configure(
@@ -244,6 +247,8 @@ final class CommitRowCellView: NSTableCellView {
 
         avatarView.isHidden = false
         avatarView.configure(name: commit.authorName, email: commit.authorEmail)
+        // With avatars off the view hides itself; give its space back to the row.
+        avatarWidthConstraint.constant = avatarView.isHidden ? 0 : 18
         authorLabel.stringValue = commit.authorName
         let secondary: NSColor = commit.isRemoteOnly ? .tertiaryLabelColor : .secondaryLabelColor
         // The head commit's other columns match its summary: bold, in the primary text colour.

@@ -67,6 +67,7 @@ struct RepoDetailView: View {
                         ),
                         worktrees: tab.worktrees,
                         showTags: tab.showTags,
+                        showAvatars: tab.showAvatars,
                         isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
