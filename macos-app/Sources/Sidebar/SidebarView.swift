@@ -449,6 +449,18 @@ private struct DetachedHeadRowView: View {
     @ObservedObject var tab: RepoTab
     let oidHex: String
 
+    private static let detachedForeground = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark
+            ? (NSColor.systemYellow.blended(withFraction: 0.55, of: .white) ?? .systemYellow)
+            : (NSColor.systemYellow.blended(withFraction: 0.5, of: .black) ?? .systemOrange)
+    })
+
+    private static let detachedBackground = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return NSColor.systemYellow.withAlphaComponent(isDark ? 0.18 : 0.22)
+    })
+
     var body: some View {
         HStack(spacing: 6) {
             PhosphorIcon(glyph: .branch)
@@ -460,12 +472,12 @@ private struct DetachedHeadRowView: View {
 
             Spacer()
 
-            Text("detached")
+            Text("DETACHED")
                 .font(.caption2)
-                .foregroundStyle(.yellow)
+                .foregroundStyle(Self.detachedForeground)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.yellow.opacity(0.15))
+                .background(Self.detachedBackground)
                 .clipShape(Capsule())
         }
         .contentShape(Rectangle())
