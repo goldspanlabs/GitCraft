@@ -46,6 +46,10 @@ final class RefPillView: NSView {
             dot.wantsLayer = true
             dot.layer?.cornerRadius = 3.5
             dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            // Named for VoiceOver, which UI tests also read.
+            dot.setAccessibilityElement(true)
+            dot.setAccessibilityRole(.image)
+            dot.setAccessibilityLabel("Unpushed commits")
             addSubview(dot)
             NSLayoutConstraint.activate([
                 dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),

@@ -28,6 +28,9 @@ struct FixtureRepository {
     let root: URL
     let mainPath: String
 
+    /// The bare repository `make(bareRemote: true)` uses as `origin`.
+    var remotePath: String { root.appendingPathComponent("origin.git", isDirectory: true).path }
+
     /// Where `make(linkedWorktree: true)` puts the linked checkout.
     var linkedPath: String { root.appendingPathComponent("repo-ui", isDirectory: true).path }
 
@@ -41,6 +44,8 @@ struct FixtureRepository {
         lockedLinkedWorktree: Bool = false,
         twoBranches: Bool = false,
         featureAhead: Bool = false,
+        extraBranches: [String] = [],
+        bareRemote: Bool = false,
         mergedBranch: Bool = false,
         unstagedFiles: [String] = [],
         untrackedFile: Bool = false,
@@ -86,6 +91,20 @@ struct FixtureRepository {
             try git(["add", "feature.txt"], in: main)
             try git(["commit", "-m", "feature work"], in: main)
             try git(["switch", "main"], in: main)
+        }
+
+        for branch in extraBranches {
+            // Extra branches at main's tip, for tests about how names show in the sidebar.
+            try git(["branch", branch], in: main)
+        }
+
+        if bareRemote {
+            // A bare repository on disk stands in for a server. Every branch is pushed and
+            // tracks its copy there.
+            let remote = root.appendingPathComponent("origin.git", isDirectory: true)
+            try git(["init", "--bare", "-b", "main", remote.path], in: root)
+            try git(["remote", "add", "origin", remote.path], in: main)
+            try git(["push", "-u", "origin", "--all"], in: main)
         }
 
         if mergedBranch {
@@ -189,6 +208,20 @@ struct FixtureRepository {
     /// Whether `ancestor` is reachable from `descendant`.
     func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
         (try? git(["merge-base", "--is-ancestor", ancestor, descendant])) != nil
+    }
+
+    /// The commit `ref` points at in the bare remote, or nil if the remote has no such ref.
+    func remoteCommitID(_ ref: String) -> String? {
+        (try? git(["--git-dir", remotePath, "rev-parse", "--verify", "--quiet", ref]))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Writes `contents` to `file` in the main checkout and commits it on the current branch.
+    func commitFile(_ file: String, contents: String, message: String) throws {
+        let url = URL(fileURLWithPath: mainPath).appendingPathComponent(file)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try git(["add", file])
+        try git(["commit", "-m", message])
     }
 
     /// The parents of `ref`'s commit, as full ids.
