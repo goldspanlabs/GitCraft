@@ -1,6 +1,6 @@
-# Template for the cask in goldspanlabs/homebrew-tap (Casks/gitcraft.rb).
-# The release workflow fills in VERSION and SHA256 and pushes the result to
-# the tap, so edit this file rather than the copy in the tap.
+# Cask for goldspanlabs/homebrew-tap, generated from packaging/homebrew/gitcraft.rb
+# in goldspanlabs/gitcraft by its release workflow, which fills in the version and
+# sha256. Edit the template there, not the copy in the tap.
 cask "gitcraft" do
   version "@VERSION@"
   sha256 "@SHA256@"
