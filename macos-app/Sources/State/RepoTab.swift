@@ -225,6 +225,7 @@ final class RepoTab: ObservableObject, Identifiable {
     /// When true (default), the graph shows only the checked-out branch and the base branch,
     /// from their fork point. When false, it shows every branch.
     @Published var scopeToCurrentBranch = true
+    @Published var showTags = true
 
     var totalChangesCount: Int {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count

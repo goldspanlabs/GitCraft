@@ -25,9 +25,7 @@ final class WorkspaceState: ObservableObject {
     private var welcomeControllers: [WelcomeWindowController] = []
 
     /// The repository shown in the frontmost GitCraft window.
-    var activeTab: RepoTab? {
-        (NSApp.keyWindow?.windowController as? RepoWindowController)?.tab
-    }
+    @Published private(set) var activeTab: RepoTab?
 
     init() {
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
@@ -35,6 +33,31 @@ final class WorkspaceState: ObservableObject {
            !recentPaths.contains(legacy)
         {
             recentPaths.insert(legacy, at: 0)
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshActiveTab()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshActiveTab()
+            }
+        }
+    }
+
+    private func refreshActiveTab() {
+        let current = (NSApp?.keyWindow?.windowController as? RepoWindowController)?.tab
+        if activeTab !== current {
+            activeTab = current
         }
     }
 
@@ -83,6 +106,7 @@ final class WorkspaceState: ObservableObject {
             tab.startWatcher()
             tab.refresh()
             controller.showInTabs()
+            refreshActiveTab()
             return true
         } catch {
             openError = "Unable to open \(resolved.lastPathComponent): \(error.displayMessage)"
@@ -110,6 +134,7 @@ final class WorkspaceState: ObservableObject {
     func windowClosed(_ controller: RepoWindowController) {
         controller.tab.stopWatcher()
         repoControllers.removeAll { $0 === controller }
+        refreshActiveTab()
         if !Self.isTerminating {
             saveOpenTabs()
         }

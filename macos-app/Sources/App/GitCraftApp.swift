@@ -53,14 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct RepoCommands: Commands {
+    @ObservedObject private var workspace = WorkspaceState.shared
+
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Open Repository…") { WorkspaceState.shared.chooseRepository() }
+            Button("Open Repository…") { workspace.chooseRepository() }
                 .keyboardShortcut("o", modifiers: .command)
-            Button("New Repository Tab…") { WorkspaceState.shared.chooseRepository() }
+            Button("New Repository Tab…") { workspace.chooseRepository() }
                 .keyboardShortcut("t", modifiers: .command)
             Divider()
-            Button("Refresh") { WorkspaceState.shared.activeTab?.refresh() }
+            Button("Refresh") { workspace.activeTab?.refresh() }
                 .keyboardShortcut("r", modifiers: .command)
         }
         CommandGroup(after: .sidebar) {
@@ -68,7 +70,30 @@ struct RepoCommands: Commands {
                 NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
+            Divider()
+            ShowTagsMenuItem(tab: workspace.activeTab)
         }
+    }
+}
+
+private struct ShowTagsMenuItem: View {
+    let tab: RepoTab?
+
+    var body: some View {
+        if let tab {
+            ActiveTabShowTagsToggle(tab: tab)
+        } else {
+            Button("Show Tags") {}
+                .disabled(true)
+        }
+    }
+}
+
+private struct ActiveTabShowTagsToggle: View {
+    @ObservedObject var tab: RepoTab
+
+    var body: some View {
+        Toggle("Show Tags", isOn: $tab.showTags)
     }
 }
 

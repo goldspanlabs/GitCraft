@@ -150,7 +150,19 @@ final class RemoteUITests: XCTestCase {
 
         let toast = element("error-toast")
         XCTAssertTrue(toast.waitForExistence(timeout: 30), "the push failure is explained, not silent")
-        let pushMessage = toast.staticTexts.firstMatch.label
+        // The toast's text isn't exposed as the label of its first static text, so match on
+        // the text itself, in either its label or its value.
+        func toastMentions(_ phrases: [String]) -> Bool {
+            let clauses = phrases.flatMap { ["label CONTAINS[c] '\($0)'", "value CONTAINS[c] '\($0)'"] }
+            let match = toast.descendants(matching: .any).matching(
+                NSPredicate(format: clauses.joined(separator: " OR "))
+            )
+            return match.firstMatch.exists
+        }
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { toastMentions(["origin"]) },
+            "the push failure names the missing remote: \(toast.debugDescription)"
+        )
         XCTAssertEqual(try fixture.git(["remote"]), "", "no remote is added behind the user's back")
 
         let pull = app.buttons["Pull"].firstMatch
@@ -158,10 +170,11 @@ final class RemoteUITests: XCTestCase {
         XCTAssertTrue(wait(for: pull, toSatisfy: "isEnabled == true", timeout: 20))
         pull.click()
 
-        // The pull failure replaces the push one, so a changed message shows the pull explained itself.
+        // The pull failure replaces the push one (starting an action clears the old error), and
+        // git explains it differently: there is no branch to pull from.
         XCTAssertTrue(
-            waitUntil(timeout: 30) { toast.exists && toast.staticTexts.firstMatch.label != pushMessage },
-            "the pull failure is explained too"
+            waitUntil(timeout: 30) { toastMentions(["tracking information"]) },
+            "the pull failure is explained too: \(toast.debugDescription)"
         )
         XCTAssertEqual(try fixture.commitID("HEAD"), headBefore)
     }
