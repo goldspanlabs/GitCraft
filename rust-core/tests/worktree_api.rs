@@ -650,3 +650,29 @@ fn remove_worktree_works_in_bare_backed_repository_from_removed_session() {
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].path, wt2_path);
 }
+
+#[test]
+fn common_dir_identifies_the_repository_across_checkouts() {
+    let repo = repo_with_commit();
+    let linked = tempfile::tempdir().unwrap();
+    let linked_path = linked.path().join("linked");
+    run_git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            linked_path.to_str().unwrap(),
+        ],
+    );
+    let other = repo_with_commit();
+
+    let primary = RepoSession::new(repo.path().to_str().unwrap().to_string()).unwrap();
+    let from_linked = RepoSession::new(linked_path.to_str().unwrap().to_string()).unwrap();
+    let unrelated = RepoSession::new(other.path().to_str().unwrap().to_string()).unwrap();
+
+    assert_eq!(primary.common_dir(), from_linked.common_dir());
+    assert_eq!(primary.common_dir(), canonical(&repo.path().join(".git")));
+    assert_ne!(primary.common_dir(), unrelated.common_dir());
+}

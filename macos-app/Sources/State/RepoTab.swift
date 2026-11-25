@@ -245,8 +245,13 @@ final class RepoTab: ObservableObject, Identifiable {
     private var autoFetchTask: Task<Void, Never>?
     private var worktreesRefreshTask: Task<Void, Never>?
     private var worktreesRefreshPending = false
+    /// The repository's shared Git directory, read when the tab opened. Every checkout of the
+    /// repository has the same one, so it still identifies the repository after a linked
+    /// worktree has been deleted or pruned.
+    private let commonDir: String
     /// Set while a switch away from a checkout whose folder disappeared is being prepared.
     private var recoveringMissingCheckout = false
+    private var recoveryTask: Task<Void, Never>?
     /// The missing checkout already reported in the banner, and the message shown for it, so
     /// the watcher doesn't repeat it and only clears its own message.
     private var reportedMissingCheckout: (path: String, message: String)?
@@ -282,6 +287,7 @@ final class RepoTab: ObservableObject, Identifiable {
         let session = try RepoSession(path: canonical)
         self.url = URL(fileURLWithPath: canonical)
         self.session = session
+        self.commonDir = session.commonDir()
         self.activeCheckoutPath = canonical
         // Metadata-only lookup avoids running `git status` per checkout on the main actor;
         // `refresh()` fills in dirty counts asynchronously.
@@ -456,32 +462,39 @@ final class RepoTab: ObservableObject, Identifiable {
                 + "no other checkout of this repository to switch to.")
             return
         }
-        // Paths this tab knew as checkouts of this repository, other than the fallback itself.
-        // The fallback's own list must include one of them, which rules out an unrelated
-        // repository that has taken the fallback's place.
-        let knownPaths = Set(worktrees.map(\.path)).subtracting([fallback])
+        let commonDir = self.commonDir
         recoveringMissingCheckout = true
-        Task { [weak self] in
-            let next = await Task.detached { () -> RepoSession? in
-                guard let next = try? RepoSession(path: fallback),
-                      let listed = try? next.listWorktreeEntries(),
-                      listed.contains(where: { knownPaths.contains($0.path) })
-                else { return nil }
-                return next
+        recoveryTask = Task { [weak self] in
+            // Everything that can block stays off the main actor: opening the fallback runs
+            // `git worktree list`, and the folder check can hang on a dead volume. The fallback
+            // must belong to the same repository, and the folder must still be missing once
+            // the session is open, since it may have come back meanwhile.
+            let outcome = await Task.detached { () -> RecoveryOutcome in
+                guard let next = try? RepoSession(path: fallback), next.commonDir() == commonDir else {
+                    return .unusable
+                }
+                if FileManager.default.fileExists(atPath: path) { return .folderReturned }
+                return .ready(next)
             }.value
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.recoveringMissingCheckout = false
-            // Something else may have moved the tab meanwhile.
-            guard path == self.activeCheckoutPath else { return }
-            guard let next else {
+            self.recoveryTask = nil
+            // Only act if the tab is still on that checkout and nothing is running: a mutation
+            // may have started, or another switch may have happened, while the session opened.
+            guard path == self.activeCheckoutPath, !self.isBusy else { return }
+            switch outcome {
+            case .folderReturned:
+                // The next watcher tick clears any banner and refreshes.
+                return
+            case .unusable:
                 self.reportMissingCheckout(path, "The folder for \"\(name)\" no longer exists, and "
                     + "the tab couldn't switch to another checkout of this repository.")
-                return
+            case let .ready(next):
+                self.reportedMissingCheckout = nil
+                self.switchCheckout(to: fallback, using: next)
+                let target = URL(fileURLWithPath: fallback).lastPathComponent
+                self.toast = Toast(message: "\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
             }
-            self.reportedMissingCheckout = nil
-            self.switchCheckout(to: fallback, using: next)
-            let target = URL(fileURLWithPath: fallback).lastPathComponent
-            self.toast = Toast(message: "\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
         }
     }
 
@@ -519,6 +532,13 @@ final class RepoTab: ObservableObject, Identifiable {
         }
         watcherTask?.cancel()
         watcherTask = nil
+        cancelRecovery()
+    }
+
+    private func cancelRecovery() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveringMissingCheckout = false
     }
 
     /// Whether `path` is one of this tab's checkouts (primary, active, or a sibling worktree).
@@ -560,6 +580,8 @@ final class RepoTab: ObservableObject, Identifiable {
         autoFetchTask?.cancel()
         revealTask?.cancel()
         revealTask = nil
+        // A recovery in flight was preparing a switch from the old checkout.
+        cancelRecovery()
         // Any in-flight sweep belongs to the old session; the new one starts fresh.
         worktreesRefreshTask?.cancel()
         worktreesRefreshTask = nil
@@ -736,4 +758,11 @@ final class RepoTab: ObservableObject, Identifiable {
             }
         }
     }
+}
+
+/// What preparing a switch away from a missing checkout found, computed off the main actor.
+private enum RecoveryOutcome: @unchecked Sendable {
+    case unusable
+    case folderReturned
+    case ready(RepoSession)
 }

@@ -160,6 +160,8 @@ interface RepoSession {
   [Throws=GitCraftError]
   RepoStatus status();
 
+  string common_dir();
+
   void set_commit_sort(CommitSort sort);
 
   [Throws=GitCraftError]

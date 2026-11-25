@@ -44,6 +44,17 @@ impl RepoSession {
         Self::open(path)
     }
 
+    /// The canonical path of the repository's shared Git directory. Every checkout of one
+    /// repository reports the same value, so it identifies the repository itself and stays
+    /// valid after a linked worktree is deleted or pruned.
+    pub fn common_dir(&self) -> String {
+        let dir = self.sync_repo.to_thread_local().common_dir().to_owned();
+        std::fs::canonicalize(&dir)
+            .unwrap_or(dir)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, GitCraftError> {
         let path = path.into();
         if !path.join(".git").exists() {

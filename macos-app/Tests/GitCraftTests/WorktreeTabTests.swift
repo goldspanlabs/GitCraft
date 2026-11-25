@@ -388,6 +388,33 @@ final class WorktreeTabTests: XCTestCase {
     }
 
     @MainActor
+    func testTabSwitchesAwayWhenCheckoutIsRemovedAndPrunedByAnotherClient() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
+
+        let tab = try RepoTab(url: linked)
+        tab.startWatcher()
+        defer { tab.stopWatcher() }
+        let primary = tab.repoPath
+
+        // Another Git client removes the checkout and its registration, so the primary's own
+        // worktree list no longer mentions anything the tab knew besides itself.
+        try FileManager.default.removeItem(at: linked)
+        try git(["worktree", "prune"], in: repo)
+
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline && tab.activeCheckoutPath != primary {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(tab.activeCheckoutPath, primary)
+        XCTAssertNil(tab.errorMessage)
+    }
+
+    @MainActor
     func testMissingSoleCheckoutIsReportedAndTabStaysPut() async throws {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
