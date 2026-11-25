@@ -47,6 +47,7 @@ struct FixtureRepository {
         featureAhead: Bool = false,
         extraBranches: [String] = [],
         bareRemote: Bool = false,
+        extraCommits: Int = 0,
         mergedBranch: Bool = false,
         unstagedFiles: [String] = [],
         untrackedFile: Bool = false,
@@ -92,6 +93,22 @@ struct FixtureRepository {
             try git(["add", "feature.txt"], in: main)
             try git(["commit", "-m", "feature work"], in: main)
             try git(["switch", "main"], in: main)
+        }
+
+        if extraCommits > 0 {
+            // A long history on main, "Commit 1" (oldest) to "Commit N" (newest), written with
+            // fast-import in one call so it takes seconds rather than a commit per process.
+            var stream = ""
+            for number in 1...extraCommits {
+                let message = "Commit \(number)\n"
+                stream += "commit refs/heads/main\n"
+                stream += "committer GitCraft UI Tests <ui-tests@gitcraft.local> \(1_700_000_000 + number) +0000\n"
+                stream += "data \(message.utf8.count)\n\(message)"
+                if number == 1 { stream += "from refs/heads/main^0\n" }
+                stream += "\n"
+            }
+            try git(["fast-import", "--quiet"], in: main, input: stream)
+            try git(["reset", "--hard", "main"], in: main)
         }
 
         for branch in extraBranches {
@@ -268,7 +285,7 @@ struct FixtureRepository {
     }
 
     @discardableResult
-    private static func git(_ arguments: [String], in directory: URL) throws -> String {
+    private static func git(_ arguments: [String], in directory: URL, input: String? = nil) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
@@ -280,7 +297,13 @@ struct FixtureRepository {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        let stdin = input.map { _ in Pipe() }
+        if let stdin { process.standardInput = stdin }
         try process.run()
+        if let stdin, let input {
+            stdin.fileHandleForWriting.write(Data(input.utf8))
+            try stdin.fileHandleForWriting.close()
+        }
         let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
