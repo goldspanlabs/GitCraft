@@ -207,25 +207,7 @@ final class ConflictUITests: XCTestCase {
             .firstMatch
     }
 
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
-    /// on disk, which the UI changes asynchronously.
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in condition() },
-            object: nil
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+        app.element(identifier)
     }
 }

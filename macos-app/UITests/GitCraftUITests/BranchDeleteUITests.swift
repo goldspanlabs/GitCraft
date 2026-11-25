@@ -35,7 +35,7 @@ final class BranchDeleteUITests: XCTestCase {
 
         XCTAssertTrue(wait(for: row, toSatisfy: "exists == false", timeout: 30), "the row disappears")
         XCTAssertFalse(try fixture.hasBranch(name))
-        XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 3), "a merged branch needs no second warning")
+        XCTAssertFalse(app.sheets.firstMatch.exists, "a merged branch needs no second warning")
     }
 
     func testDeletingAnUnmergedBranchWarnsAndCancelKeepsIt() throws {
@@ -82,21 +82,7 @@ final class BranchDeleteUITests: XCTestCase {
         delete.click()
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows are containers that XCUITest can
-    /// report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }

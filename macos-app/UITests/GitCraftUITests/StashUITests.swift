@@ -119,10 +119,7 @@ final class StashUITests: XCTestCase {
             waitUntil(timeout: 30) { (try? self.readme()) == "second stash\n" },
             "the newest stash's change is back in the working tree"
         )
-        XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.stashMessages().count) != 2 },
-            "applying keeps both stashes"
-        )
+        XCTAssertEqual(try fixture.stashMessages().count, 2, "applying keeps both stashes")
         XCTAssertTrue(element("stash-row:0").exists, "the applied stash is still listed")
     }
 
@@ -163,23 +160,7 @@ final class StashUITests: XCTestCase {
         try String(contentsOfFile: (fixture.mainPath as NSString).appendingPathComponent("README.md"), encoding: .utf8)
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
-    /// XCUITest can report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
-    /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
-    /// on disk, which the UI changes asynchronously.
-    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in condition() },
-            object: nil
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }
