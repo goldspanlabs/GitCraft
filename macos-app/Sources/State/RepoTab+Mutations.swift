@@ -378,15 +378,43 @@ extension RepoTab {
         let canonical = Self.canonicalPath(for: path)
         let wasActive = (canonical == activeCheckoutPath)
         let fallback = fallbackCheckoutPath(excluding: canonical)
+        // Removing the checkout this tab shows needs somewhere to go afterwards. The menu only
+        // offers it when a fallback exists, but that was checked against a list that may be
+        // stale by now (and the force-remove prompt comes back here too), so check again. The
+        // fallback's session is opened in the background work, before anything is deleted, and
+        // handed back for the switch. If any of that fails, nothing is removed and the tab
+        // stays where it is.
+        if wasActive, fallback == nil {
+            errorMessage = "Can't remove the checkout this tab shows, because no other checkout "
+                + "of this repository is available to switch to."
+            return
+        }
+        let prepared = PreparedSession()
         performMutation({ session in
+            if wasActive, let fallback {
+                // Opening runs `git worktree list`, so it stays off the main actor. The fallback
+                // must still be a checkout of this repository: its own worktree list has to
+                // include the checkout being removed.
+                let next = try RepoSession(path: fallback)
+                let sameRepository = FileManager.default.fileExists(atPath: fallback)
+                    && (try? next.listWorktreeEntries())?
+                        .contains(where: { $0.path == canonical }) == true
+                guard sameRepository else {
+                    throw GitCraftError.Message(
+                        msg: "Can't remove the checkout this tab shows, because \(fallback) is no longer "
+                            + "a checkout of this repository to switch to."
+                    )
+                }
+                prepared.session = next
+            }
             try session.removeWorktree(path: canonical, force: force)
         }, onSuccess: { [weak self] in
             guard let self else { return }
             if self.repoPath == canonical, let fallback {
                 self.repoPath = fallback
             }
-            if wasActive, let fallback {
-                self.switchCheckout(to: fallback)
+            if let fallback, let next = prepared.session {
+                self.switchCheckout(to: fallback, using: next)
             }
         }, onFailure: { [weak self] error in
             // A safe remove refused because the worktree has modified, staged, or untracked
@@ -419,4 +447,11 @@ extension RepoTab {
     func copyOid(_ oid: String) {
         Clipboard.copy(oid)
     }
+}
+
+/// Carries the fallback session opened in a removal's background work back to the main actor.
+/// It is written once, before the work finishes, and read only after `performMutation` has
+/// awaited that work, so the unchecked `Sendable` is safe.
+private final class PreparedSession: @unchecked Sendable {
+    var session: RepoSession?
 }
