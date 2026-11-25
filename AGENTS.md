@@ -35,7 +35,7 @@ Run from the repository root.
 | Full app bundle | `make` | Produces `build/GitCraft.app`. macOS only |
 | UI tests | `make ui-tests` | Needs `xcodegen` and `xcodebuild`. macOS only |
 
-CI (`.github/workflows/ci.yml`) runs fmt, clippy, Rust tests, `make test-swift`, and coverage. Before reporting a change as done, run the checks that apply to what you touched. If you can't run them here, say so and don't claim they pass.
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, Rust tests, and `make test-swift` (coverage is available on demand via `.github/workflows/coverage.yml`). Before reporting a change as done, run the checks that apply to what you touched. If you can't run them here, say so and don't claim they pass.
 
 ## Git hooks
 
