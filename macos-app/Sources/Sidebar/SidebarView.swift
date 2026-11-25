@@ -496,6 +496,9 @@ private struct BranchRowContainer<Trailing: View>: View {
         }
         .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
         .contentShape(Rectangle())
+        // One accessibility element per row, so UI tests can find it by branch name.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("branch-row:\(branch.name)")
         // Single tap must fire immediately; a count:1 gesture declared next to a
         // count:2 one makes SwiftUI wait out the double-click interval first.
         .onTapGesture {
