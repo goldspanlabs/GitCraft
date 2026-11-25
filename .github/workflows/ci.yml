@@ -7,6 +7,10 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -55,8 +59,15 @@ jobs:
       - name: Generate the UI test project
         run: xcodegen generate --spec project.yml --project .
         working-directory: macos-app/UITests
-      - name: Package app and UI test project
-        run: tar -czf build/ui-test-bundle.tar.gz build/GitCraft.app macos-app/UITests/GitCraftUITests.xcodeproj
+      - name: Build UI tests for testing
+        run: |
+          xcodebuild build-for-testing \
+            -project macos-app/UITests/GitCraftUITests.xcodeproj \
+            -scheme GitCraftUITests \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/UITestsDerivedData
+      - name: Package app and UI test bundle
+        run: tar -czf build/ui-test-bundle.tar.gz build/GitCraft.app build/UITestsDerivedData/Build/Products
       - name: Upload app bundle for UI tests
         uses: actions/upload-artifact@v4
         with:
@@ -116,9 +127,9 @@ jobs:
           PY
           )
           echo "Running shard $SHARD_INDEX: ${ONLY_TESTING[*]}"
-          xcodebuild test \
-            -project macos-app/UITests/GitCraftUITests.xcodeproj \
-            -scheme GitCraftUITests \
+          XCTESTRUN=(build/UITestsDerivedData/Build/Products/*.xctestrun)
+          xcodebuild test-without-building \
+            -xctestrun "${XCTESTRUN[0]}" \
             -destination 'platform=macOS' \
             -resultBundlePath "build/UITests-shard-${SHARD_INDEX}.xcresult" \
             "${ONLY_TESTING[@]}"
