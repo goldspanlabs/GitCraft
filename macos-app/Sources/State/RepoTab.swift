@@ -245,6 +245,11 @@ final class RepoTab: ObservableObject, Identifiable {
     private var autoFetchTask: Task<Void, Never>?
     private var worktreesRefreshTask: Task<Void, Never>?
     private var worktreesRefreshPending = false
+    /// Set while a switch away from a checkout whose folder disappeared is being prepared.
+    private var recoveringMissingCheckout = false
+    /// The missing checkout already reported in the banner, and the message shown for it, so
+    /// the watcher doesn't repeat it and only clears its own message.
+    private var reportedMissingCheckout: (path: String, message: String)?
     private var sortObserver: NSObjectProtocol?
     private var lastCommitSort = CommitSortPreference.current
 
@@ -399,10 +404,26 @@ final class RepoTab: ObservableObject, Identifiable {
         observeCommitSortChanges()
         watcherTask?.cancel()
         let session = self.session
+        let checkoutPath = activeCheckoutPath
         watcherTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }
+                // The folder can disappear outside the app (deleted in Finder, an unmounted
+                // volume). Every Git action would fail there, so move the tab elsewhere.
+                let folderExists = await Task.detached {
+                    FileManager.default.fileExists(atPath: checkoutPath)
+                }.value
+                if !folderExists {
+                    self?.handleMissingCheckout(checkoutPath)
+                    continue
+                }
+                if let self, let reported = self.reportedMissingCheckout, reported.path == checkoutPath {
+                    // The folder came back (a volume was remounted, say): clear the banner.
+                    self.reportedMissingCheckout = nil
+                    if self.errorMessage == reported.message { self.errorMessage = nil }
+                    self.refresh()
+                }
                 // Refs/HEAD/config changes need the full reload; plain file edits in the
                 // active checkout only need a status refresh; edits in inactive sibling
                 // worktrees only refresh sidebar dirty counts.
@@ -421,6 +442,53 @@ final class RepoTab: ObservableObject, Identifiable {
                 }
             }
         }
+    }
+
+    /// Switches the tab to another checkout of this repository after the shown checkout's
+    /// folder has disappeared. Waits while an operation is running, since removing the active
+    /// worktree deletes the folder on purpose and switches by itself. When there is nowhere
+    /// to go, the banner says so once and the tab stays put in case the folder comes back.
+    func handleMissingCheckout(_ path: String) {
+        guard path == activeCheckoutPath, !isBusy, !recoveringMissingCheckout else { return }
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        guard let fallback = fallbackCheckoutPath(excluding: path) else {
+            reportMissingCheckout(path, "The folder for \"\(name)\" no longer exists, and there's "
+                + "no other checkout of this repository to switch to.")
+            return
+        }
+        // Paths this tab knew as checkouts of this repository, other than the fallback itself.
+        // The fallback's own list must include one of them, which rules out an unrelated
+        // repository that has taken the fallback's place.
+        let knownPaths = Set(worktrees.map(\.path)).subtracting([fallback])
+        recoveringMissingCheckout = true
+        Task { [weak self] in
+            let next = await Task.detached { () -> RepoSession? in
+                guard let next = try? RepoSession(path: fallback),
+                      let listed = try? next.listWorktreeEntries(),
+                      listed.contains(where: { knownPaths.contains($0.path) })
+                else { return nil }
+                return next
+            }.value
+            guard let self else { return }
+            self.recoveringMissingCheckout = false
+            // Something else may have moved the tab meanwhile.
+            guard path == self.activeCheckoutPath else { return }
+            guard let next else {
+                self.reportMissingCheckout(path, "The folder for \"\(name)\" no longer exists, and "
+                    + "the tab couldn't switch to another checkout of this repository.")
+                return
+            }
+            self.reportedMissingCheckout = nil
+            self.switchCheckout(to: fallback, using: next)
+            let target = URL(fileURLWithPath: fallback).lastPathComponent
+            self.toast = Toast(message: "\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
+        }
+    }
+
+    private func reportMissingCheckout(_ path: String, _ message: String) {
+        guard reportedMissingCheckout?.path != path else { return }
+        reportedMissingCheckout = (path, message)
+        errorMessage = message
     }
 
     /// Reloads the graph from the top when the sort order changes in Settings.
