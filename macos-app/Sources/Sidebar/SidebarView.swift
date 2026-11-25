@@ -417,9 +417,14 @@ private struct WorktreeRowView: View {
         }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded {
-                if !worktree.isPrunable {
-                    tab.switchCheckout(to: worktree.path)
-                }
+                guard !worktree.isPrunable else { return }
+                let before = tab.activeCheckoutPath
+                tab.switchCheckout(to: worktree.path)
+                guard tab.activeCheckoutPath != before else { return }
+                // Each click of the double-click also fires the single tap above, which selects
+                // this worktree's head commit, and that can land after the switch. Once this
+                // click is handled, go back to Working Changes so the new checkout's changes show.
+                DispatchQueue.main.async { tab.scrollToWorkingChanges() }
             }
         )
         .nativeContextMenu { menuEntries }
