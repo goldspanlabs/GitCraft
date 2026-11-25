@@ -26,6 +26,7 @@ final class ConflictUITests: XCTestCase {
         mainBefore = try fixture.commitID("refs/heads/main")
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 
@@ -154,6 +155,49 @@ final class ConflictUITests: XCTestCase {
         )
     }
 
+    func testAConflictedFileIsListedAndMarkedAsConflicted() throws {
+        let row = element("unstaged-file:README.md")
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "the conflicted file is listed")
+        XCTAssertTrue(row.staticTexts["U"].exists, "its badge marks it unmerged, not as an ordinary edit")
+        XCTAssertTrue(text(containing: "with conflicts").exists, "the banner says there are conflicts")
+    }
+
+    func testResolvingStagingAndContinuingFinishesTheRebase() throws {
+        let featureCommit = try fixture.commitID(FixtureRepository.featureBranch)
+        XCTAssertTrue(text(containing: "Rebase stopped on conflicts").waitForExistence(timeout: 60))
+        let continueButton = app.buttons["Continue Rebase"].firstMatch
+        XCTAssertTrue(continueButton.exists)
+        XCTAssertFalse(continueButton.isEnabled, "Continue is disabled while conflicts remain")
+
+        // Resolve README.md by hand, then stage it from the changes list.
+        let readme = (fixture.mainPath as NSString).appendingPathComponent("README.md")
+        try "resolved\n".write(toFile: readme, atomically: true, encoding: .utf8)
+        let row = element("unstaged-file:README.md")
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        row.checkBoxes.firstMatch.click()
+
+        XCTAssertTrue(
+            wait(for: continueButton, toSatisfy: "isEnabled == true", timeout: 30),
+            "Continue enables once the resolution is staged"
+        )
+        continueButton.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 30) { !self.fixture.gitDirContains("rebase-merge") },
+            "the rebase finishes"
+        )
+        XCTAssertEqual(
+            try fixture.git(["symbolic-ref", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "refs/heads/main"
+        )
+        XCTAssertEqual(try fixture.parents(of: "main"), [featureCommit], "main's commit is replayed onto feature")
+        XCTAssertEqual(try fixture.git(["show", "main:README.md"]), "resolved\n", "the resolution is committed")
+        XCTAssertTrue(
+            wait(for: continueButton, toSatisfy: "exists == false", timeout: 20),
+            "the banner goes away (its text changes once the conflict is staged, so check its button)"
+        )
+    }
+
     // MARK: Helpers
 
     /// Text anywhere in the app whose value or label contains `fragment`.
@@ -173,6 +217,10 @@ final class ConflictUITests: XCTestCase {
 
     /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
     /// on disk, which the UI changes asynchronously.
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
     private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
         let expectation = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in condition() },

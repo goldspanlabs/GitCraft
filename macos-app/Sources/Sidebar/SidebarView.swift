@@ -101,8 +101,14 @@ struct SidebarView: View {
 
             Section(isExpanded: $isWorktreesExpanded) {
                 if isWorktreesExpanded {
-                    ForEach(tab.worktrees, id: \.path) { worktree in
-                        WorktreeRowView(tab: tab, worktree: worktree)
+                    if !tab.worktrees.contains(where: { !$0.isMain }) {
+                        Text("No worktrees")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(tab.worktrees, id: \.path) { worktree in
+                            WorktreeRowView(tab: tab, worktree: worktree)
+                        }
                     }
                 }
             } header: {
@@ -444,10 +450,22 @@ private struct WorktreeRowView: View {
     }
 }
 
-/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with no branch name.
+/// Shown in Local Branches while HEAD is detached: the commit HEAD sits on, with a detached chip.
 private struct DetachedHeadRowView: View {
     @ObservedObject var tab: RepoTab
     let oidHex: String
+
+    private static let detachedForeground = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark
+            ? (NSColor.systemYellow.blended(withFraction: 0.55, of: .white) ?? .systemYellow)
+            : (NSColor.systemYellow.blended(withFraction: 0.5, of: .black) ?? .systemOrange)
+    })
+
+    private static let detachedBackground = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return NSColor.systemYellow.withAlphaComponent(isDark ? 0.18 : 0.22)
+    })
 
     var body: some View {
         HStack(spacing: 6) {
@@ -455,11 +473,18 @@ private struct DetachedHeadRowView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
 
-            Text("HEAD (detached)")
-                .font(.system(size: 13, weight: .semibold))
+            Text(String(oidHex.prefix(7)))
                 .lineLimit(1)
 
             Spacer()
+
+            Text("DETACHED")
+                .font(.caption2)
+                .foregroundStyle(Self.detachedForeground)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Self.detachedBackground)
+                .clipShape(Capsule())
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -488,6 +513,8 @@ private struct BranchRowContainer<Trailing: View>: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
                 .help(glyphHelp)
+                // VoiceOver (and UI tests) read the same note the tooltip shows.
+                .accessibilityLabel(glyphHelp.isEmpty ? "Branch" : glyphHelp)
 
             Text(displayName)
                 .lineLimit(1)

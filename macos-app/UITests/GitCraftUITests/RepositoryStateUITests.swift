@@ -51,7 +51,7 @@ final class RepositoryStateUITests: XCTestCase {
             extraArguments: ["-sidebar.localBranchesExpanded", "YES"]
         )
 
-        XCTAssertTrue(app.staticTexts["HEAD (detached)"].waitForExistence(timeout: 60), "the sidebar shows the detached HEAD")
+        XCTAssertTrue(app.staticTexts["DETACHED"].waitForExistence(timeout: 60), "the sidebar shows the detached HEAD")
         XCTAssertTrue(element("branch-row:main").exists, "main is still listed as a branch")
 
         // With no branch checked out, there is nothing to merge into, rebase or reset.
