@@ -131,7 +131,8 @@ final class AvatarLoader {
 
     /// GitHub logins are 1-39 letters, digits and single hyphens, not starting with a hyphen.
     nonisolated static func isGitHubLogin(_ name: String) -> Bool {
-        guard (1 ... 39).contains(name.count), !name.hasPrefix("-") else { return false }
+        guard (1 ... 39).contains(name.count),
+              !name.hasPrefix("-"), !name.hasSuffix("-"), !name.contains("--") else { return false }
         return name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
     }
 

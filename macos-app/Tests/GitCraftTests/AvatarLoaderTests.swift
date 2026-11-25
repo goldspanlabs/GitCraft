@@ -114,6 +114,8 @@ final class AvatarLoaderTests: XCTestCase {
             "name?size=1#@users.noreply.github.com",
             "49699333+dependabot[bot]@users.noreply.github.com",
             "-leading@users.noreply.github.com",
+            "trailing-@users.noreply.github.com",
+            "a--b@users.noreply.github.com",
             "@users.noreply.github.com",
         ] {
             XCTAssertNil(AvatarLoader.avatarURL(for: email), email)
