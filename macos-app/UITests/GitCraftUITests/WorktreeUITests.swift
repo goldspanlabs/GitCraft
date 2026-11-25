@@ -10,11 +10,14 @@ final class WorktreeUITests: XCTestCase {
         continueAfterFailure = false
         // The dirty-removal tests need uncommitted work in the linked checkout, the locked test
         // a locked one, and the from-branch test a local branch that no worktree has checked out.
+        // That last test skips the linked worktree: git can't hold both `feature` and
+        // `feature/ui` as branch names.
+        let fromBranch = name.contains("FromABranch")
         fixture = try FixtureRepository.make(
-            linkedWorktree: true,
+            linkedWorktree: !fromBranch,
             dirtyLinkedWorktree: name.contains("Dirty"),
             lockedLinkedWorktree: name.contains("Locked"),
-            twoBranches: name.contains("FromABranch")
+            twoBranches: fromBranch
         )
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         // Force the WORKTREES section open: its expanded state is a persisted user preference.
@@ -266,8 +269,8 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertEqual(
             try fixture.git(["branch", "--list", "--format=%(refname:short)"])
                 .split(separator: "\n").count,
-            3,
-            "no branch is created: main, feature and the linked worktree's branch"
+            2,
+            "no branch is created: there are still only main and feature"
         )
     }
 
