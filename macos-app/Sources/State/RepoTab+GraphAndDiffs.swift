@@ -52,14 +52,15 @@ extension RepoTab {
                 let nextPage = try await Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
                 }.value
-                // The list was replaced while we fetched; this page belongs to the old one.
-                guard generation == graphGeneration else { return }
+                // The list or checkout was replaced while we fetched; this page belongs to the old one.
+                guard self.session === session, generation == graphGeneration else { return }
                 if nextPage.count < Int(limit) {
                     hasMoreCommits = false
                 }
                 commits.append(contentsOf: nextPage)
                 graphRevision = UUID()
             } catch {
+                guard self.session === session else { return }
                 showError(error)
             }
         }
@@ -81,7 +82,8 @@ extension RepoTab {
                 let graphRows = try await Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: q)
                 }.value
-                guard requestGeneration == graphGeneration,
+                guard self.session === session,
+                      requestGeneration == graphGeneration,
                       activeSearchQuery == q,
                       scopeToCurrentBranch == scoped
                 else { return }
@@ -90,7 +92,8 @@ extension RepoTab {
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
             } catch {
-                guard requestGeneration == graphGeneration,
+                guard self.session === session,
+                      requestGeneration == graphGeneration,
                       activeSearchQuery == q,
                       scopeToCurrentBranch == scoped
                 else { return }
@@ -127,6 +130,7 @@ extension RepoTab {
         var limit = pageSize
 
         while !Task.isCancelled {
+            guard self.session === session else { return }
             // The new query's first page isn't installed yet: the old list's offset and
             // pagination state don't apply to it, so wait and re-evaluate.
             if pendingSearchReplacements > 0 {
@@ -148,7 +152,7 @@ extension RepoTab {
                 let nextPage = try await Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
                 }.value
-                if Task.isCancelled { return }
+                if Task.isCancelled || self.session !== session { return }
                 // Stale page (list replaced mid-fetch): drop it and look again.
                 if generation != graphGeneration { continue }
                 if nextPage.count < Int(limit) { hasMoreCommits = false }
@@ -156,11 +160,12 @@ extension RepoTab {
                 graphRevision = UUID()
                 limit = min(limit * 2, 64_000)
             } catch {
+                guard self.session === session else { return }
                 showError(error)
                 return
             }
         }
-        if Task.isCancelled { return }
+        if Task.isCancelled || self.session !== session { return }
         if scopeToCurrentBranch {
             // Outside the Branch view (e.g. another branch picked in the sidebar): switch to
             // All, which reloads the list from the top, then look for the commit again.
@@ -251,10 +256,12 @@ extension RepoTab {
                 let rows = try await Task.detached {
                     try session.getWorkingDiff(path: path, staged: staged)
                 }.value
+                guard self.session === session else { return }
                 if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
                     diffRows = Self.displayRows(rows)
                 }
             } catch {
+                guard self.session === session else { return }
                 showError(error)
             }
         }
@@ -268,12 +275,13 @@ extension RepoTab {
                 let detail = try await Task.detached {
                     try session.getCommitDetail(oidHex: oid)
                 }.value
-                guard selectedCommit?.oidHex == oid else { return }
+                guard self.session === session, selectedCommit?.oidHex == oid else { return }
                 commitDetail = detail
                 let firstPath = detail.files.first?.path
                 selectedFilePath = firstPath
                 loadCommitDiff(oidHex: oid, path: firstPath)
             } catch {
+                guard self.session === session else { return }
                 if loadedDetailOid == oid { loadedDetailOid = nil }
                 showError(error)
             }
@@ -287,10 +295,12 @@ extension RepoTab {
                 let rows = try await Task.detached {
                     try session.getCommitDiff(oidHex: oidHex, path: path)
                 }.value
+                guard self.session === session else { return }
                 if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
                     diffRows = Self.displayRows(rows)
                 }
             } catch {
+                guard self.session === session else { return }
                 // Only react if this request is still the current one (same commit and file);
                 // a late failure for a file the user already moved off must not wipe the
                 // newer file's diff.

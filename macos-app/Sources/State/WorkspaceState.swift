@@ -63,15 +63,20 @@ final class WorkspaceState: ObservableObject {
     /// Opens `url` in a new tab, or brings its existing tab to the front.
     @discardableResult
     func openRepository(at url: URL) -> Bool {
-        let standardized = url.standardizedFileURL
-        if let existing = repoControllers.first(where: { $0.tab.url.standardizedFileURL == standardized }) {
-            existing.reveal()
+        let resolvedPath = RepoTab.canonicalPath(for: url.path)
+        let resolved = URL(fileURLWithPath: resolvedPath)
+        if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
+            reveal(existing, checkout: resolvedPath)
             return true
         }
         do {
-            let tab = try RepoTab(url: standardized)
+            let tab = try RepoTab(url: resolved)
+            if let existing = repoControllers.first(where: { $0.tab.repoPath == tab.repoPath }) {
+                reveal(existing, checkout: tab.activeCheckoutPath)
+                return true
+            }
             openError = nil
-            recordRecent(path: standardized.path)
+            recordRecent(path: tab.repoPath)
             let controller = RepoWindowController(tab: tab, workspace: self)
             repoControllers.append(controller)
             saveOpenTabs()
@@ -80,8 +85,19 @@ final class WorkspaceState: ObservableObject {
             controller.showInTabs()
             return true
         } catch {
-            openError = "Unable to open \(standardized.lastPathComponent): \(error.displayMessage)"
+            openError = "Unable to open \(resolved.lastPathComponent): \(error.displayMessage)"
             return false
+        }
+    }
+
+    /// Brings an existing tab to the front showing `checkout`, so opening a specific worktree
+    /// folder lands on that checkout rather than whichever one the tab last showed.
+    private func reveal(_ controller: RepoWindowController, checkout: String) {
+        controller.reveal()
+        let tab = controller.tab
+        // Only switch to a checkout git lists; a subfolder or unknown path just reveals the tab.
+        if tab.activeCheckoutPath != checkout, tab.worktrees.contains(where: { $0.path == checkout }) {
+            tab.switchCheckout(to: checkout)
         }
     }
 
@@ -113,7 +129,8 @@ final class WorkspaceState: ObservableObject {
         UserDefaults.standard.set(updated, forKey: Self.recentKey)
     }
 
-    private func saveOpenTabs() {
-        UserDefaults.standard.set(repoControllers.map { $0.tab.url.path }, forKey: Self.openTabsKey)
+    /// Saves the checkout each open tab shows, so relaunch returns to the same worktree.
+    func saveOpenTabs() {
+        UserDefaults.standard.set(repoControllers.map { $0.tab.activeCheckoutPath }, forKey: Self.openTabsKey)
     }
 }

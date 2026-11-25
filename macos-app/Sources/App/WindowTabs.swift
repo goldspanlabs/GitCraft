@@ -104,6 +104,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         super.init(window: window)
         window.delegate = self
+        tab.onCheckoutChanged = { [weak self] in self?.workspace.saveOpenTabs() }
         window.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
 
         let toolbar = NSToolbar(identifier: "GitCraft.repoToolbar")

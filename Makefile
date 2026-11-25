@@ -6,7 +6,7 @@ UNIFFI := $(RUST_DIR)/target/release/uniffi-bindgen
 
 SWIFT_FLAGS := -Xswiftc "-I$(CURDIR)/$(APP_DIR)/Sources/Generated" -Xcc "-fmodule-map-file=$(CURDIR)/$(APP_DIR)/Sources/Generated/gitcraft_coreFFI.modulemap" -Xlinker "-L$(CURDIR)/$(RUST_DIR)/target/release"
 
-.PHONY: all rust bindings swift test-swift ui-tests bundle clean
+.PHONY: all rust bindings swift test-swift ui-tests bundle dmg clean
 
 all: bundle
 
@@ -63,6 +63,14 @@ bundle: swift
 	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Light-1024.png $(APP)/Contents/Resources/AppIcon-Light.png
 	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png $(APP)/Contents/Resources/AppIcon-Dark.png
 	codesign --force --deep --sign - $(APP)
+
+dmg: bundle
+	rm -rf $(BUILD_DIR)/dmg-staging $(BUILD_DIR)/GitCraft.dmg
+	mkdir -p $(BUILD_DIR)/dmg-staging
+	cp -R $(APP) $(BUILD_DIR)/dmg-staging/
+	ln -s /Applications $(BUILD_DIR)/dmg-staging/Applications
+	hdiutil create -volname "GitCraft" -srcfolder $(BUILD_DIR)/dmg-staging -ov -format UDZO $(BUILD_DIR)/GitCraft.dmg
+	rm -rf $(BUILD_DIR)/dmg-staging
 
 clean:
 	rm -rf $(BUILD_DIR) $(APP_DIR)/.build $(RUST_DIR)/target

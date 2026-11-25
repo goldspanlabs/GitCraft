@@ -16,12 +16,17 @@ struct CommitTableView: NSViewRepresentable {
     let workingChangesCount: Int
     /// Hosting service per remote name, for the icon on remote-branch chips.
     let remoteHosts: [String: RemoteHost]
+    let worktrees: [WorktreeInfo]
+    let isBusy: Bool
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
     let onSelectCommit: (CommitRow?) -> Void
     let onCopyOid: (String) -> Void
     let onCreateBranchAtCommit: (String) -> Void
     let onCreateTagAtCommit: (String) -> Void
+    let onCreateWorktreeAtCommit: (String) -> Void
+    let canRemoveWorktree: (WorktreeInfo) -> Bool
+    let onRemoveWorktree: (WorktreeInfo) -> Void
     let onCheckoutCommit: (String) -> Void
     /// The checked-out branch's name; empty when HEAD is detached.
     let currentBranch: String
@@ -36,6 +41,9 @@ struct CommitTableView: NSViewRepresentable {
             onCopyOid: onCopyOid,
             onCreateBranchAtCommit: onCreateBranchAtCommit,
             onCreateTagAtCommit: onCreateTagAtCommit,
+            onCreateWorktreeAtCommit: onCreateWorktreeAtCommit,
+            canRemoveWorktree: canRemoveWorktree,
+            onRemoveWorktree: onRemoveWorktree,
             onCheckoutCommit: onCheckoutCommit
         )
     }
@@ -92,11 +100,16 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
         coordinator.remoteHosts = remoteHosts
+        coordinator.worktrees = worktrees
+        coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
         coordinator.onCopyOid = onCopyOid
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
         coordinator.onCreateTagAtCommit = onCreateTagAtCommit
+        coordinator.onCreateWorktreeAtCommit = onCreateWorktreeAtCommit
+        coordinator.canRemoveWorktree = canRemoveWorktree
+        coordinator.onRemoveWorktree = onRemoveWorktree
         coordinator.onCheckoutCommit = onCheckoutCommit
         coordinator.currentBranch = currentBranch
         coordinator.onCommitAction = onCommitAction
@@ -146,12 +159,17 @@ struct CommitTableView: NSViewRepresentable {
         var rows: [CommitRow]
         var workingChangesCount: Int
         var remoteHosts: [String: RemoteHost] = [:]
+        var worktrees: [WorktreeInfo] = []
+        var isBusy = false
         var lastGraphRevision: UUID?
         var onLoadMore: () -> Void
         var onSelectCommit: (CommitRow?) -> Void
         var onCopyOid: (String) -> Void
         var onCreateBranchAtCommit: (String) -> Void
         var onCreateTagAtCommit: (String) -> Void
+        var onCreateWorktreeAtCommit: (String) -> Void
+        var canRemoveWorktree: (WorktreeInfo) -> Bool
+        var onRemoveWorktree: (WorktreeInfo) -> Void
         var onCheckoutCommit: (String) -> Void
         var currentBranch = ""
         var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
@@ -170,6 +188,9 @@ struct CommitTableView: NSViewRepresentable {
             onCopyOid: @escaping (String) -> Void,
             onCreateBranchAtCommit: @escaping (String) -> Void,
             onCreateTagAtCommit: @escaping (String) -> Void,
+            onCreateWorktreeAtCommit: @escaping (String) -> Void,
+            canRemoveWorktree: @escaping (WorktreeInfo) -> Bool,
+            onRemoveWorktree: @escaping (WorktreeInfo) -> Void,
             onCheckoutCommit: @escaping (String) -> Void
         ) {
             self.rows = rows
@@ -179,6 +200,9 @@ struct CommitTableView: NSViewRepresentable {
             self.onCopyOid = onCopyOid
             self.onCreateBranchAtCommit = onCreateBranchAtCommit
             self.onCreateTagAtCommit = onCreateTagAtCommit
+            self.onCreateWorktreeAtCommit = onCreateWorktreeAtCommit
+            self.canRemoveWorktree = canRemoveWorktree
+            self.onRemoveWorktree = onRemoveWorktree
             self.onCheckoutCommit = onCheckoutCommit
         }
 
@@ -212,10 +236,29 @@ struct CommitTableView: NSViewRepresentable {
             entries.append(.item("Revert Commit") { [weak self] in self?.onCommitAction(.revert, oid) })
             entries.append(.separator)
 
-            // Creating references that point at the commit.
+            // Creating references or checkouts that point at the commit.
             entries.append(.item("New Branch…") { [weak self] in self?.onCreateBranchAtCommit(oid) })
             entries.append(.item("New Tag…") { [weak self] in self?.onCreateTagAtCommit(oid) })
+            entries.append(.item("New Worktree…", enabled: !isBusy) { [weak self] in
+                self?.onCreateWorktreeAtCommit(oid)
+            })
             entries.append(.item("Checkout Commit…") { [weak self] in self?.onCheckoutCommit(oid) })
+
+            // Conditionally offer worktree removal when a linked worktree sits at this commit.
+            let linkedHere = worktrees.filter { !$0.isMain && $0.headOidHex == oid }
+            if linkedHere.count == 1, let worktree = linkedHere.first {
+                let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
+                entries.append(.item("Remove Worktree '\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
+                    self?.onRemoveWorktree(worktree)
+                })
+            } else if linkedHere.count > 1 {
+                entries.append(.submenu("Remove Worktree…", linkedHere.map { worktree in
+                    let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
+                    return .item("'\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
+                        self?.onRemoveWorktree(worktree)
+                    }
+                }))
+            }
             entries.append(.separator)
 
             entries.append(.item("Copy Commit SHA (\(commit.shortOid))") { [weak self] in self?.onCopyOid(oid) })

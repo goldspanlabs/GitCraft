@@ -123,6 +123,13 @@ pub(crate) fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTip
         }
     })?;
 
+    // Include detached HEADs from other worktrees so commits only reachable from a
+    // detached sibling checkout appear in the full graph and can be revealed from the sidebar.
+    for oid in collect_detached_worktree_heads(repo) {
+        tip_set.insert(oid);
+        local_tips.insert(oid);
+    }
+
     for badges in refs_by_oid.values_mut() {
         badges.sort_by(|a, b| {
             b.is_current
@@ -135,6 +142,37 @@ pub(crate) fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTip
     let mut tips: Vec<gix::ObjectId> = tip_set.into_iter().collect();
     tips.sort();
     Ok((refs_by_oid, tips, local_tips))
+}
+
+/// Reads detached HEAD commit OIDs from the primary checkout and every linked worktree
+/// under `<common_dir>/worktrees/*/HEAD`. Symbolic HEADs point to `refs/heads/*`, which are
+/// already enumerated by `for_each_ref`.
+fn collect_detached_worktree_heads(repo: &gix::Repository) -> Vec<gix::ObjectId> {
+    let common_dir = repo.common_dir();
+    let mut head_files = vec![common_dir.join("HEAD")];
+    if let Ok(entries) = std::fs::read_dir(common_dir.join("worktrees")) {
+        for entry in entries.flatten() {
+            head_files.push(entry.path().join("HEAD"));
+        }
+    }
+
+    let mut oids = Vec::new();
+    for head_path in head_files {
+        let Ok(contents) = std::fs::read_to_string(&head_path) else {
+            continue;
+        };
+        let trimmed = contents.trim();
+        if trimmed.is_empty() || trimmed.starts_with("ref:") {
+            continue;
+        }
+        let Ok(oid) = gix::ObjectId::from_hex(trimmed.as_bytes()) else {
+            continue;
+        };
+        if repo.find_commit(oid).is_ok() {
+            oids.push(oid);
+        }
+    }
+    oids
 }
 
 fn ref_kind_rank(kind: RefKind) -> u8 {
