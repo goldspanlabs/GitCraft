@@ -301,11 +301,11 @@ private struct BranchFolderRowView: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(isHovered ? .primary : .secondary)
-                .frame(width: 10, alignment: .center)
+                .frame(width: 9, alignment: .center)
 
             PhosphorIcon(glyph: isTopLevelRemote ? .cloud : .folder)
                 .foregroundStyle(.secondary)
@@ -317,7 +317,7 @@ private struct BranchFolderRowView: View {
 
             Spacer()
         }
-        .padding(.leading, CGFloat(depth) * 14)
+        .padding(.leading, CGFloat(depth) * 8)
         .contentShape(Rectangle())
         .sidebarRowHighlight()
         .onHover { isHovered = $0 }
@@ -532,7 +532,7 @@ private struct BranchRowContainer<Trailing: View>: View {
 
             trailing()
         }
-        .padding(.leading, CGFloat(depth) * 14 + (depth > 0 ? 15 : 0))
+        .padding(.leading, CGFloat(depth) * 8 + (depth > 0 ? 13 : 0))
         .contentShape(Rectangle())
         .sidebarRowHighlight()
         // One accessibility element per row, so UI tests can find it by branch name.
