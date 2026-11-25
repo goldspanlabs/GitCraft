@@ -8,14 +8,23 @@ final class WorktreeUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // The dirty-removal test needs uncommitted work in the linked checkout.
-        let dirty = name.contains("Dirty")
-        fixture = try FixtureRepository.make(linkedWorktree: true, dirtyLinkedWorktree: dirty)
+        // The dirty-removal tests need uncommitted work in the linked checkout, the locked test
+        // a locked one, and the from-branch test a local branch that no worktree has checked out.
+        // That last test skips the linked worktree: git can't hold both `feature` and
+        // `feature/ui` as branch names.
+        let fromBranch = name.contains("FromABranch")
+        fixture = try FixtureRepository.make(
+            linkedWorktree: !fromBranch,
+            dirtyLinkedWorktree: name.contains("Dirty"),
+            lockedLinkedWorktree: name.contains("Locked"),
+            twoBranches: fromBranch
+        )
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         // Force the WORKTREES section open: its expanded state is a persisted user preference.
         app.launchArguments = [
             "-UITestOpenRepository", fixture.mainPath,
             "-sidebar.worktreesExpanded", "YES",
+            "-sidebar.localBranchesExpanded", "YES",
             // Make the sheet's confirm button always read "Create and Switch".
             "-createWorktreeSwitch", "YES",
         ]
@@ -155,6 +164,114 @@ final class WorktreeUITests: XCTestCase {
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder and its uncommitted file are deleted")
         XCTAssertTrue(element("worktree-row:main").exists)
+    }
+
+    func testRemovingTheActiveWorktreeSwitchesTheTabToTheMainCheckout() throws {
+        // #17: removing the checkout the tab is showing has to move the tab somewhere that exists.
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
+        XCTAssertTrue(
+            element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20),
+            "the linked worktree is current before removing it"
+        )
+
+        // Menu items are disabled while the switch is still loading, and a menu doesn't update
+        // once open, so reopen it until Remove is enabled.
+        let remove = app.menuItems["Remove Worktree…"]
+        var enabled = false
+        let deadline = Date().addingTimeInterval(30)
+        while !enabled && Date() < deadline {
+            rightClick(linked)
+            XCTAssertTrue(remove.waitForExistence(timeout: 10))
+            enabled = remove.isEnabled
+            if !enabled {
+                app.typeKey(.escape, modifierFlags: [])
+                _ = wait(for: remove, toSatisfy: "exists == false", timeout: 5)
+            }
+        }
+        XCTAssertTrue(enabled, "the active worktree can be removed while the main checkout exists")
+        remove.click()
+
+        let warning = app.sheets.staticTexts
+            .matching(NSPredicate(format: "value CONTAINS 'switch this tab to another checkout'"))
+            .firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 10), "the confirmation says the tab will switch")
+        let confirm = app.sheets.buttons["Remove"]
+        XCTAssertTrue(confirm.exists)
+        confirm.click()
+
+        XCTAssertTrue(
+            wait(for: linked, toSatisfy: "exists == false", timeout: 30),
+            "the row disappears once the worktree is removed"
+        )
+        XCTAssertTrue(
+            element("worktree-current:main").waitForExistence(timeout: 20),
+            "the tab moves to the main checkout"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.mainPath), "the main checkout is untouched")
+    }
+
+    func testTheMainCheckoutHasNoRemoveItem() {
+        let main = element("worktree-row:main")
+        XCTAssertTrue(main.waitForExistence(timeout: 60))
+        rightClick(main)
+        XCTAssertTrue(app.menuItems["Copy Path"].waitForExistence(timeout: 10), "the worktree menu is open")
+        XCTAssertFalse(app.menuItems["Remove Worktree…"].exists, "the main checkout can't be removed")
+        XCTAssertFalse(app.menuItems["Lock Worktree"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    func testALockedWorktreeOffersUnlockAndCannotBeRemoved() {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        rightClick(linked)
+        XCTAssertTrue(app.menuItems["Unlock Worktree"].waitForExistence(timeout: 10), "a locked worktree offers Unlock")
+        XCTAssertFalse(app.menuItems["Lock Worktree"].exists)
+        let remove = app.menuItems["Remove Worktree…"]
+        XCTAssertTrue(remove.exists)
+        XCTAssertFalse(remove.isEnabled, "a locked worktree can't be removed until it is unlocked")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linkedPath))
+    }
+
+    func testNewWorktreeFromABranchChecksOutThatBranch() throws {
+        // `feature` exists locally and no worktree has it checked out.
+        let branch = element("branch-row:\(FixtureRepository.featureBranch)")
+        XCTAssertTrue(branch.waitForExistence(timeout: 60))
+        rightClick(branch)
+        let item = app.menuItems["New Worktree from Branch…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 10))
+        item.click()
+
+        // The plain checkout sheet names the branch instead of offering a mode or a name field.
+        XCTAssertTrue(app.staticTexts["Local branch:"].waitForExistence(timeout: 20), "the Create Worktree sheet opens")
+        XCTAssertFalse(app.textFields["new-worktree-branch"].exists, "there is no new branch name to type")
+        let create = app.buttons["Create and Switch"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        XCTAssertTrue(wait(for: create, toSatisfy: "isEnabled == true", timeout: 10))
+        create.click()
+
+        let row = element("worktree-row:\(FixtureRepository.featureBranch)")
+        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        XCTAssertTrue(
+            element("worktree-current:\(FixtureRepository.featureBranch)").waitForExistence(timeout: 20),
+            "creating with the switch option on makes the new worktree current"
+        )
+        let created = fixture.root.appendingPathComponent("repo-\(FixtureRepository.featureBranch)").path
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created), "the checkout exists on disk")
+        XCTAssertEqual(
+            try fixture.git(["-C", created, "symbolic-ref", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "refs/heads/\(FixtureRepository.featureBranch)",
+            "the new checkout has the existing branch, not a new one"
+        )
+        XCTAssertEqual(
+            try fixture.git(["branch", "--list", "--format=%(refname:short)"])
+                .split(separator: "\n").count,
+            2,
+            "no branch is created: there are still only main and feature"
+        )
     }
 
     /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that

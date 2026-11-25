@@ -32,6 +32,7 @@ struct FixtureRepository {
         stagedChange: Bool = false,
         linkedWorktree: Bool = false,
         dirtyLinkedWorktree: Bool = false,
+        lockedLinkedWorktree: Bool = false,
         twoBranches: Bool = false,
         mergedBranch: Bool = false,
         unstagedFiles: [String] = [],
@@ -114,7 +115,7 @@ struct FixtureRepository {
             try edited.write(to: url, atomically: true, encoding: .utf8)
         }
 
-        if linkedWorktree || dirtyLinkedWorktree {
+        if linkedWorktree || dirtyLinkedWorktree || lockedLinkedWorktree {
             let linked = root.appendingPathComponent("repo-ui", isDirectory: true)
             try git(["worktree", "add", "-b", linkedBranch, linked.path], in: main)
             if dirtyLinkedWorktree {
@@ -124,6 +125,9 @@ struct FixtureRepository {
                     atomically: true,
                     encoding: .utf8
                 )
+            }
+            if lockedLinkedWorktree {
+                try git(["worktree", "lock", "--reason", "UI test", linked.path], in: main)
             }
         }
 
