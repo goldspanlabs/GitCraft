@@ -264,6 +264,22 @@ extension RepoTab {
         performMutation { try $0.continueRebase() }
     }
 
+    func abortCherryPick() {
+        performMutation { try $0.abortCherryPick() }
+    }
+
+    func continueCherryPick() {
+        performMutation { try $0.continueCherryPick() }
+    }
+
+    func abortRevert() {
+        performMutation { try $0.abortRevert() }
+    }
+
+    func continueRevert() {
+        performMutation { try $0.continueRevert() }
+    }
+
     func abortMerge() {
         performMutation { try $0.abortMerge() }
     }
@@ -289,6 +305,10 @@ extension RepoTab {
             abortMerge()
         case .abortRebase:
             abortRebase()
+        case .abortCherryPick:
+            abortCherryPick()
+        case .abortRevert:
+            abortRevert()
         case let .dropStash(index, _):
             stashDrop(index)
         case let .resetHard(_, commit):

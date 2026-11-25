@@ -1351,3 +1351,100 @@ fn discard_all_handles_unborn_head_with_staged_and_untracked_files() {
     assert!(session.status().unwrap().is_clean);
     assert!(!dir.path().join("only_untracked.txt").exists());
 }
+
+/// A repo on `main` where `other` changes a.txt's line one way and main changes it another,
+/// so cherry-picking `other`'s tip, or reverting main's first change, conflicts.
+fn repo_with_conflicting_branch() -> tempfile::TempDir {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["switch", "-qc", "other"]);
+    write(dir.path(), "a.txt", "other\n");
+    run_git(dir.path(), &["commit", "-qam", "other change"]);
+    run_git(dir.path(), &["switch", "-q", "main"]);
+    write(dir.path(), "a.txt", "main\n");
+    run_git(dir.path(), &["commit", "-qam", "main change"]);
+    dir
+}
+
+#[test]
+fn conflicting_cherry_pick_reports_its_state_and_can_be_aborted() {
+    let dir = repo_with_conflicting_branch();
+    let session = open(dir.path());
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+
+    assert!(session.cherry_pick("other".into()).is_err());
+    let status = session.status().unwrap();
+    assert!(status.is_cherry_picking);
+    assert!(!status.is_reverting);
+    assert!(status.has_conflicts);
+
+    session.abort_cherry_pick().unwrap();
+    let status = session.status().unwrap();
+    assert!(!status.is_cherry_picking);
+    assert!(status.is_clean);
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn cherry_pick_can_be_continued_after_resolving_conflicts() {
+    let dir = repo_with_conflicting_branch();
+    let session = open(dir.path());
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+
+    assert!(session.cherry_pick("other".into()).is_err());
+    write(dir.path(), "a.txt", "resolved\n");
+    session.stage("a.txt".into()).unwrap();
+    session.continue_cherry_pick().unwrap();
+
+    assert!(!session.status().unwrap().is_cherry_picking);
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD~1"]), before);
+    assert_eq!(
+        run_git(dir.path(), &["log", "-1", "--format=%s"]).trim(),
+        "other change"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "resolved\n"
+    );
+}
+
+#[test]
+fn conflicting_revert_reports_its_state_and_can_be_aborted() {
+    let dir = repo_with_conflicting_branch();
+    // A later edit to the same line makes reverting "main change" conflict.
+    write(dir.path(), "a.txt", "later\n");
+    run_git(dir.path(), &["commit", "-qam", "later change"]);
+    let session = open(dir.path());
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+
+    assert!(session.revert_commit("HEAD~1".into()).is_err());
+    let status = session.status().unwrap();
+    assert!(status.is_reverting);
+    assert!(!status.is_cherry_picking);
+    assert!(status.has_conflicts);
+
+    session.abort_revert().unwrap();
+    let status = session.status().unwrap();
+    assert!(!status.is_reverting);
+    assert!(status.is_clean);
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn revert_can_be_continued_after_resolving_conflicts() {
+    let dir = repo_with_conflicting_branch();
+    write(dir.path(), "a.txt", "later\n");
+    run_git(dir.path(), &["commit", "-qam", "later change"]);
+    let session = open(dir.path());
+    let before = run_git(dir.path(), &["rev-parse", "HEAD"]);
+
+    assert!(session.revert_commit("HEAD~1".into()).is_err());
+    write(dir.path(), "a.txt", "resolved\n");
+    session.stage("a.txt".into()).unwrap();
+    session.continue_revert().unwrap();
+
+    assert!(!session.status().unwrap().is_reverting);
+    assert_eq!(run_git(dir.path(), &["rev-parse", "HEAD~1"]), before);
+    assert!(
+        run_git(dir.path(), &["log", "-1", "--format=%s"]).starts_with("Revert \"main change\"")
+    );
+}

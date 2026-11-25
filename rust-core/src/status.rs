@@ -72,6 +72,8 @@ impl RepoSession {
         let is_merging = self.git_path_exists("MERGE_HEAD");
         let is_rebasing =
             self.git_path_exists("rebase-merge") || self.git_path_exists("rebase-apply");
+        let is_cherry_picking = self.git_path_exists("CHERRY_PICK_HEAD");
+        let is_reverting = self.git_path_exists("REVERT_HEAD");
         let files: Vec<String> = all_paths.into_iter().collect();
         Ok(RepoStatus {
             is_clean: staged_files.is_empty() && unstaged_files.is_empty(),
@@ -81,6 +83,8 @@ impl RepoSession {
             branch,
             is_merging,
             is_rebasing,
+            is_cherry_picking,
+            is_reverting,
             has_conflicts,
         })
     }
