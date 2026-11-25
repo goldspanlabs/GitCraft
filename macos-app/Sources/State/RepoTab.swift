@@ -557,9 +557,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 let avatarsOn = AvatarPreference.isEnabled()
                 if avatarsOn != self.lastShowAvatars {
                     self.lastShowAvatars = avatarsOn
-                    // Rows keep their cells until reloaded; a new generation forces the table
-                    // to redraw them with or without avatars.
-                    self.graphGeneration += 1
+                    // Rows keep their cells until reloaded; a new revision forces the table to
+                    // redraw them. The generation is left alone so in-flight searches still land.
                     self.graphRevision = UUID()
                 }
                 let current = CommitSortPreference.current
