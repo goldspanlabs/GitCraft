@@ -13,6 +13,8 @@ struct FixtureRepository {
     enum Conflict {
         case merge
         case rebase
+        /// Both branches have their conflicting commit, but git hasn't started anything.
+        case notStarted
     }
 
     /// The branch `make(mergedBranch: true)` creates. It needs `twoBranches`, which gives main a
@@ -34,6 +36,7 @@ struct FixtureRepository {
         dirtyLinkedWorktree: Bool = false,
         lockedLinkedWorktree: Bool = false,
         twoBranches: Bool = false,
+        featureAhead: Bool = false,
         mergedBranch: Bool = false,
         unstagedFiles: [String] = [],
         untrackedFile: Bool = false,
@@ -72,6 +75,15 @@ struct FixtureRepository {
             try git(["commit", "-m", "main work"], in: main)
         }
 
+        if featureAhead {
+            // `feature` is one commit ahead of `main`, so merging it can fast-forward.
+            try git(["switch", "-c", featureBranch], in: main)
+            try "feature\n".write(to: main.appendingPathComponent("feature.txt"), atomically: true, encoding: .utf8)
+            try git(["add", "feature.txt"], in: main)
+            try git(["commit", "-m", "feature work"], in: main)
+            try git(["switch", "main"], in: main)
+        }
+
         if mergedBranch {
             // Points at "initial", which main already contains, so a plain delete succeeds.
             try git(["branch", mergedBranchName, "main~1"], in: main)
@@ -89,6 +101,7 @@ struct FixtureRepository {
             switch conflict {
             case .merge: try gitExpectingFailure(["merge", featureBranch], in: main)
             case .rebase: try gitExpectingFailure(["rebase", featureBranch], in: main)
+            case .notStarted: break
             }
         }
 
@@ -167,6 +180,21 @@ struct FixtureRepository {
     /// Whether `ancestor` is reachable from `descendant`.
     func isAncestor(_ ancestor: String, of descendant: String) -> Bool {
         (try? git(["merge-base", "--is-ancestor", ancestor, descendant])) != nil
+    }
+
+    /// The parents of `ref`'s commit, as full ids.
+    func parents(of ref: String) throws -> [String] {
+        try git(["rev-list", "--parents", "-n", "1", ref])
+            .split(whereSeparator: \.isWhitespace)
+            .dropFirst()
+            .map { String($0) }
+    }
+
+    /// The paths staged in the index, relative to the main checkout.
+    func stagedFiles() throws -> [String] {
+        try git(["diff", "--cached", "--name-only"])
+            .split(separator: "\n")
+            .map { String($0) }
     }
 
     /// Whether `path`, relative to the main checkout's `.git` folder, exists.

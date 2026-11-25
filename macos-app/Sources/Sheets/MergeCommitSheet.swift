@@ -60,6 +60,7 @@ struct MergeCommitSheet: View {
                         }
                         .labelsHidden()
                         .frame(width: 330, alignment: .leading)
+                        .accessibilityIdentifier("merge-type")
 
                         if mergeType == .squash {
                             Text("The changes are staged. Commit them yourself.")
