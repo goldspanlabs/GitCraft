@@ -13,6 +13,7 @@ enum CommitAction {
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let graphRevision: UUID
+    let graphGeneration: Int
     let workingChangesCount: Int
     /// Hosting service per remote name, for the icon on remote-branch chips.
     let remoteHosts: [String: RemoteHost]
@@ -86,10 +87,26 @@ struct CommitTableView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
         let coordinator = context.coordinator
-        let dataChanged = coordinator.lastGraphRevision != graphRevision
-            || coordinator.workingChangesCount != workingChangesCount
+        let newWorktreeBranches = Set(worktrees.filter { !$0.isPrunable }.compactMap(\.branch))
+        let revisionChanged = coordinator.lastGraphRevision != graphRevision
+        let metadataChanged = coordinator.workingChangesCount != workingChangesCount
             || coordinator.remoteHosts != remoteHosts
-            || coordinator.worktreeBranches != Set(worktrees.filter { !$0.isPrunable }.compactMap(\.branch))
+            || coordinator.worktreeBranches != newWorktreeBranches
+        let dataChanged = revisionChanged || metadataChanged
+
+        let oldRowCount = coordinator.rows.count
+        let sameGeneration = coordinator.lastGraphRevision != nil
+            && coordinator.lastGraphGeneration == graphGeneration
+        let isAppendOnly = revisionChanged
+            && !metadataChanged
+            && sameGeneration
+            && rows.count > oldRowCount
+            && table.numberOfRows == 1 + oldRowCount
+        let isEmptyAppend = revisionChanged
+            && !metadataChanged
+            && sameGeneration
+            && rows.count == oldRowCount
+            && table.numberOfRows == 1 + oldRowCount
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowBefore = table.selectedRow
@@ -97,11 +114,15 @@ struct CommitTableView: NSViewRepresentable {
             ? coordinator.rows[selectedRowBefore - 1].oidHex
             : nil
 
-        coordinator.lastGraphRevision = graphRevision
+        if revisionChanged {
+            coordinator.lastGraphRevision = graphRevision
+            coordinator.lastGraphGeneration = graphGeneration
+        }
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
         coordinator.remoteHosts = remoteHosts
         coordinator.worktrees = worktrees
+        coordinator.worktreeBranches = newWorktreeBranches
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
         coordinator.onSelectCommit = onSelectCommit
@@ -115,7 +136,12 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.currentBranch = currentBranch
         coordinator.onCommitAction = onCommitAction
 
-        if dataChanged {
+        if isAppendOnly {
+            // Pagination only appends commits at the bottom; inserting the new rows leaves
+            // existing visible cells (and selection) untouched without flickering.
+            let inserted = IndexSet(integersIn: (1 + oldRowCount)..<(1 + rows.count))
+            table.insertRows(at: inserted, withAnimation: [])
+        } else if dataChanged && !isEmptyAppend {
             // Reload/restore is not a user selection: keep it from reaching the model, where
             // it would cancel a pending branch reveal or deselect the current commit.
             coordinator.isRestoringSelection = true
@@ -161,8 +187,11 @@ struct CommitTableView: NSViewRepresentable {
         var workingChangesCount: Int
         var remoteHosts: [String: RemoteHost] = [:]
         var worktrees: [WorktreeInfo] = []
+        /// Branches checked out in some worktree. Cached here rather than recomputed per row.
+        var worktreeBranches: Set<String> = []
         var isBusy = false
         var lastGraphRevision: UUID?
+        var lastGraphGeneration: Int?
         var onLoadMore: () -> Void
         var onSelectCommit: (CommitRow?) -> Void
         var onCopyOid: (String) -> Void
@@ -290,12 +319,6 @@ struct CommitTableView: NSViewRepresentable {
             if visible.location + visible.length >= max(0, rows.count - 40) {
                 onLoadMore()
             }
-        }
-
-        /// Branches checked out in some worktree. The viewed checkout's own branch carries the
-        /// check mark instead, so the chip ignores this set for it.
-        var worktreeBranches: Set<String> {
-            Set(worktrees.filter { !$0.isPrunable }.compactMap(\.branch))
         }
 
         func numberOfRows(in _: NSTableView) -> Int {
