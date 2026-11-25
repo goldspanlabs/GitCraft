@@ -116,7 +116,8 @@ final class WorktreeUITests: XCTestCase {
             wait(for: linked, toSatisfy: "exists == false", timeout: 30),
             "the row disappears once the worktree is removed"
         )
-        XCTAssertTrue(element("worktree-row:main").exists)
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
+        XCTAssertFalse(element("worktree-row:main").exists)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
     }
 
@@ -175,7 +176,8 @@ final class WorktreeUITests: XCTestCase {
             "the row disappears once the forced removal finishes"
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder and its uncommitted file are deleted")
-        XCTAssertTrue(element("worktree-row:main").exists)
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
+        XCTAssertFalse(element("worktree-row:main").exists)
     }
 
     func testRemovingTheActiveWorktreeSwitchesTheTabToTheMainCheckout() throws {
@@ -218,9 +220,14 @@ final class WorktreeUITests: XCTestCase {
             "the row disappears once the worktree is removed"
         )
         XCTAssertTrue(
-            element("worktree-current:main").waitForExistence(timeout: 20),
+            wait(
+                for: app.windows.firstMatch,
+                toSatisfy: "NOT (title CONTAINS 'repo-ui') AND title CONTAINS 'repo'",
+                timeout: 20
+            ),
             "the tab moves to the main checkout"
         )
+        XCTAssertTrue(app.staticTexts["No worktrees"].waitForExistence(timeout: 10))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder is deleted")
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.mainPath), "the main checkout is untouched")
     }
@@ -431,20 +438,6 @@ final class WorktreeUITests: XCTestCase {
         )
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
-    /// XCUITest can report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
     /// A segment of the Create Worktree sheet's mode picker. macOS reports segments as radio
     /// buttons or as buttons, depending on the OS version.
     private func segment(_ title: String) -> XCUIElement {
@@ -459,6 +452,6 @@ final class WorktreeUITests: XCTestCase {
     }
 
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        app.element(identifier)
     }
 }

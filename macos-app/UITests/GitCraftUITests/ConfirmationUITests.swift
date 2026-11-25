@@ -64,7 +64,7 @@ final class ConfirmationUITests: XCTestCase {
             "main.txt, added after \"initial\" and edited since, is gone"
         )
         // #12: confirming used to re-open the same dialog instead of finishing.
-        XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 3), "the dialog doesn't come back")
+        XCTAssertFalse(app.sheets.firstMatch.waitForExistence(timeout: 1), "the dialog doesn't come back")
     }
 
     // MARK: Discard file changes
@@ -122,7 +122,7 @@ final class ConfirmationUITests: XCTestCase {
         // With the dialog up, the changes list can't open its own Discard confirmation.
         rightClick(element("unstaged-file:README.md"))
         XCTAssertFalse(
-            app.menuItems["Discard Changes…"].waitForExistence(timeout: 3),
+            app.menuItems["Discard Changes…"].waitForExistence(timeout: 1),
             "the window behind the dialog doesn't take clicks"
         )
         XCTAssertEqual(app.sheets.count, 1, "only one dialog is open")
@@ -158,38 +158,14 @@ final class ConfirmationUITests: XCTestCase {
 
     private func assertNothingChanged(since mainBefore: String, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertFalse(
-            waitUntil(timeout: 3) { (try? self.fixture.commitID("main")) != mainBefore },
+            waitUntil(timeout: 1) { (try? self.fixture.commitID("main")) != mainBefore },
             "main stays where it was",
             file: file, line: line
         )
         XCTAssertEqual(try fixture.isModified("README.md"), true, "uncommitted changes are kept", file: file, line: line)
     }
 
-    /// Right-clicks the centre of `element` by coordinate. Rows are containers that XCUITest can
-    /// report as not hittable even when they are on screen.
-    private func rightClick(_ element: XCUIElement) {
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-    }
-
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-    }
-
-    private func wait(for element: XCUIElement, toSatisfy predicate: String, timeout: TimeInterval) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: predicate),
-            object: element
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
-    }
-
-    /// Polls `condition` until it holds or `timeout` passes. Used for checks on the repository
-    /// on disk, which the UI changes asynchronously.
-    private func waitUntil(timeout: TimeInterval, _ condition: @escaping () -> Bool) -> Bool {
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in condition() },
-            object: nil
-        )
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+        app.element(identifier)
     }
 }

@@ -11,29 +11,43 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    runs-on: macos-latest
+  rust:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
+      - name: Cache Rust builds
+        uses: actions/cache@v4
+        with:
+          path: rust-core/target
+          key: ${{ runner.os }}-rust-${{ hashFiles('rust-core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
       - name: Check formatting
         run: cargo fmt --manifest-path rust-core/Cargo.toml --check
       - name: Run clippy
         run: cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings
       - name: Run Rust tests
         run: cargo test --manifest-path rust-core/Cargo.toml
-      - name: Run Swift tests
-        run: make test-swift
-      - name: Build GitCraft.app
-        run: make
 
-  ui-tests:
+  build-app:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Rust and Swift builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust-core/target
+            macos-app/.build
+          key: ${{ runner.os }}-app-${{ hashFiles('rust-core/Cargo.lock', 'macos-app/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-app-
+      - name: Run Swift tests
+        run: make test-swift
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Build GitCraft.app
@@ -41,18 +55,76 @@ jobs:
       - name: Generate the UI test project
         run: xcodegen generate --spec project.yml --project .
         working-directory: macos-app/UITests
-      - name: Run UI tests
+      - name: Package app and UI test project
+        run: tar -czf build/ui-test-bundle.tar.gz build/GitCraft.app macos-app/UITests/GitCraftUITests.xcodeproj
+      - name: Upload app bundle for UI tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-bundle
+          path: build/ui-test-bundle.tar.gz
+          retention-days: 1
+
+  ui-tests:
+    needs: build-app
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download app bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-test-bundle
+          path: build
+      - name: Extract app and UI test project
+        run: |
+          tar -xzf build/ui-test-bundle.tar.gz
+          codesign --force --deep --sign - build/GitCraft.app
+      - name: Run UI tests (shard ${{ matrix.shard }})
         env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_COUNT: 3
           TEST_RUNNER_GITCRAFT_APP_PATH: ${{ github.workspace }}/build/GitCraft.app
-        run: >
-          xcodebuild test
-          -project macos-app/UITests/GitCraftUITests.xcodeproj
-          -scheme GitCraftUITests
-          -destination 'platform=macOS'
-          -resultBundlePath build/UITests.xcresult
+        run: |
+          # Distribute UI test classes evenly across shards by test count so new test files
+          # are picked up automatically without editing this workflow.
+          ONLY_TESTING=()
+          while IFS= read -r cls; do
+            [ -n "$cls" ] && ONLY_TESTING+=("-only-testing:GitCraftUITests/$cls")
+          done < <(python3 - <<'PY'
+          import glob, os, re
+
+          shard_index = int(os.environ["SHARD_INDEX"])
+          shard_count = int(os.environ["SHARD_COUNT"])
+          classes = []
+          for path in sorted(glob.glob("macos-app/UITests/GitCraftUITests/*UITests.swift")):
+              name = os.path.basename(path).removesuffix(".swift")
+              count = len(re.findall(r"\bfunc\s+test\w+\s*\(", open(path).read()))
+              classes.append((name, count))
+
+          buckets = [[] for _ in range(shard_count)]
+          loads = [0] * shard_count
+          for name, count in sorted(classes, key=lambda item: (-item[1], item[0])):
+              target = min(range(shard_count), key=lambda i: (loads[i], i))
+              buckets[target].append(name)
+              loads[target] += count
+
+          for name in sorted(buckets[shard_index]):
+              print(name)
+          PY
+          )
+          echo "Running shard $SHARD_INDEX: ${ONLY_TESTING[*]}"
+          xcodebuild test \
+            -project macos-app/UITests/GitCraftUITests.xcodeproj \
+            -scheme GitCraftUITests \
+            -destination 'platform=macOS' \
+            -resultBundlePath "build/UITests-shard-${SHARD_INDEX}.xcresult" \
+            "${ONLY_TESTING[@]}"
       - name: Upload the result bundle on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-test-results
-          path: build/UITests.xcresult
+          name: ui-test-results-shard-${{ matrix.shard }}
+          path: build/UITests-shard-${{ matrix.shard }}.xcresult
