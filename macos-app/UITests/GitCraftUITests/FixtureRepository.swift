@@ -227,10 +227,8 @@ struct FixtureRepository {
         process.currentDirectoryURL = directory
         // Ignore the developer's own git settings (merge.ff, rebase.backend, commit signing and
         // so on), so fixtures come out the same on every machine.
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        environment["GIT_CONFIG_NOSYSTEM"] = "1"
-        process.environment = environment
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(GitCraftApp.isolatedGitEnvironment) { _, isolated in isolated }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -247,6 +245,14 @@ struct FixtureRepository {
 /// Locates the built app bundle. CI passes it in as GITCRAFT_APP_PATH; locally it falls back to
 /// `build/GitCraft.app` at the repository root, which `make` produces.
 enum GitCraftApp {
+    /// Environment that makes git ignore the machine's own git settings (merge.ff, pull.rebase,
+    /// commit signing and so on). The fixture's git commands use it, and tests whose outcome
+    /// depends on git's defaults pass it to the app through `launchEnvironment`.
+    static let isolatedGitEnvironment = [
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    ]
+
     static func bundleURL() throws -> URL {
         if let path = ProcessInfo.processInfo.environment["GITCRAFT_APP_PATH"] {
             return URL(fileURLWithPath: path)

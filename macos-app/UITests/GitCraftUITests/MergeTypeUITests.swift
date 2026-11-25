@@ -152,6 +152,8 @@ final class MergeTypeUITests: XCTestCase {
             // Branch rows only exist while LOCAL BRANCHES is open, a persisted user preference.
             "-sidebar.localBranchesExpanded", "YES",
         ]
+        // Merge results depend on settings like merge.ff, so the app must ignore the machine's.
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 
