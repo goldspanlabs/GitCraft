@@ -17,6 +17,7 @@ final class WorktreeUITests: XCTestCase {
             linkedWorktree: !fromBranch,
             dirtyLinkedWorktree: name.contains("Dirty"),
             lockedLinkedWorktree: name.contains("Locked"),
+            detachedLinkedWorktree: name.contains("DetachedWorktreeRow"),
             twoBranches: fromBranch
         )
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
@@ -28,6 +29,7 @@ final class WorktreeUITests: XCTestCase {
             // Make the sheet's confirm button always read "Create and Switch".
             "-createWorktreeSwitch", "YES",
         ]
+        app.launchEnvironment = GitCraftApp.isolatedGitEnvironment
         app.launch()
     }
 
@@ -274,6 +276,140 @@ final class WorktreeUITests: XCTestCase {
         )
     }
 
+    func testCancelOnTheFirstRemoveConfirmationKeepsTheWorktree() throws {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        rightClick(linked)
+        let remove = app.menuItems["Remove Worktree…"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        remove.click()
+
+        let cancel = app.sheets.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "removal asks first")
+        cancel.click()
+
+        XCTAssertTrue(wait(for: app.sheets.firstMatch, toSatisfy: "exists == false", timeout: 10))
+        XCTAssertTrue(linked.exists, "the row stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.linkedPath), "the folder stays")
+        XCTAssertTrue(
+            try fixture.git(["worktree", "list", "--porcelain"]).contains("/repo-ui\n"),
+            "git still lists the worktree"
+        )
+    }
+
+    func testNewWorktreeInDetachedModeChecksOutNoBranch() throws {
+        let mainCommit = try fixture.commitID("main")
+        XCTAssertTrue(element("worktree-row:main").waitForExistence(timeout: 60))
+        rightClick(app.staticTexts["WORKTREES"])
+        let newWorktree = app.menuItems["New Worktree…"]
+        XCTAssertTrue(newWorktree.waitForExistence(timeout: 10))
+        newWorktree.click()
+
+        let detached = segment("Detached HEAD")
+        XCTAssertTrue(detached.waitForExistence(timeout: 20), "the sheet offers Detached HEAD")
+        detached.click()
+        XCTAssertTrue(
+            wait(for: app.textFields["new-worktree-branch"], toSatisfy: "exists == false", timeout: 10),
+            "detached mode asks for no branch name"
+        )
+        let create = app.buttons["Create and Switch"]
+        XCTAssertTrue(wait(for: create, toSatisfy: "isEnabled == true", timeout: 10))
+        create.click()
+
+        let label = "detached at \(mainCommit.prefix(7))"
+        XCTAssertTrue(element("worktree-current:\(label)").waitForExistence(timeout: 30), "the detached worktree is current")
+        let created = fixture.root.appendingPathComponent("repo-main").path
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created), "the checkout exists on disk")
+        XCTAssertEqual(
+            try fixture.git(["-C", created, "rev-parse", "--abbrev-ref", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "HEAD",
+            "no branch is checked out there"
+        )
+        XCTAssertEqual(try fixture.commitID("main"), mainCommit)
+        XCTAssertEqual(
+            try fixture.git(["-C", created, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            mainCommit,
+            "it starts at main's commit"
+        )
+    }
+
+    func testNewWorktreeFromABranchCheckedOutElsewhereOnlyOffersANewBranch() throws {
+        // feature/ui is checked out in the linked worktree, and git allows a branch in only one.
+        let branch = element("branch-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(branch.waitForExistence(timeout: 60))
+        rightClick(branch)
+        let item = app.menuItems["New Worktree from Branch…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 10))
+        item.click()
+
+        XCTAssertTrue(app.textFields["new-worktree-branch"].waitForExistence(timeout: 20), "the sheet asks for a new branch name")
+        XCTAssertFalse(app.staticTexts["Local branch:"].exists, "it doesn't offer to check the branch out again")
+        XCTAssertFalse(segment("Existing Branch").exists, "Existing Branch isn't offered")
+        app.sheets.buttons["Cancel"].click()
+    }
+
+    func testADetachedWorktreeRowShowsTheCommitItIsOn() throws {
+        let head = String(try fixture.commitID("main").prefix(7))
+        let row = element("worktree-row:detached at \(head)")
+        XCTAssertTrue(row.waitForExistence(timeout: 60), "the detached worktree is listed")
+        XCTAssertTrue(row.staticTexts["detached at \(head)"].exists, "its subtitle names the commit")
+        XCTAssertTrue(row.staticTexts["repo-ui"].exists, "its title is the folder")
+        let main = element("worktree-row:main")
+        XCTAssertTrue(main.exists)
+        XCTAssertFalse(
+            main.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'detached' OR label BEGINSWITH 'detached'")).firstMatch.exists,
+            "a row on a branch has no subtitle"
+        )
+    }
+
+    func testABranchCheckedOutInAnotherWorktreeShowsTheFolderNote() throws {
+        let linkedBranch = element("branch-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linkedBranch.waitForExistence(timeout: 60))
+        XCTAssertTrue(
+            linkedBranch.descendants(matching: .any)["Checked out in repo-ui"].waitForExistence(timeout: 20),
+            "feature/ui's icon says where it is checked out"
+        )
+        XCTAssertFalse(
+            element("branch-row:main").descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH 'Checked out in'")).firstMatch.exists,
+            "the branch of the checkout being viewed has no note"
+        )
+    }
+
+    func testSwitchingToADirtyWorktreeShowsItsTitleHistoryAndChanges() throws {
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        XCTAssertFalse(element("unstaged-file:scratch.txt").exists, "the main checkout has no scratch.txt")
+
+        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
+
+        XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            element("unstaged-file:scratch.txt").waitForExistence(timeout: 20),
+            "the changes list shows the linked checkout's untracked file"
+        )
+        XCTAssertTrue(
+            wait(for: app.windows.firstMatch, toSatisfy: "title CONTAINS 'repo-ui'", timeout: 20),
+            "the window title names the linked checkout"
+        )
+        XCTAssertTrue(app.staticTexts["initial"].exists, "the history is shown for the linked checkout")
+    }
+
+    func testDeletingTheActiveWorktreeFolderOutsideTheAppMovesTheTab() throws {
+        // #18: the tab must not stay on a folder that no longer exists.
+        let linked = element("worktree-row:\(FixtureRepository.linkedBranch)")
+        XCTAssertTrue(linked.waitForExistence(timeout: 60))
+        linked.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleClick()
+        XCTAssertTrue(element("worktree-current:\(FixtureRepository.linkedBranch)").waitForExistence(timeout: 20))
+
+        try FileManager.default.removeItem(atPath: fixture.linkedPath)
+
+        XCTAssertTrue(
+            element("worktree-current:main").waitForExistence(timeout: 60),
+            "the tab moves to the main checkout"
+        )
+    }
+
     /// Right-clicks the centre of `element` by coordinate. Rows and headers are containers that
     /// XCUITest can report as not hittable even when they are on screen.
     private func rightClick(_ element: XCUIElement) {
@@ -286,6 +422,19 @@ final class WorktreeUITests: XCTestCase {
             object: element
         )
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// A segment of the Create Worktree sheet's mode picker. macOS reports segments as radio
+    /// buttons or as buttons, depending on the OS version.
+    private func segment(_ title: String) -> XCUIElement {
+        app.sheets.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "(elementType == %d OR elementType == %d) AND (label == %@ OR title == %@)",
+                XCUIElement.ElementType.radioButton.rawValue,
+                XCUIElement.ElementType.button.rawValue,
+                title, title
+            ))
+            .firstMatch
     }
 
     private func element(_ identifier: String) -> XCUIElement {

@@ -42,6 +42,7 @@ struct FixtureRepository {
         linkedWorktree: Bool = false,
         dirtyLinkedWorktree: Bool = false,
         lockedLinkedWorktree: Bool = false,
+        detachedLinkedWorktree: Bool = false,
         twoBranches: Bool = false,
         featureAhead: Bool = false,
         extraBranches: [String] = [],
@@ -156,9 +157,14 @@ struct FixtureRepository {
             try edited.write(to: url, atomically: true, encoding: .utf8)
         }
 
-        if linkedWorktree || dirtyLinkedWorktree || lockedLinkedWorktree {
+        if linkedWorktree || dirtyLinkedWorktree || lockedLinkedWorktree || detachedLinkedWorktree {
             let linked = root.appendingPathComponent("repo-ui", isDirectory: true)
-            try git(["worktree", "add", "-b", linkedBranch, linked.path], in: main)
+            if detachedLinkedWorktree {
+                // No branch: the linked checkout's HEAD is main's commit, detached.
+                try git(["worktree", "add", "--detach", linked.path, "main"], in: main)
+            } else {
+                try git(["worktree", "add", "-b", linkedBranch, linked.path], in: main)
+            }
             if dirtyLinkedWorktree {
                 // An untracked file is enough to make git refuse a plain `worktree remove`.
                 try "unsaved work\n".write(
