@@ -111,6 +111,18 @@ dictionary BranchInfo {
   boolean is_default;
 };
 
+dictionary WorktreeInfo {
+  string path;
+  string? branch;
+  string head_oid_hex;
+  boolean is_main;
+  boolean is_detached;
+  boolean is_locked;
+  string? lock_reason;
+  boolean is_prunable;
+  u32 dirty_count;
+};
+
 dictionary TagInfo {
   string name;
   string full_ref;
@@ -179,6 +191,27 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void push_tag(string tag_name);
+
+  [Throws=GitCraftError]
+  sequence<WorktreeInfo> list_worktrees();
+
+  [Throws=GitCraftError]
+  sequence<WorktreeInfo> list_worktree_entries();
+
+  [Throws=GitCraftError]
+  void add_worktree(string path, string? branch_name, string? start_point, boolean detach);
+
+  [Throws=GitCraftError]
+  void remove_worktree(string path, boolean force);
+
+  [Throws=GitCraftError]
+  void lock_worktree(string path, string? reason);
+
+  [Throws=GitCraftError]
+  void unlock_worktree(string path);
+
+  [Throws=GitCraftError]
+  void prune_worktrees();
 
   [Throws=GitCraftError]
   sequence<StashInfo> list_stashes();
@@ -300,4 +333,5 @@ interface RepoSession {
 
   boolean take_dirty();
   boolean take_graph_dirty();
+  boolean take_worktrees_dirty();
 };

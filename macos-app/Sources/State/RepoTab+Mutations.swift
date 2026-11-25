@@ -98,6 +98,8 @@ extension RepoTab {
         let session = self.session
         Task {
             guard let message = try? await Task.detached { try session.headCommitMessage() }.value,
+                  // A read from a checkout the tab has since left must not fill the new composer.
+                  self.session === session,
                   self.amendCommit, self.commitSummary.isEmpty, self.commitBody.isEmpty else { return }
             let lines = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             self.commitSummary = String(lines.first ?? "")
@@ -274,6 +276,10 @@ extension RepoTab {
             deleteRemoteBranch(name)
         case let .deleteTag(name, deleteRemote):
             deleteTag(name, deleteRemote: deleteRemote)
+        case let .removeWorktree(path, label, _):
+            removeWorktree(path: path, label: label, force: false)
+        case let .forceRemoveWorktree(path, label, _):
+            removeWorktree(path: path, label: label, force: true)
         case .abortMerge:
             abortMerge()
         case .abortRebase:
@@ -338,6 +344,76 @@ extension RepoTab {
             case .push: try session.push()
             }
         }
+    }
+
+    func addWorktree(
+        path: String,
+        branchName: String?,
+        startPoint: String?,
+        detach: Bool,
+        switchAfterCreate: Bool
+    ) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return }
+        let resolvedPath = Self.resolvePath(trimmedPath, relativeTo: activeCheckoutPath)
+        let trimmedBranch = branchName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalBranch = (trimmedBranch?.isEmpty == false) ? trimmedBranch : nil
+        let trimmedStart = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalStart = (trimmedStart?.isEmpty == false) ? trimmedStart : nil
+        performMutation({ session in
+            try session.addWorktree(
+                path: resolvedPath,
+                branchName: finalBranch,
+                startPoint: finalStart,
+                detach: detach
+            )
+        }, onSuccess: { [weak self] in
+            if switchAfterCreate {
+                self?.switchCheckout(to: resolvedPath)
+            }
+        })
+    }
+
+    func removeWorktree(path: String, label: String, force: Bool) {
+        let canonical = Self.canonicalPath(for: path)
+        let wasActive = (canonical == activeCheckoutPath)
+        let fallback = fallbackCheckoutPath(excluding: canonical)
+        performMutation({ session in
+            try session.removeWorktree(path: canonical, force: force)
+        }, onSuccess: { [weak self] in
+            guard let self else { return }
+            if self.repoPath == canonical, let fallback {
+                self.repoPath = fallback
+            }
+            if wasActive, let fallback {
+                self.switchCheckout(to: fallback)
+            }
+        }, onFailure: { [weak self] error in
+            // A safe remove refused because the worktree has modified, staged, or untracked
+            // files: ask for explicit confirmation before force-removing.
+            guard !force,
+                  error.displayMessage.contains("modified or untracked files")
+                  || error.displayMessage.contains("--force")
+            else { return false }
+            self?.pendingConfirmation = .forceRemoveWorktree(
+                path: canonical,
+                label: label,
+                isActive: wasActive
+            )
+            return true
+        })
+    }
+
+    func lockWorktree(_ path: String) {
+        performMutation { try $0.lockWorktree(path: path, reason: nil) }
+    }
+
+    func unlockWorktree(_ path: String) {
+        performMutation { try $0.unlockWorktree(path: path) }
+    }
+
+    func pruneWorktrees() {
+        performMutation { try $0.pruneWorktrees() }
     }
 
     func copyOid(_ oid: String) {

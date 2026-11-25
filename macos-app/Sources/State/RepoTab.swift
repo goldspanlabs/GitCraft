@@ -21,8 +21,25 @@ final class RepoTab: ObservableObject, Identifiable {
         var id: String { rawValue }
     }
 
+    enum WorktreeSource: Equatable {
+        case head
+        case localBranch(name: String, isCheckedOut: Bool)
+        case remoteBranch(name: String)
+        case commit(oid: String)
+
+        var id: String {
+            switch self {
+            case .head: return "head"
+            case let .localBranch(name, isCheckedOut): return "local-\(name)-\(isCheckedOut)"
+            case let .remoteBranch(name): return "remote-\(name)"
+            case let .commit(oid): return "commit-\(oid)"
+            }
+        }
+    }
+
     enum ActiveSheet: Identifiable {
         case newBranch(startPoint: String?)
+        case newWorktree(source: WorktreeSource)
         case checkoutCommit(oid: String)
         case mergeCommit(oid: String)
         case newTag(target: String?)
@@ -32,6 +49,7 @@ final class RepoTab: ObservableObject, Identifiable {
         var id: String {
             switch self {
             case let .newBranch(startPoint): return "new-branch-\(startPoint ?? "head")"
+            case let .newWorktree(source): return "new-worktree-\(source.id)"
             case let .checkoutCommit(oid): return "checkout-commit-\(oid)"
             case let .mergeCommit(oid): return "merge-commit-\(oid)"
             case let .newTag(target): return "new-tag-\(target ?? "head")"
@@ -47,6 +65,8 @@ final class RepoTab: ObservableObject, Identifiable {
         case forceDeleteBranch(name: String)
         case deleteRemoteBranch(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
+        case removeWorktree(path: String, label: String, isActive: Bool)
+        case forceRemoveWorktree(path: String, label: String, isActive: Bool)
         case abortMerge
         case abortRebase
         case dropStash(index: UInt32, name: String)
@@ -59,6 +79,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .forceDeleteBranch(name): return "force-del-branch-\(name)"
             case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
+            case let .removeWorktree(path, _, _): return "remove-worktree-\(path)"
+            case let .forceRemoveWorktree(path, _, _): return "force-remove-worktree-\(path)"
             case .abortMerge: return "abort-merge"
             case .abortRebase: return "abort-rebase"
             case let .dropStash(index, _): return "drop-stash-\(index)"
@@ -74,6 +96,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
+            case let .removeWorktree(_, label, _): return "Remove worktree \"\(label)\"?"
+            case let .forceRemoveWorktree(_, label, _): return "Worktree \"\(label)\" has uncommitted changes"
             case .abortMerge: return "Abort in-progress merge?"
             case .abortRebase: return "Abort in-progress rebase?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
@@ -95,6 +119,16 @@ final class RepoTab: ObservableObject, Identifiable {
                 return remote
                     ? "This will delete the tag locally and push the deletion to the remote repository."
                     : "This will remove the tag from your local repository."
+            case let .removeWorktree(path, _, isActive):
+                if isActive {
+                    return "This will delete \"\(path)\" from disk and switch this tab to another checkout of this repository. Committed history on its branch is kept."
+                }
+                return "This will delete \"\(path)\" from disk. Committed history on its branch is kept."
+            case let .forceRemoveWorktree(path, _, isActive):
+                if isActive {
+                    return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted, and this tab will switch to another checkout of this repository. Uncommitted changes can't be recovered from GitCraft."
+                }
+                return "Modified, staged, or untracked files in \"\(path)\" will be permanently deleted. Uncommitted changes can't be recovered from GitCraft."
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
             case .abortRebase:
@@ -111,6 +145,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
             case .forceDeleteBranch: return "Force Delete"
+            case .removeWorktree: return "Remove"
+            case .forceRemoveWorktree: return "Force Remove"
             case .abortMerge: return "Abort Merge"
             case .abortRebase: return "Abort Rebase"
             case .dropStash: return "Drop"
@@ -121,7 +157,15 @@ final class RepoTab: ObservableObject, Identifiable {
 
     let id = UUID()
     let url: URL
-    var name: String { url.lastPathComponent }
+    /// The repository's primary checkout, the folder that owns `.git`. It names the tab.
+    var repoPath: String
+    /// The checkout this tab shows: `repoPath` or one of its linked worktrees.
+    @Published private(set) var activeCheckoutPath: String
+    /// Every checkout of the repository, primary first.
+    @Published private(set) var worktrees: [WorktreeInfo] = []
+    /// Called after the shown checkout changes, so the window can save it for relaunch.
+    var onCheckoutChanged: (() -> Void)?
+    var name: String { URL(fileURLWithPath: repoPath).lastPathComponent }
 
     @Published var currentBranch = ""
     @Published var isMerging = false
@@ -178,7 +222,7 @@ final class RepoTab: ObservableObject, Identifiable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    let session: RepoSession
+    var session: RepoSession
     var isLoadingMore = false
     var hasMoreCommits = true
     let pageSize: UInt32 = 500
@@ -193,12 +237,48 @@ final class RepoTab: ObservableObject, Identifiable {
 
     private var watcherTask: Task<Void, Never>?
     private var autoFetchTask: Task<Void, Never>?
+    private var worktreesRefreshTask: Task<Void, Never>?
+    private var worktreesRefreshPending = false
     private var sortObserver: NSObjectProtocol?
     private var lastCommitSort = CommitSortPreference.current
 
+    /// Resolves symlinks with POSIX `realpath` so checkout paths match `git worktree list`
+    /// verbatim. Unlike `URL.resolvingSymlinksInPath()`, `realpath` preserves macOS's
+    /// `/private` prefix on `/var` and `/tmp`.
+    static func canonicalPath(for path: String) -> String {
+        if let resolved = realpath(path, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        return URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    /// Resolves a user-entered path (including `~` or relative paths) against `basePath` so
+    /// git commands and subsequent checkout switches refer to the exact same directory.
+    static func resolvePath(_ path: String, relativeTo basePath: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        let url: URL
+        if expanded.hasPrefix("/") {
+            url = URL(fileURLWithPath: expanded)
+        } else {
+            url = URL(fileURLWithPath: expanded, relativeTo: URL(fileURLWithPath: basePath, isDirectory: true))
+        }
+        return url.standardizedFileURL.path
+    }
+
     init(url: URL) throws {
-        self.url = url
-        self.session = try RepoSession(path: url.path)
+        let canonical = Self.canonicalPath(for: url.path)
+        let session = try RepoSession(path: canonical)
+        self.url = URL(fileURLWithPath: canonical)
+        self.session = session
+        self.activeCheckoutPath = canonical
+        // Metadata-only lookup avoids running `git status` per checkout on the main actor;
+        // `refresh()` fills in dirty counts asynchronously.
+        let listed = (try? session.listWorktreeEntries()) ?? []
+        self.worktrees = listed
+        // Git lists the primary checkout first, so a tab opened on a linked worktree still
+        // names the repository after its main folder.
+        self.repoPath = listed.first?.path ?? canonical
     }
 
     /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
@@ -214,6 +294,47 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func presentNewBranch(startPoint: String? = nil) {
         activeSheet = .newBranch(startPoint: startPoint)
+    }
+
+    func presentNewWorktree(source: WorktreeSource = .head) {
+        activeSheet = .newWorktree(source: source)
+    }
+
+    /// Picks a surviving checkout to switch back to when removing `path`: the primary checkout
+    /// when available, otherwise any other linked checkout that still exists on disk (for
+    /// bare-backed repos). A locked worktree whose folder is gone is not prunable per git, so
+    /// the folder check is needed too.
+    func fallbackCheckoutPath(excluding path: String) -> String? {
+        let canonical = Self.canonicalPath(for: path)
+        func isSurviving(_ worktree: WorktreeInfo) -> Bool {
+            worktree.path != canonical
+                && !worktree.isPrunable
+                && FileManager.default.fileExists(atPath: worktree.path)
+        }
+        if let main = worktrees.first(where: { $0.isMain && isSurviving($0) }) {
+            return main.path
+        }
+        return worktrees.first(where: isSurviving)?.path
+    }
+
+    /// Whether `worktree` can be safely removed from this tab. Never allows removing the primary
+    /// checkout, a locked worktree, or the sole remaining checkout of a bare-backed repository.
+    func canRemoveWorktree(_ worktree: WorktreeInfo) -> Bool {
+        guard !worktree.isMain, !worktree.isLocked else { return false }
+        if activeCheckoutPath == worktree.path {
+            return fallbackCheckoutPath(excluding: worktree.path) != nil
+        }
+        return true
+    }
+
+    func requestRemoveWorktree(_ worktree: WorktreeInfo) {
+        guard canRemoveWorktree(worktree) else { return }
+        let label = worktree.branch ?? URL(fileURLWithPath: worktree.path).lastPathComponent
+        pendingConfirmation = .removeWorktree(
+            path: worktree.path,
+            label: label,
+            isActive: activeCheckoutPath == worktree.path
+        )
     }
 
     /// Opens the Checkout Commit sheet for `oid`. Checking out a commit detaches HEAD, as the sheet says.
@@ -274,15 +395,21 @@ final class RepoTab: ObservableObject, Identifiable {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 if Task.isCancelled { break }
-                // Refs/HEAD/config changes need the full reload; plain file edits (including
-                // build output) only need a status refresh, which is far cheaper.
-                let (graphDirty, dirty) = await Task.detached {
-                    (session.takeGraphDirty(), session.takeDirty())
+                // Refs/HEAD/config changes need the full reload; plain file edits in the
+                // active checkout only need a status refresh; edits in inactive sibling
+                // worktrees only refresh sidebar dirty counts.
+                let (graphDirty, dirty, worktreesDirty) = await Task.detached {
+                    (session.takeGraphDirty(), session.takeDirty(), session.takeWorktreesDirty())
                 }.value
                 if graphDirty {
                     self?.refresh()
-                } else if dirty {
-                    self?.refreshStatus()
+                } else {
+                    if dirty {
+                        self?.refreshStatus()
+                    }
+                    if worktreesDirty {
+                        self?.refreshWorktrees()
+                    }
                 }
             }
         }
@@ -318,6 +445,71 @@ final class RepoTab: ObservableObject, Identifiable {
         watcherTask = nil
     }
 
+    /// Whether `path` is one of this tab's checkouts (primary, active, or a sibling worktree).
+    func contains(checkoutPath path: String) -> Bool {
+        let canonical = Self.canonicalPath(for: path)
+        return repoPath == canonical
+            || activeCheckoutPath == canonical
+            || worktrees.contains { $0.path == canonical }
+    }
+
+    /// Points this tab at another checkout of the same repository. Branches, tags, stashes and
+    /// the graph are shared, so only the working state, the watchers and the selection change.
+    func switchCheckout(to path: String) {
+        let canonical = Self.canonicalPath(for: path)
+        guard !isBusy, canonical != activeCheckoutPath else { return }
+        if worktrees.first(where: { $0.path == canonical })?.isPrunable == true { return }
+        let next: RepoSession
+        do {
+            next = try RepoSession(path: canonical)
+        } catch {
+            showError(error)
+            return
+        }
+        watcherTask?.cancel()
+        autoFetchTask?.cancel()
+        revealTask?.cancel()
+        revealTask = nil
+        // Any in-flight sweep belongs to the old session; the new one starts fresh.
+        worktreesRefreshTask?.cancel()
+        worktreesRefreshTask = nil
+        worktreesRefreshPending = false
+        session = next
+        activeCheckoutPath = canonical
+        graphGeneration += 1
+        currentBranch = worktrees.first(where: { $0.path == canonical })?.branch ?? ""
+        isMerging = false
+        isRebasing = false
+        hasConflicts = false
+        stagedFiles = []
+        unstagedFiles = []
+        selectedCommit = nil
+        commitDetail = nil
+        loadedDetailOid = nil
+        diffRows = []
+        selectedFilePath = nil
+        selectedFileStaged = false
+        scrollRequest = ScrollRequest(oidHex: nil)
+        commitSummary = ""
+        commitBody = ""
+        amendCommit = false
+        skipHooks = false
+        pendingConfirmation = nil
+        activeSheet = nil
+        errorMessage = nil
+        startWatcher()
+        refresh()
+        onCheckoutChanged?()
+    }
+
+    private func syncActiveWorktreeDirtyCount() {
+        let activeDirty = UInt32(totalChangesCount)
+        if let index = worktrees.firstIndex(where: { $0.path == activeCheckoutPath }),
+           worktrees[index].dirtyCount != activeDirty {
+            worktrees[index].dirtyCount = activeDirty
+        }
+    }
+
     func applyStatus(_ status: RepoStatus) {
         currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
         isMerging = status.isMerging
@@ -325,6 +517,7 @@ final class RepoTab: ObservableObject, Identifiable {
         hasConflicts = status.hasConflicts
         if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
         if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
+        syncActiveWorktreeDirtyCount()
     }
 
     /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
@@ -333,12 +526,43 @@ final class RepoTab: ObservableObject, Identifiable {
         Task {
             do {
                 let status = try await Task.detached { try session.status() }.value
+                guard self.session === session else { return }
                 applyStatus(status)
                 if selectedCommit == nil {
                     loadWorkingDiffSelection()
                 }
             } catch {
+                guard self.session === session else { return }
                 showError(error)
+            }
+        }
+    }
+
+    /// Re-reads worktree metadata and per-checkout dirty counts independently so a slow
+    /// sibling checkout never delays publishing the active checkout's status or graph.
+    /// Requests made while a sweep is running coalesce into one rerun after it finishes, so
+    /// the poller never stacks overlapping `git status` sweeps.
+    func refreshWorktrees() {
+        worktreesRefreshPending = true
+        guard worktreesRefreshTask == nil else { return }
+        runWorktreesRefresh()
+    }
+
+    private func runWorktreesRefresh() {
+        worktreesRefreshPending = false
+        let session = self.session
+        worktreesRefreshTask = Task {
+            // Non-fatal on failure: active checkout status and graph remain usable.
+            let worktreeList = try? await Task.detached { try session.listWorktrees() }.value
+            // A checkout switch already cleared the task slot for the new session.
+            guard self.session === session else { return }
+            worktreesRefreshTask = nil
+            if let worktreeList {
+                worktrees = worktreeList
+                syncActiveWorktreeDirtyCount()
+            }
+            if worktreesRefreshPending {
+                runWorktreesRefresh()
             }
         }
     }
@@ -351,6 +575,8 @@ final class RepoTab: ObservableObject, Identifiable {
         // back up (and the scroll-to-load-more would then immediately refetch).
         let limit = max(pageSize, UInt32(commits.count))
         let scoped = scopeToCurrentBranch
+
+        refreshWorktrees()
 
         Task {
             do {
@@ -371,6 +597,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     remotesTask,
                     graphTask
                 )
+                guard self.session === session else { return }
                 applyStatus(status)
                 branches = branchList
                 // The core already returns tags newest-created first.
@@ -386,6 +613,7 @@ final class RepoTab: ObservableObject, Identifiable {
                     loadWorkingDiffSelection()
                 }
             } catch {
+                guard self.session === session else { return }
                 showError(error)
             }
         }
@@ -407,8 +635,11 @@ final class RepoTab: ObservableObject, Identifiable {
                 try await Task.detached {
                     try work(session)
                 }.value
+                isBusy = false
                 onSuccess?()
-                refresh()
+                if self.session === session {
+                    refresh()
+                }
             } catch {
                 if let onFailure, onFailure(error) { return }
                 showError(error)
