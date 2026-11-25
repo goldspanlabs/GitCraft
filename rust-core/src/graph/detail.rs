@@ -63,14 +63,8 @@ pub fn get_commit_detail(
         .map(|p| p.detach().to_hex().to_string())
         .collect();
 
-    // `diff-tree <commit>` prints nothing for a merge, so a merge lists its changes against
-    // its first parent, matching the diff the inspector shows.
-    let files_output = match parent_oids.as_slice() {
-        [first, _, ..] => crate::git_cli::run(
-            repo_path,
-            &["diff-tree", "--name-status", "-z", "-r", first, oid_hex],
-        )?,
-        _ => crate::git_cli::run(
+    let single_commit = || {
+        crate::git_cli::run(
             repo_path,
             &[
                 "diff-tree",
@@ -81,7 +75,18 @@ pub fn get_commit_detail(
                 "--root",
                 oid_hex,
             ],
-        )?,
+        )
+    };
+    // `diff-tree <commit>` prints nothing for a merge, so a merge lists its changes against
+    // its first parent, matching the diff the inspector shows. At a shallow-clone boundary
+    // the parent object is missing, so fall back to the plain form instead of failing.
+    let files_output = match parent_oids.as_slice() {
+        [first, _, ..] => crate::git_cli::run(
+            repo_path,
+            &["diff-tree", "--name-status", "-z", "-r", first, oid_hex],
+        )
+        .or_else(|_| single_commit())?,
+        _ => single_commit()?,
     };
 
     // -z output is "<status>\0<path>\0" per file, with no quoting of unusual paths.

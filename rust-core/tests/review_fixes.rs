@@ -126,3 +126,22 @@ fn editing_a_lock_file_in_the_working_tree_marks_status_dirty() {
     }
     assert!(seen, "Cargo.lock edit never marked the session dirty");
 }
+
+#[test]
+fn merge_commit_detail_survives_a_missing_parent_object() {
+    let source = merged_repo();
+    let clone = tempfile::tempdir().unwrap();
+    run_git(
+        clone.path(),
+        &[
+            "clone",
+            "--depth",
+            "1",
+            &format!("file://{}", source.path().display()),
+            ".",
+        ],
+    );
+    let session = open(clone.path());
+    let detail = session.get_commit_detail(head(clone.path())).unwrap();
+    assert_eq!(detail.parent_oids.len(), 2);
+}
