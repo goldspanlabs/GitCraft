@@ -36,9 +36,11 @@ enum RemoteHost: Equatable {
     /// Template image for the host's brand mark, or a cloud symbol for other hosts.
     var icon: NSImage? {
         guard let path = brandPath else {
-            let image = NSImage(systemSymbolName: "cloud", accessibilityDescription: nil)
-            image?.isTemplate = true
-            return image
+            return SVGIconCache.shared.cached(key: "symbol:cloud") {
+                let image = NSImage(systemSymbolName: "cloud", accessibilityDescription: nil)
+                image?.isTemplate = true
+                return image
+            }
         }
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"black\" d=\"\(path)\"/></svg>"
         return SVGIconCache.shared.templateImage(svg: svg)

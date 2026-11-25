@@ -106,6 +106,7 @@ struct CommitTableView: NSViewRepresentable {
             && !metadataChanged
             && sameGeneration
             && rows.count == oldRowCount
+            && table.numberOfRows == 1 + oldRowCount
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowBefore = table.selectedRow
@@ -113,8 +114,10 @@ struct CommitTableView: NSViewRepresentable {
             ? coordinator.rows[selectedRowBefore - 1].oidHex
             : nil
 
-        coordinator.lastGraphRevision = graphRevision
-        coordinator.lastGraphGeneration = graphGeneration
+        if revisionChanged {
+            coordinator.lastGraphRevision = graphRevision
+            coordinator.lastGraphGeneration = graphGeneration
+        }
         coordinator.rows = rows
         coordinator.workingChangesCount = workingChangesCount
         coordinator.remoteHosts = remoteHosts

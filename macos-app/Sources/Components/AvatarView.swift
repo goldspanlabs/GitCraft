@@ -81,10 +81,12 @@ final class AvatarLoader {
         if let hit = cache.object(forKey: key as NSString) { return hit }
         switch lookup {
         case let .found(cgImage):
+            failedAt.removeValue(forKey: key)
             let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
             cache.setObject(image, forKey: key as NSString)
             return image
         case .notFound:
+            failedAt.removeValue(forKey: key)
             // No avatar exists for this address: fall back to the GitHub mark.
             let tile = KnownSender.github.tile
             cache.setObject(tile, forKey: key as NSString)
@@ -135,9 +137,10 @@ struct AvatarView: View {
     @State private var loaded: (email: String, image: NSImage)?
 
     var body: some View {
-        let displayedImage: NSImage? = if showAvatars {
-            AvatarLoader.shared.cachedImage(for: email)
-                ?? (loaded?.email == email ? loaded?.image : nil)
+        let key = AvatarLoader.normalizedKey(for: email)
+        let displayedImage: NSImage? = if showAvatars, !key.isEmpty {
+            AvatarLoader.shared.cachedImage(for: key)
+                ?? (loaded?.email == key ? loaded?.image : nil)
         } else {
             nil
         }
@@ -156,20 +159,19 @@ struct AvatarView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        .task(id: "\(email)|\(showAvatars)") {
-            guard showAvatars, !email.isEmpty else {
+        .task(id: "\(key)|\(showAvatars)") {
+            guard showAvatars, !key.isEmpty else {
                 loaded = nil
                 return
             }
-            if let cached = AvatarLoader.shared.cachedImage(for: email) {
-                loaded = (email, cached)
+            if let cached = AvatarLoader.shared.cachedImage(for: key) {
+                loaded = (key, cached)
                 return
             }
             loaded = nil
-            let requested = email
-            let fetched = await AvatarLoader.shared.image(for: requested)
+            let fetched = await AvatarLoader.shared.image(for: key)
             guard !Task.isCancelled else { return }
-            loaded = fetched.map { (requested, $0) }
+            loaded = fetched.map { (key, $0) }
         }
     }
 }

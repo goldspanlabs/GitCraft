@@ -33,11 +33,22 @@ final class CommitRowCellView: NSTableCellView {
         return cache
     }()
     private static var formattedDateCacheDay = Date()
+    private static var formattedDateCacheTimeZone = TimeZone.autoupdatingCurrent
+    private static var formattedDateCacheLocale = Locale.autoupdatingCurrent
 
     private static func formattedDate(for timestamp: Int64) -> String {
-        if !Calendar.current.isDateInToday(formattedDateCacheDay) {
+        let currentTimeZone = TimeZone.autoupdatingCurrent
+        let currentLocale = Locale.autoupdatingCurrent
+        if !Calendar.autoupdatingCurrent.isDateInToday(formattedDateCacheDay)
+            || formattedDateCacheTimeZone != currentTimeZone
+            || formattedDateCacheLocale != currentLocale
+        {
             formattedDateCache.removeAllObjects()
             formattedDateCacheDay = Date()
+            formattedDateCacheTimeZone = currentTimeZone
+            formattedDateCacheLocale = currentLocale
+            dateFormatter.timeZone = currentTimeZone
+            dateFormatter.locale = currentLocale
         }
         let key = NSNumber(value: timestamp)
         if let cached = formattedDateCache.object(forKey: key) {

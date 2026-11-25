@@ -35,7 +35,7 @@ final class AvatarLoaderTests: XCTestCase {
     }
 
     @MainActor
-    func testAvatarImageViewRendersKnownSenderSynchronously() {
+    func testAvatarImageViewRendersKnownSenderSynchronouslyAndHandlesReuse() {
         let previous = UserDefaults.standard.object(forKey: showAvatarsStorageKey)
         UserDefaults.standard.set(true, forKey: showAvatarsStorageKey)
         defer {
@@ -50,7 +50,37 @@ final class AvatarLoaderTests: XCTestCase {
         view.configure(name: "GitHub", email: "noreply@github.com")
         XCTAssertTrue(view.hasLoadedImage)
 
+        // Same author with different casing/whitespace reuses the existing image in place.
+        view.configure(name: "GitHub", email: " NoReply@GitHub.com ")
+        XCTAssertTrue(view.hasLoadedImage)
+
+        // Switching to an uncached email falls back to initials immediately.
+        view.configure(name: "Ada Lovelace", email: "uncached-reuse-test@example.com")
+        XCTAssertFalse(view.hasLoadedImage)
+
+        // Disabling avatars hides even known-sender images.
+        UserDefaults.standard.set(false, forKey: showAvatarsStorageKey)
+        view.configure(name: "GitHub", email: "noreply@github.com")
+        XCTAssertFalse(view.hasLoadedImage)
+
         view.clear()
         XCTAssertFalse(view.hasLoadedImage)
+    }
+
+    @MainActor
+    func testRefPillViewReusesCachedTintedIconsForSFSymbols() throws {
+        let currentBranch = RefBadge(name: "main", kind: .localBranch, isCurrent: true)
+        let check1 = RefPillView(badge: currentBranch, laneColor: .systemBlue)
+        let check2 = RefPillView(badge: currentBranch, laneColor: .systemBlue)
+        let checkIcon1 = try XCTUnwrap(check1.displayedIconImage)
+        let checkIcon2 = try XCTUnwrap(check2.displayedIconImage)
+        XCTAssertTrue(checkIcon1 === checkIcon2)
+
+        let remoteBranch = RefBadge(name: "origin/main", kind: .remoteBranch, isCurrent: false)
+        let cloud1 = RefPillView(badge: remoteBranch, host: .other, laneColor: .systemBlue)
+        let cloud2 = RefPillView(badge: remoteBranch, host: .other, laneColor: .systemBlue)
+        let cloudIcon1 = try XCTUnwrap(cloud1.displayedIconImage)
+        let cloudIcon2 = try XCTUnwrap(cloud2.displayedIconImage)
+        XCTAssertTrue(cloudIcon1 === cloudIcon2)
     }
 }
