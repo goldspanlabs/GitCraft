@@ -119,7 +119,14 @@ final class WorkspaceState: ObservableObject {
         welcomeControllers.removeAll { $0 === controller }
     }
 
+    /// UI tests open a throwaway fixture repository via `-UITestOpenRepository`. It must not leak
+    /// into the user's recent repositories or the tabs restored on the next launch.
+    private static var isUITestRun: Bool {
+        UserDefaults.standard.string(forKey: "UITestOpenRepository") != nil
+    }
+
     private func recordRecent(path: String) {
+        guard !Self.isUITestRun else { return }
         var updated = recentPaths.filter { $0 != path }
         updated.insert(path, at: 0)
         if updated.count > 8 {
@@ -131,6 +138,7 @@ final class WorkspaceState: ObservableObject {
 
     /// Saves the checkout each open tab shows, so relaunch returns to the same worktree.
     func saveOpenTabs() {
+        guard !Self.isUITestRun else { return }
         UserDefaults.standard.set(repoControllers.map { $0.tab.activeCheckoutPath }, forKey: Self.openTabsKey)
     }
 }
