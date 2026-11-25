@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import ImageIO
 import SwiftUI
 
 /// Extracts up to two uppercase initials from an author name, falling back to `"?"`.
@@ -19,25 +20,42 @@ enum AvatarInitials {
 final class AvatarLoader {
     static let shared = AvatarLoader()
 
-    private enum Lookup {
-        case found(NSImage)
+    private enum Lookup: Sendable {
+        case found(CGImage)
         case notFound
         case failed
     }
 
-    private let cache = NSCache<NSString, NSImage>()
+    private let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 500
+        return cache
+    }()
     private var failedAt: [String: Date] = [:]
     private var inFlight: [String: Task<Lookup, Never>] = [:]
 
+    nonisolated static func normalizedKey(for email: String) -> String {
+        email.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    /// Returns the avatar synchronously when it is already known or cached in memory,
+    /// avoiding an async hop (and placeholder flash) when table cells are recycled.
+    func cachedImage(for email: String) -> NSImage? {
+        let key = Self.normalizedKey(for: email)
+        guard !key.isEmpty else { return nil }
+        if let sender = KnownSender(email: key) { return sender.tile }
+        return cache.object(forKey: key as NSString)
+    }
+
     func image(for email: String) async -> NSImage? {
-        let key = email.trimmingCharacters(in: .whitespaces).lowercased()
+        let key = Self.normalizedKey(for: email)
         guard !key.isEmpty else { return nil }
         if let sender = KnownSender(email: key) { return sender.tile }
         if let hit = cache.object(forKey: key as NSString) { return hit }
         if let failed = failedAt[key], Date().timeIntervalSince(failed) < 60 { return nil }
-        if let task = inFlight[key] { return await resolve(await task.value, key: key) }
+        if let task = inFlight[key] { return resolve(await task.value, key: key) }
 
-        let task = Task<Lookup, Never> {
+        let task = Task.detached(priority: .utility) { () -> Lookup in
             guard let url = Self.avatarURL(for: key) else { return .notFound }
             var request = URLRequest(url: url)
             request.timeoutInterval = 10
@@ -46,7 +64,7 @@ final class AvatarLoader {
             else { return .failed }
             switch status {
             case 200:
-                return NSImage(data: data).map(Lookup.found) ?? .notFound
+                return Self.decodedImage(from: data).map(Lookup.found) ?? .notFound
             case 404:
                 return .notFound
             default:
@@ -60,8 +78,10 @@ final class AvatarLoader {
     }
 
     private func resolve(_ lookup: Lookup, key: String) -> NSImage? {
+        if let hit = cache.object(forKey: key as NSString) { return hit }
         switch lookup {
-        case let .found(image):
+        case let .found(cgImage):
+            let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
             cache.setObject(image, forKey: key as NSString)
             return image
         case .notFound:
@@ -73,6 +93,23 @@ final class AvatarLoader {
             failedAt[key] = Date()
             return nil
         }
+    }
+
+    /// Eagerly decodes and downsamples avatar bytes off the main thread so Core Animation
+    /// does not stall decoding PNG/JPEG data during scrolling.
+    nonisolated static func decodedImage(from data: Data, maxPixelSize: Int = 96) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        if let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) {
+            return thumbnail
+        }
+        let imageOptions: [CFString: Any] = [kCGImageSourceShouldCacheImmediately: true]
+        return CGImageSourceCreateImageAtIndex(source, 0, imageOptions as CFDictionary)
     }
 
     nonisolated static func avatarURL(for email: String) -> URL? {
@@ -96,11 +133,17 @@ struct AvatarView: View {
 
     @AppStorage(showAvatarsStorageKey) private var showAvatars = true
     @State private var image: NSImage?
+    @State private var loadedEmail = ""
 
     var body: some View {
+        let displayedImage: NSImage? = if showAvatars {
+            AvatarLoader.shared.cachedImage(for: email) ?? (loadedEmail == email ? image : nil)
+        } else {
+            nil
+        }
         ZStack {
-            if let image, showAvatars {
-                Image(nsImage: image)
+            if let displayedImage {
+                Image(nsImage: displayedImage)
                     .resizable()
                     .scaledToFill()
             } else {
@@ -114,7 +157,18 @@ struct AvatarView: View {
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
         .task(id: "\(email)|\(showAvatars)") {
-            guard showAvatars, !email.isEmpty else { image = nil; return }
+            guard showAvatars, !email.isEmpty else {
+                image = nil
+                loadedEmail = ""
+                return
+            }
+            if let cached = AvatarLoader.shared.cachedImage(for: email) {
+                image = cached
+                loadedEmail = email
+                return
+            }
+            image = nil
+            loadedEmail = email
             image = await AvatarLoader.shared.image(for: email)
         }
     }
@@ -126,6 +180,7 @@ final class AvatarImageView: NSView {
     private let imageView = NSImageView()
     private let initialsLabel = NSTextField(labelWithString: "")
     private var email = ""
+    private var loadTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -153,6 +208,10 @@ final class AvatarImageView: NSView {
         ])
     }
 
+    deinit {
+        loadTask?.cancel()
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -162,28 +221,53 @@ final class AvatarImageView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    /// Whether the view is currently displaying an avatar image (rather than initials).
+    var hasLoadedImage: Bool {
+        !imageView.isHidden && imageView.image != nil
+    }
+
     func clear() {
+        loadTask?.cancel()
+        loadTask = nil
         email = ""
         imageView.image = nil
         imageView.isHidden = true
         initialsLabel.stringValue = ""
+        initialsLabel.isHidden = true
     }
 
     func configure(name: String, email: String) {
-        self.email = email
+        let showAvatars = UserDefaults.standard.object(forKey: showAvatarsStorageKey) as? Bool ?? true
+        let key = AvatarLoader.normalizedKey(for: email)
+
+        // Reuse the existing image in place when the recycled cell belongs to the same author.
+        if showAvatars, !key.isEmpty, self.email == key, imageView.image != nil, !imageView.isHidden {
+            return
+        }
+
+        loadTask?.cancel()
+        loadTask = nil
+        self.email = key
+
+        if showAvatars, !key.isEmpty, let cached = AvatarLoader.shared.cachedImage(for: key) {
+            if imageView.image !== cached {
+                imageView.image = cached
+            }
+            imageView.isHidden = false
+            initialsLabel.isHidden = true
+            return
+        }
+
         initialsLabel.stringValue = AvatarInitials.from(name)
         imageView.image = nil
         imageView.isHidden = true
         initialsLabel.isHidden = false
-        layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
 
-        let showAvatars = UserDefaults.standard.object(forKey: showAvatarsStorageKey) as? Bool ?? true
-        guard showAvatars, !email.isEmpty else { return }
-        let requested = email
-        Task { @MainActor [weak self] in
-            let image = await AvatarLoader.shared.image(for: requested)
+        guard showAvatars, !key.isEmpty else { return }
+        loadTask = Task { @MainActor [weak self] in
+            let image = await AvatarLoader.shared.image(for: key)
             // The cell may have been reused for another commit while the image loaded.
-            guard let self, self.email == requested, let image else { return }
+            guard !Task.isCancelled, let self, self.email == key, let image else { return }
             self.imageView.image = image
             self.imageView.isHidden = false
             self.initialsLabel.isHidden = true

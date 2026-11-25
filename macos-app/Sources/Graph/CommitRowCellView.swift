@@ -10,6 +10,14 @@ final class CommitRowCellView: NSTableCellView {
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
 
+    private static let summaryRegularFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
+    private static let summarySemiboldFont = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+    private static let summaryBoldFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
+    private static let columnRegularFont = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+    private static let columnBoldFont = NSFont.systemFont(ofSize: 11.5, weight: .bold)
+    private static let hashRegularFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    private static let hashBoldFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
+
     /// "Yesterday at 10:57 PM" for recent days, "Nov 22, 2026 at 6:38 PM" otherwise.
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -18,6 +26,27 @@ final class CommitRowCellView: NSTableCellView {
         f.doesRelativeDateFormatting = true
         return f
     }()
+
+    private static let formattedDateCache: NSCache<NSNumber, NSString> = {
+        let cache = NSCache<NSNumber, NSString>()
+        cache.countLimit = 2000
+        return cache
+    }()
+    private static var formattedDateCacheDay = Date()
+
+    private static func formattedDate(for timestamp: Int64) -> String {
+        if !Calendar.current.isDateInToday(formattedDateCacheDay) {
+            formattedDateCache.removeAllObjects()
+            formattedDateCacheDay = Date()
+        }
+        let key = NSNumber(value: timestamp)
+        if let cached = formattedDateCache.object(forKey: key) {
+            return cached as String
+        }
+        let formatted = dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+        formattedDateCache.setObject(formatted as NSString, forKey: key)
+        return formatted
+    }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -102,11 +131,11 @@ final class CommitRowCellView: NSTableCellView {
 
         if fileCount > 0 {
             summaryLabel.stringValue = "Working Changes (\(fileCount) modified)"
-            summaryLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+            summaryLabel.font = Self.summarySemiboldFont
             summaryLabel.textColor = .labelColor
         } else {
             summaryLabel.stringValue = "Working Changes (Clean)"
-            summaryLabel.font = .systemFont(ofSize: 12.5, weight: .regular)
+            summaryLabel.font = Self.summaryRegularFont
             summaryLabel.textColor = .secondaryLabelColor
         }
         authorLabel.stringValue = ""
@@ -198,7 +227,7 @@ final class CommitRowCellView: NSTableCellView {
         // The latest commit of the checked-out branch is bold.
         let isHeadCommit = commit.refs.contains { $0.isCurrent }
         summaryLabel.stringValue = commit.summary
-        summaryLabel.font = .systemFont(ofSize: 12.5, weight: isHeadCommit ? .bold : .regular)
+        summaryLabel.font = isHeadCommit ? Self.summaryBoldFont : Self.summaryRegularFont
         summaryLabel.textColor = commit.isRemoteOnly ? .secondaryLabelColor : .labelColor
 
         avatarView.isHidden = false
@@ -211,11 +240,10 @@ final class CommitRowCellView: NSTableCellView {
         hashLabel.stringValue = commit.shortOid
         hashLabel.textColor = columnColor
         timeLabel.textColor = columnColor
-        let columnWeight: NSFont.Weight = isHeadCommit ? .bold : .regular
-        authorLabel.font = .systemFont(ofSize: 11.5, weight: columnWeight)
-        hashLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: columnWeight)
-        timeLabel.font = .systemFont(ofSize: 11.5, weight: columnWeight)
-        let date = Date(timeIntervalSince1970: TimeInterval(commit.timestamp))
-        timeLabel.stringValue = Self.dateFormatter.string(from: date)
+        let columnFont = isHeadCommit ? Self.columnBoldFont : Self.columnRegularFont
+        authorLabel.font = columnFont
+        hashLabel.font = isHeadCommit ? Self.hashBoldFont : Self.hashRegularFont
+        timeLabel.font = columnFont
+        timeLabel.stringValue = Self.formattedDate(for: commit.timestamp)
     }
 }

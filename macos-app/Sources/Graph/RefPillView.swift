@@ -123,10 +123,25 @@ final class RefPillView: NSView {
         NSLayoutConstraint.activate(constraints)
     }
 
+    private var appliedIsDark: Bool?
+
+    private struct TintedIconKey: Hashable {
+        let icon: ObjectIdentifier
+        let r: UInt8
+        let g: UInt8
+        let b: UInt8
+        let a: UInt8
+    }
+
+    private static var tintedIconCache: [TintedIconKey: NSImage] = [:]
+
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        applyColors()
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if appliedIsDark != isDark {
+            applyColors(isDark: isDark)
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -135,6 +150,19 @@ final class RefPillView: NSView {
     }
 
     private static func tinted(_ template: NSImage, with color: NSColor) -> NSImage {
+        let byte: (CGFloat) -> UInt8 = { UInt8((min(max($0, 0), 1) * 255).rounded()) }
+        let cacheKey: TintedIconKey? = color.usingColorSpace(.sRGB).map { srgb in
+            TintedIconKey(
+                icon: ObjectIdentifier(template),
+                r: byte(srgb.redComponent),
+                g: byte(srgb.greenComponent),
+                b: byte(srgb.blueComponent),
+                a: byte(srgb.alphaComponent)
+            )
+        }
+        if let cacheKey, let cached = tintedIconCache[cacheKey] {
+            return cached
+        }
         let size = template.size
         let image = NSImage(size: size, flipped: false) { rect in
             template.draw(in: rect)
@@ -143,11 +171,19 @@ final class RefPillView: NSView {
             return true
         }
         image.isTemplate = false
+        if let cacheKey {
+            tintedIconCache[cacheKey] = image
+        }
         return image
     }
 
     private func applyColors() {
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        applyColors(isDark: isDark)
+    }
+
+    private func applyColors(isDark: Bool) {
+        appliedIsDark = isDark
 
         let baseColor: NSColor = switch badge.kind {
         case .localBranch, .remoteBranch: laneColor ?? .systemGray
