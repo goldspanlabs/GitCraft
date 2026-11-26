@@ -27,10 +27,12 @@ extension InstallType {
 enum UpdatePrompt {
     private static var isChecking = false
 
-    static func checkNow(checker: UpdateChecker = .shared) async {
+    static func checkNow(checker: UpdateChecker? = nil) async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
+        // Not a default argument: those are evaluated off the main actor, where `shared` isn't reachable.
+        let checker = checker ?? .shared
 
         let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         switch await checker.checkManually() {
