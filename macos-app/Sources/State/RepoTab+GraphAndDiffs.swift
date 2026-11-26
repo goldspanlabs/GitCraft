@@ -228,8 +228,8 @@ extension RepoTab {
     }
 
     func selectWorkingFile(_ file: FileChange) {
-        selectedFilePath = file.path
-        selectedFileStaged = file.staged
+        publish(file.path, to: \.selectedFilePath)
+        publish(file.staged, to: \.selectedFileStaged)
         loadWorkingDiff(path: file.path, staged: file.staged)
     }
 
@@ -278,8 +278,8 @@ extension RepoTab {
         } else if let firstStaged = stagedFiles.first {
             selectWorkingFile(firstStaged)
         } else {
-            selectedFilePath = nil
-            diffRows = []
+            publish(nil, to: \.selectedFilePath)
+            publish([], to: \.diffRows)
         }
     }
 
@@ -292,7 +292,7 @@ extension RepoTab {
                 }.value
                 guard self.session === session else { return }
                 if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
-                    diffRows = Self.displayRows(rows)
+                    publish(Self.displayRows(rows), to: \.diffRows)
                 }
             } catch {
                 guard self.session === session else { return }

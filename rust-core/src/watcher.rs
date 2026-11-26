@@ -1,6 +1,9 @@
+use crate::git_cli;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
+    collections::HashSet,
     fs,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -208,9 +211,34 @@ fn poll_until_stopped(
     }
 }
 
+/// Past this many changed files between two looks, they are not checked against the ignore
+/// rules: the checkout is simply reported as changed.
+const MAX_PENDING_FILES: usize = 20_000;
+
+/// True unless git ignores every one of `files`, so none can appear in `git status`. Tracked
+/// files are never ignored, whatever the rules say. Any doubt counts as a visible change.
+fn any_visible_to_git(worktree: &Path, files: &HashSet<PathBuf>) -> bool {
+    let mut input = Vec::new();
+    for file in files {
+        match file.strip_prefix(worktree) {
+            Ok(relative) if !relative.as_os_str().is_empty() => {
+                input.extend_from_slice(relative.as_os_str().as_bytes());
+                input.push(0);
+            }
+            _ => return true,
+        }
+    }
+    match git_cli::run_status_with_input(worktree, &["check-ignore", "--stdin", "-z"], input) {
+        // Exit status 0 lists the ignored paths; 1 means none are, and anything else is a failure.
+        Ok(output) if output.status.success() => output.stdout.matches('\0').count() < files.len(),
+        _ => true,
+    }
+}
+
 /// Watches the checkout (plus its gitdir, commondir, and any sibling worktrees)
 /// and raises:
-/// - `status_dirty` when the active checkout's working tree or index changes,
+/// - `status_dirty` when the active checkout's index or a working-tree file that git doesn't
+///   ignore changes,
 /// - `graph_dirty` when refs, HEAD, config, or worktree structure changes,
 /// - `worktrees_dirty` when an inactive sibling worktree's working tree or index changes.
 ///
@@ -246,6 +274,10 @@ pub fn spawn_dirty_watcher(
             Arc::clone(&flags.stopped),
         );
         let status_dirty = flags.status_dirty;
+        let callback_status_dirty = Arc::clone(&status_dirty);
+        // Changed working-tree files waiting to be checked against the ignore rules.
+        let pending = Arc::new(Mutex::new(HashSet::new()));
+        let cb_pending = Arc::clone(&pending);
         let graph_dirty = flags.graph_dirty;
         let worktrees_dirty = flags.worktrees_dirty;
         let stopped = flags.stopped;
@@ -258,10 +290,20 @@ pub fn spawn_dirty_watcher(
             for p in &event.paths {
                 match classify_path(p, &cb_worktree, &cb_git_dir, &cb_common_dir, &siblings) {
                     Change::Irrelevant => {}
-                    Change::Status => status_dirty.store(true, Ordering::Release),
+                    Change::Status => {
+                        let is_file = !p.starts_with(&cb_git_dir)
+                            && !p.starts_with(&cb_common_dir)
+                            && !p.to_string_lossy().contains("/.git/");
+                        match cb_pending.lock() {
+                            Ok(mut files) if is_file && files.len() < MAX_PENDING_FILES => {
+                                files.insert(p.clone());
+                            }
+                            _ => callback_status_dirty.store(true, Ordering::Release),
+                        }
+                    }
                     Change::Worktrees => worktrees_dirty.store(true, Ordering::Release),
                     Change::Graph => {
-                        status_dirty.store(true, Ordering::Release);
+                        callback_status_dirty.store(true, Ordering::Release);
                         graph_dirty.store(true, Ordering::Release);
                         cb_reconcile.store(true, Ordering::Release);
                     }
@@ -300,7 +342,18 @@ pub fn spawn_dirty_watcher(
                 }
                 ready.store(true, Ordering::Release);
             }
-            thread::sleep(Duration::from_millis(500));
+            let files = pending
+                .lock()
+                .map(|mut files| std::mem::take(&mut *files))
+                .unwrap_or_default();
+            // Nothing to find out while a change is already waiting to be picked up.
+            if !files.is_empty()
+                && !status_dirty.load(Ordering::Acquire)
+                && any_visible_to_git(&worktree, &files)
+            {
+                status_dirty.store(true, Ordering::Release);
+            }
+            thread::sleep(Duration::from_millis(250));
         }
     });
 }

@@ -59,16 +59,13 @@ pub fn working_tree_file(
                     )];
                     let mut hl = ext.map(highlight::LineHighlighter::new);
                     for (idx, line) in text.lines().enumerate() {
-                        let spans = hl
-                            .as_mut()
-                            .map(|h| h.highlight_line(line))
-                            .unwrap_or_default();
+                        let spans = highlight_code(line, hl.as_mut());
                         rows.push(DiffRow {
                             kind: "addition".into(),
                             text: format!("+{line}"),
                             old_line: None,
                             new_line: Some((idx + 1) as u32),
-                            spans: shift_spans(spans, 1),
+                            spans,
                         });
                     }
                     return Ok(rows);
@@ -190,12 +187,9 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
             ("context", None, None, None)
         };
 
-        let spans = match (code_slice, highlighter.as_mut()) {
-            (Some(code), Some(hl)) if !code.is_empty() && code.len() <= 512 => {
-                shift_spans(hl.highlight_line(code), 1)
-            }
-            _ => Vec::new(),
-        };
+        let spans = code_slice
+            .map(|code| highlight_code(code, highlighter.as_mut()))
+            .unwrap_or_default();
 
         rows.push(DiffRow {
             kind: kind.into(),
@@ -207,6 +201,23 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
     }
 
     Ok(rows)
+}
+
+/// Longer lines are shown plain: they are minified or generated, and highlighting them stalls
+/// the diff.
+const MAX_HIGHLIGHTED_LINE_BYTES: usize = 512;
+
+/// Highlights a line of code, with spans placed after the row's `+`, `-` or space marker.
+fn highlight_code(
+    code: &str,
+    highlighter: Option<&mut highlight::LineHighlighter>,
+) -> Vec<crate::StyleSpan> {
+    match highlighter {
+        Some(hl) if !code.is_empty() && code.len() <= MAX_HIGHLIGHTED_LINE_BYTES => {
+            shift_spans(hl.highlight_line(code), 1)
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn shift_spans(mut spans: Vec<crate::StyleSpan>, delta_utf16: u32) -> Vec<crate::StyleSpan> {
@@ -254,6 +265,21 @@ fn parse_hunk_start(line: &str) -> Option<HunkHeader> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_lines_of_untracked_files_are_not_highlighted() {
+        let dir = tempfile::tempdir().unwrap();
+        git_cli::run(dir.path(), &["init", "-q"]).unwrap();
+        let long = "var a=1;".repeat(100);
+        std::fs::write(dir.path().join("min.js"), format!("var b=2;\n{long}\n")).unwrap();
+
+        let rows = working_tree_file(dir.path(), Some("min.js"), false).unwrap();
+
+        assert!(!rows[1].spans.is_empty());
+        assert_eq!(rows[2].text, format!("+{long}"));
+        assert!(rows[2].spans.is_empty());
+    }
+
     #[test]
     fn very_long_diffs_are_truncated_with_a_notice() {
         let mut input = String::from("@@ -1,30000 +1,30000 @@\n");

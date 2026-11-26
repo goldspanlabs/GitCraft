@@ -259,22 +259,30 @@ pub fn list_branches(
         .map(|base| merged_local_refs(repo_path, base))
         .unwrap_or_default();
 
-    for (name, full_ref, local_oid, is_head) in local_entries {
-        let upstream_full = resolve_upstream_ref(&config, &name)
+    // The remote branch each local branch is compared against.
+    let upstream_of = |name: &str| -> Option<(String, gix::ObjectId)> {
+        resolve_upstream_ref(&config, name)
             .filter(|r| remote_oids.contains_key(r))
-            .or_else(|| {
-                let fallback = format!("refs/remotes/origin/{name}");
-                remote_oids.contains_key(&fallback).then_some(fallback)
-            });
+            .or_else(|| Some(format!("refs/remotes/origin/{name}")))
+            .and_then(|r| remote_oids.get(&r).map(|&oid| (r, oid)))
+    };
+    let any_diverged = local_entries.iter().any(|(name, _, local_oid, _)| {
+        upstream_of(name).is_some_and(|(_, up_oid)| up_oid != *local_oid)
+    });
+    let tracked = if any_diverged {
+        tracked_ahead_behind(repo_path)
+    } else {
+        HashMap::new()
+    };
 
-        let (ahead, behind) = if let Some(up_ref) = upstream_full {
-            if let Some(&up_oid) = remote_oids.get(&up_ref) {
-                compute_ahead_behind(&repo, local_oid, up_oid)
-            } else {
-                (0, 0)
-            }
-        } else {
-            (0, 0)
+    for (name, full_ref, local_oid, is_head) in local_entries {
+        let (ahead, behind) = match upstream_of(&name) {
+            Some((up_ref, up_oid)) if up_oid != local_oid => match tracked.get(&full_ref) {
+                Some((upstream, counts)) if *upstream == up_ref => *counts,
+                // Git has no upstream configured for it, or not the one compared here.
+                _ => compute_ahead_behind(&repo, local_oid, up_oid),
+            },
+            _ => (0, 0),
         };
 
         // The default branch itself is trivially "merged"; don't flag it.
@@ -461,14 +469,45 @@ fn merged_local_refs(repo_path: &Path, base: gix::ObjectId) -> HashSet<String> {
     .unwrap_or_default()
 }
 
+/// Each local branch's configured upstream with how far it is ahead and behind, by full branch
+/// name. One git call using the commit-graph, rather than two history walks per branch. Empty
+/// when git fails.
+fn tracked_ahead_behind(repo_path: &Path) -> HashMap<String, (String, (u32, u32))> {
+    let format = "--format=%(refname)%00%(upstream)%00%(upstream:track,nobracket)";
+    let Ok(out) = git_cli::run(repo_path, &["for-each-ref", format, "refs/heads"]) else {
+        return HashMap::new();
+    };
+    out.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\0');
+            let (name, upstream, track) = (fields.next()?, fields.next()?, fields.next()?);
+            if upstream.is_empty() {
+                return None;
+            }
+            Some((name.to_owned(), (upstream.to_owned(), parse_track(track)?)))
+        })
+        .collect()
+}
+
+/// Reads `ahead 1, behind 2` (either part may be missing; empty means level). `None` for
+/// anything else, such as `gone`.
+fn parse_track(track: &str) -> Option<(u32, u32)> {
+    let mut counts = (0, 0);
+    for part in track.split(", ").filter(|part| !part.is_empty()) {
+        match part.split_once(' ')? {
+            ("ahead", n) => counts.0 = n.parse().ok()?,
+            ("behind", n) => counts.1 = n.parse().ok()?,
+            _ => return None,
+        }
+    }
+    Some(counts)
+}
+
 fn compute_ahead_behind(
     repo: &gix::Repository,
     local_oid: gix::ObjectId,
     upstream_oid: gix::ObjectId,
 ) -> (u32, u32) {
-    if local_oid == upstream_oid {
-        return (0, 0);
-    }
     let ahead = repo
         .rev_walk([local_oid])
         .with_hidden([upstream_oid])

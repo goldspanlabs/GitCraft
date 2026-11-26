@@ -25,7 +25,16 @@ pub struct CommandOutput {
 
 /// Runs a read-only git command and returns its exit status, stdout, and stderr.
 pub fn run_status(repo: &Path, args: &[&str]) -> Result<CommandOutput, crate::GitCraftError> {
-    execute_raw(repo, args, READ_TIMEOUT, false)
+    execute_raw(repo, args, READ_TIMEOUT, false, None)
+}
+
+/// Like [`run_status`], with `input` written to the command's standard input.
+pub fn run_status_with_input(
+    repo: &Path,
+    args: &[&str],
+    input: Vec<u8>,
+) -> Result<CommandOutput, crate::GitCraftError> {
+    execute_raw(repo, args, READ_TIMEOUT, false, Some(input))
 }
 
 /// Runs a read-only git command and returns its stdout.
@@ -46,6 +55,7 @@ fn execute_raw(
     args: &[&str],
     timeout: Duration,
     mutating: bool,
+    input: Option<Vec<u8>>,
 ) -> Result<CommandOutput, crate::GitCraftError> {
     let path_env = augmented_path();
     let Some(git) = resolve_git(&path_env) else {
@@ -82,19 +92,29 @@ fn execute_raw(
         }
     }
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if !mutating {
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }
-    let child = command.spawn().map_err(|err| {
+    let mut child = command.spawn().map_err(|err| {
         if err.kind() == io::ErrorKind::NotFound && repo.exists() {
             crate::GitCraftError::GitNotFound
         } else {
             crate::GitCraftError::from(err)
         }
     })?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Written from another thread: git may fill its output pipe before it has read all of it.
+        thread::spawn(move || {
+            let _ = io::Write::write_all(&mut stdin, &input);
+        });
+    }
     let captured = wait_with_timeout(
         child,
         timeout,
@@ -114,7 +134,7 @@ fn execute(
     timeout: Duration,
     mutating: bool,
 ) -> Result<String, crate::GitCraftError> {
-    let output = execute_raw(repo, args, timeout, mutating)?;
+    let output = execute_raw(repo, args, timeout, mutating, None)?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
@@ -143,6 +163,12 @@ struct Captured {
     stderr: Vec<u8>,
 }
 
+/// How long to sleep before asking again whether a command has finished: an eighth of the time
+/// it has run, so quick commands are not held back and long ones don't keep waking the app.
+fn poll_delay(elapsed: Duration) -> Duration {
+    (elapsed / 8).clamp(Duration::from_micros(500), Duration::from_millis(15))
+}
+
 fn wait_with_timeout(
     mut child: Child,
     timeout: Duration,
@@ -164,7 +190,8 @@ fn wait_with_timeout(
     let stdout_rx = child.stdout.take().map(|p| drain(Box::new(p)));
     let stderr_rx = child.stderr.take().map(|p| drain(Box::new(p)));
 
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -180,7 +207,7 @@ fn wait_with_timeout(
                 ),
             ));
         }
-        thread::sleep(Duration::from_millis(15));
+        thread::sleep(poll_delay(started.elapsed()));
     };
 
     let collect = |rx: Option<mpsc::Receiver<Vec<u8>>>| -> Result<Vec<u8>, ()> {
@@ -305,6 +332,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         run(dir.path(), &["init", "-q"]).unwrap();
         dir
+    }
+
+    #[test]
+    fn quick_commands_are_checked_often_and_slow_ones_rarely() {
+        let ms = Duration::from_millis;
+        assert_eq!(poll_delay(Duration::ZERO), Duration::from_micros(500));
+        assert_eq!(poll_delay(ms(40)), ms(5));
+        assert_eq!(poll_delay(ms(10_000)), ms(15));
     }
 
     #[test]

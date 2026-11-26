@@ -27,6 +27,46 @@ final class FirstLoadTests: XCTestCase {
     }
 
     @MainActor
+    func testChangedFilesDoNotDependOnTheSidebarLists() async throws {
+        let repo = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try "new\n".write(to: repo.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+        // A stash ref naming a missing object: listing stashes fails, status still works.
+        try (String(repeating: "1", count: 40) + "\n")
+            .write(to: repo.appendingPathComponent(".git/refs/stash"), atomically: true, encoding: .utf8)
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.refresh()
+        try await waitForRefresh(of: tab)
+
+        XCTAssertNotNil(tab.errorMessage, "the stash list really did fail")
+        XCTAssertEqual(tab.unstagedFiles.map(\.path), ["new.txt"])
+    }
+
+    @MainActor
+    func testRereadingAnUnchangedStatusPublishesNothing() async throws {
+        let repo = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try "new\n".write(to: repo.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        tab.refresh()
+        try await waitForRefresh(of: tab)
+        // The selected file's diff and the worktree counts load on their own tasks.
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertFalse(tab.diffRows.isEmpty)
+
+        var publishes = 0
+        let observer = tab.objectWillChange.sink { publishes += 1 }
+        defer { observer.cancel() }
+        tab.refreshStatus()
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        XCTAssertEqual(publishes, 0)
+    }
+
+    @MainActor
     func testHistoryCountsAsLoadingUntilTheFirstRowsArrive() async throws {
         let repo = try makeRepo()
         defer { try? FileManager.default.removeItem(at: repo) }

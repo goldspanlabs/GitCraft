@@ -692,15 +692,21 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func applyStatus(_ status: RepoStatus) {
-        currentBranch = status.branch.components(separatedBy: "...").first ?? status.branch
-        isMerging = status.isMerging
-        isRebasing = status.isRebasing
-        isCherryPicking = status.isCherryPicking
-        isReverting = status.isReverting
-        hasConflicts = status.hasConflicts
-        if stagedFiles != status.stagedFiles { stagedFiles = status.stagedFiles }
-        if unstagedFiles != status.unstagedFiles { unstagedFiles = status.unstagedFiles }
+        publish(status.branch.components(separatedBy: "...").first ?? status.branch, to: \.currentBranch)
+        publish(status.isMerging, to: \.isMerging)
+        publish(status.isRebasing, to: \.isRebasing)
+        publish(status.isCherryPicking, to: \.isCherryPicking)
+        publish(status.isReverting, to: \.isReverting)
+        publish(status.hasConflicts, to: \.hasConflicts)
+        publish(status.stagedFiles, to: \.stagedFiles)
+        publish(status.unstagedFiles, to: \.unstagedFiles)
         syncActiveWorktreeDirtyCount()
+    }
+
+    /// Assigns only a different value: every assignment to a published property redraws the
+    /// views watching this tab, even when nothing changed.
+    func publish<Value: Equatable>(_ value: Value, to keyPath: ReferenceWritableKeyPath<RepoTab, Value>) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
 
     /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
@@ -818,24 +824,26 @@ final class RepoTab: ObservableObject, Identifiable {
                     refreshPending = true
                 }
 
-                let (status, branchList, tagList, stashList, remoteList) = try await (
-                    statusTask,
+                // The changed files don't wait for the sidebar lists either.
+                let status = try await statusTask
+                guard self.session === session else { return }
+                applyStatus(status)
+                if selectedCommit == nil {
+                    loadWorkingDiffSelection()
+                }
+
+                let (branchList, tagList, stashList, remoteList) = try await (
                     branchesTask,
                     tagsTask,
                     stashesTask,
                     remotesTask
                 )
                 guard self.session === session else { return }
-                applyStatus(status)
                 branches = branchList
                 // The core already returns tags newest-created first.
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
-
-                if selectedCommit == nil {
-                    loadWorkingDiffSelection()
-                }
             } catch {
                 guard self.session === session else { return }
                 // A failure after the history arrived leaves it showing as loaded.

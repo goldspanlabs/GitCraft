@@ -39,19 +39,20 @@ impl LineHighlighter {
         let Ok(parts) = self.inner.highlight_line(line, self.syntax_set) else {
             return Vec::new();
         };
-        let mut offset = 0usize;
+        // Counted as the tokens go by: re-reading the line up to each token is quadratic.
+        let mut start_utf16 = 0u32;
         let mut spans = Vec::with_capacity(parts.len());
         for (style, token) in parts {
-            let start_utf16 = line[..offset].encode_utf16().count();
+            let len_utf16 = token.encode_utf16().count() as u32;
             spans.push(StyleSpan {
-                start_utf16: start_utf16 as u32,
-                len_utf16: token.encode_utf16().count() as u32,
+                start_utf16,
+                len_utf16,
                 foreground: format!(
                     "#{:02x}{:02x}{:02x}",
                     style.foreground.r, style.foreground.g, style.foreground.b
                 ),
             });
-            offset += token.len();
+            start_utf16 += len_utf16;
         }
         spans
     }
@@ -79,5 +80,16 @@ mod tests {
     fn reports_utf16_lengths() {
         let spans = highlight("é\n", "txt");
         assert!(spans.iter().any(|span| span.len_utf16 > 0));
+    }
+
+    #[test]
+    fn span_starts_count_utf16_units_of_the_text_before_them() {
+        let spans = LineHighlighter::new("rs").highlight_line("let s = \"é😀\"; let n = 1;");
+        let mut expected = 0;
+        for span in &spans {
+            assert_eq!(span.start_utf16, expected);
+            expected += span.len_utf16;
+        }
+        assert_eq!(expected, 25);
     }
 }
