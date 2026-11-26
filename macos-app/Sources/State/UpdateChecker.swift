@@ -135,6 +135,10 @@ final class UpdateChecker: ObservableObject {
     private let defaults: UserDefaults
     private let now: () -> Date
     private let fetch: Fetch
+    /// Checks can overlap (a slow launch check and a manual one). Each is numbered when it
+    /// starts, so an answer older than one already used can be thrown away.
+    private var checksStarted = 0
+    private var newestAnswered = 0
 
     init(
         currentVersion: String?,
@@ -148,8 +152,10 @@ final class UpdateChecker: ObservableObject {
         self.fetch = fetch
     }
 
+    /// On unless turned off. Read with `bool(forKey:)`, which also understands the string a
+    /// launch argument supplies.
     private var checksAutomatically: Bool {
-        defaults.object(forKey: Self.automaticChecksKey) as? Bool ?? true
+        defaults.object(forKey: Self.automaticChecksKey) == nil || defaults.bool(forKey: Self.automaticChecksKey)
     }
 
     /// The launch-time check: honors the setting and skipped version, asks GitHub at most once
@@ -165,9 +171,13 @@ final class UpdateChecker: ObservableObject {
                 return
             }
         }
+        let check = startCheck()
         do {
-            offerUnlessSkipped(try await latestNewerRelease())
+            let update = try await latestNewerRelease()
+            guard use(update, from: check) else { return }
+            offerUnlessSkipped(update)
         } catch {
+            guard check > newestAnswered else { return }
             offerUnlessSkipped(rememberedUpdate())
         }
     }
@@ -175,9 +185,10 @@ final class UpdateChecker: ObservableObject {
     /// "Check for Updates…": always asks GitHub, includes a skipped version, and reports errors.
     func checkManually() async -> Outcome {
         guard currentVersion != nil else { return .unknownCurrentVersion }
+        let check = startCheck()
         do {
             let update = try await latestNewerRelease()
-            availableUpdate = update
+            if use(update, from: check) { availableUpdate = update }
             return update.map(Outcome.updateAvailable) ?? .upToDate
         } catch {
             return .failed(error.localizedDescription)
@@ -199,6 +210,19 @@ final class UpdateChecker: ObservableObject {
         var errorDescription: String? { "GitHub answered with HTTP status \(status)." }
     }
 
+    private func startCheck() -> Int {
+        checksStarted += 1
+        return checksStarted
+    }
+
+    /// Remembers what `check` found, unless a later check has already answered.
+    private func use(_ update: AppUpdate?, from check: Int) -> Bool {
+        guard check > newestAnswered else { return false }
+        newestAnswered = check
+        defaults.set(update.flatMap { try? JSONEncoder().encode($0) }, forKey: Self.foundUpdateKey)
+        return true
+    }
+
     private func latestNewerRelease() async throws -> AppUpdate? {
         // Recorded before the request, so a failing check is also limited to once a day.
         defaults.set(now(), forKey: Self.lastCheckKey)
@@ -208,9 +232,7 @@ final class UpdateChecker: ObservableObject {
         if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
             throw HTTPError(status: status)
         }
-        let update = try AppUpdate.decodeLatestRelease(data).flatMap { isNewer($0) ? $0 : nil }
-        defaults.set(update.flatMap { try? JSONEncoder().encode($0) }, forKey: Self.foundUpdateKey)
-        return update
+        return try AppUpdate.decodeLatestRelease(data).flatMap { isNewer($0) ? $0 : nil }
     }
 
     private func rememberedUpdate() -> AppUpdate? {

@@ -119,6 +119,24 @@ private actor FakeGitHub {
     }
 }
 
+/// A GitHub whose answers are released one at a time, to order overlapping checks.
+private actor HeldGitHub {
+    private var held: [CheckedContinuation<Data, Error>] = []
+
+    func fetch(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let data = try await withCheckedThrowingContinuation { held.append($0) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (data, response)
+    }
+
+    func waitForRequests(_ count: Int) async {
+        while held.count < count { await Task.yield() }
+    }
+
+    func answer(_ index: Int, with data: Data) { held[index].resume(returning: data) }
+    func fail(_ index: Int) { held[index].resume(throwing: URLError(.timedOut)) }
+}
+
 private final class FakeClock: @unchecked Sendable {
     var now = Date(timeIntervalSince1970: 1_800_000_000)
 }
@@ -139,13 +157,25 @@ final class UpdateCheckerTests: XCTestCase {
     }
 
     private func makeChecker(_ github: FakeGitHub, version: String? = "1.0.1") -> UpdateChecker {
+        makeChecker(version: version) { try await github.fetch($0) }
+    }
+
+    private func makeChecker(version: String? = "1.0.1", fetch: @escaping UpdateChecker.Fetch) -> UpdateChecker {
         let clock = clock
-        return UpdateChecker(
-            currentVersion: version,
-            defaults: defaults,
-            now: { clock.now },
-            fetch: { try await github.fetch($0) }
-        )
+        return UpdateChecker(currentVersion: version, defaults: defaults, now: { clock.now }, fetch: fetch)
+    }
+
+    /// Starts a launch check and then a manual one, leaving both waiting for GitHub:
+    /// request 0 is the automatic check, request 1 the manual one.
+    private func startOverlappingChecks(
+        _ github: HeldGitHub
+    ) async -> (checker: UpdateChecker, automatic: Task<Void, Never>, manual: Task<UpdateChecker.Outcome, Never>) {
+        let checker = makeChecker { try await github.fetch($0) }
+        let automatic = Task { await checker.checkAutomatically() }
+        await github.waitForRequests(1)
+        let manual = Task { await checker.checkManually() }
+        await github.waitForRequests(2)
+        return (checker, automatic, manual)
     }
 
     func testAutomaticCheckOffersANewerRelease() async {
@@ -265,6 +295,71 @@ final class UpdateCheckerTests: XCTestCase {
         count = await github.requests.count
         XCTAssertEqual(count, 1)
         XCTAssertEqual(outcome, .updateAvailable(try! XCTUnwrap(checker.availableUpdate)))
+    }
+
+    /// Launch arguments such as `-checkForUpdatesAutomatically NO` arrive as strings.
+    func testAutomaticChecksCanBeTurnedOffByALaunchArgument() async {
+        defaults.set("NO", forKey: UpdateChecker.automaticChecksKey)
+        let github = FakeGitHub()
+
+        await makeChecker(github).checkAutomatically()
+
+        let count = await github.requests.count
+        XCTAssertEqual(count, 0)
+    }
+
+    func testSlowAutomaticAnswerCannotBringBackADismissedBanner() async {
+        let github = HeldGitHub()
+        let (checker, automatic, manual) = await startOverlappingChecks(github)
+
+        await github.answer(1, with: releaseJSON(tag: "v1.3.0"))
+        _ = await manual.value
+        checker.dismiss()
+        await github.answer(0, with: releaseJSON(tag: "v1.2.0"))
+        await automatic.value
+
+        XCTAssertNil(checker.availableUpdate)
+    }
+
+    func testSlowAutomaticAnswerDoesNotReplaceTheNewerRememberedRelease() async {
+        let github = HeldGitHub()
+        let (checker, automatic, manual) = await startOverlappingChecks(github)
+
+        await github.answer(1, with: releaseJSON(tag: "v1.3.0"))
+        _ = await manual.value
+        await github.answer(0, with: releaseJSON(tag: "v1.2.0"))
+        await automatic.value
+
+        XCTAssertEqual(checker.availableUpdate?.version, "1.3.0")
+        let relaunched = makeChecker(FakeGitHub())
+        await relaunched.checkAutomatically()
+        XCTAssertEqual(relaunched.availableUpdate?.version, "1.3.0")
+    }
+
+    func testSlowAutomaticFailureLeavesTheManualResultAlone() async {
+        // A manual check shows a skipped version, which an automatic result would hide.
+        defaults.set("1.2.0", forKey: "skippedUpdateVersion")
+        let github = HeldGitHub()
+        let (checker, automatic, manual) = await startOverlappingChecks(github)
+
+        await github.answer(1, with: releaseJSON())
+        _ = await manual.value
+        await github.fail(0)
+        await automatic.value
+
+        XCTAssertEqual(checker.availableUpdate?.version, "1.2.0")
+    }
+
+    func testAutomaticAnswerStillCountsWhenTheManualCheckFails() async {
+        let github = HeldGitHub()
+        let (checker, automatic, manual) = await startOverlappingChecks(github)
+
+        await github.fail(1)
+        _ = await manual.value
+        await github.answer(0, with: releaseJSON())
+        await automatic.value
+
+        XCTAssertEqual(checker.availableUpdate?.version, "1.2.0")
     }
 
     func testFoundUpdateIsStillShownOnARelaunchWithinTheDay() async {

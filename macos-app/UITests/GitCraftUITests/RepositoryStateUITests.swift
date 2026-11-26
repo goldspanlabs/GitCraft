@@ -152,6 +152,7 @@ final class RepositoryStateUITests: XCTestCase {
 
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", folder.path, "-openRepositoryTabs", "()"]
+            + Self.noUpdateCheck
         app.launch()
 
         XCTAssertTrue(
@@ -164,7 +165,7 @@ final class RepositoryStateUITests: XCTestCase {
     func testTheWelcomeScreenShowsWhenNoTabsAreRestored() throws {
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         // No repository to open, and no saved tabs to restore.
-        app.launchArguments = ["-openRepositoryTabs", "()"]
+        app.launchArguments = ["-openRepositoryTabs", "()"] + Self.noUpdateCheck
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Welcome to GitCraft"].waitForExistence(timeout: 60), "the first window isn't blank")
@@ -199,6 +200,9 @@ final class RepositoryStateUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// For launches that open no fixture, so they don't ask GitHub for a newer release.
+    private static let noUpdateCheck = ["-checkForUpdatesAutomatically", "NO"]
 
     /// Checks out the history row whose summary is `summary` from its menu, picking `option` for
     /// local changes. `confirm` handles any second prompt. Checks that HEAD ends up detached at
