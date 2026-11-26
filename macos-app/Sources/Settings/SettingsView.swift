@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(BranchSpaceReplacement.storageKey) private var spaceReplacementRaw = BranchSpaceReplacement.dash.rawValue
     @AppStorage(CommitSortPreference.storageKey) private var commitSortRaw = CommitSortPreference.date.rawValue
     @AppStorage(PullStrategyPreference.storageKey) private var pullStrategyRaw = PullStrategyPreference.gitConfig.rawValue
+    @AppStorage(UpdateChecker.automaticChecksKey) private var checkForUpdates = true
 
     private var appearance: AppearancePreference {
         AppearancePreference(rawValue: appearanceRaw) ?? .system
@@ -92,6 +93,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Commits")
+            }
+
+            Section {
+                Toggle("Check for updates automatically", isOn: $checkForUpdates)
+                Text("Asks GitHub for the latest release when GitCraft opens, at most once a day. Nothing is downloaded or installed for you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Updates")
             }
         }
         .formStyle(.grouped)
