@@ -255,6 +255,8 @@ final class RepoTab: ObservableObject, Identifiable {
     /// page fetches that started against the old list can detect they are stale.
     var graphGeneration = 0
     var refreshInFlight = false
+    var refreshRun = 0
+    var refreshSession: RepoSession?
     var refreshPending = false
     /// Search replacements still fetching their first page. While > 0, `commits` and
     /// `searchQuery` describe different lists, so paging must wait.
@@ -734,16 +736,23 @@ final class RepoTab: ObservableObject, Identifiable {
     /// one alongside it: it queues one more pass after the current one, so a mutation's own
     /// refresh and the watcher's refresh of the same change collapse into one or two ordered
     /// passes instead of overlapping and finishing in either order.
+    /// A reload still running for a previous session (after the tab switched checkouts) doesn't
+    /// hold up the new one: only a reload of the current session absorbs the request.
     func refresh() {
-        refreshPending = true
-        guard !refreshInFlight else { return }
+        if refreshInFlight, refreshSession === session {
+            refreshPending = true
+            return
+        }
         runRefresh()
     }
 
     private func runRefresh() {
         refreshPending = false
         refreshInFlight = true
+        refreshRun += 1
+        let run = refreshRun
         let session = self.session
+        refreshSession = session
         let generation = graphGeneration
         let query = activeSearchQuery
         // Reload at least everything already loaded: refreshing only the first page would
@@ -756,8 +765,12 @@ final class RepoTab: ObservableObject, Identifiable {
 
         Task {
             defer {
-                refreshInFlight = false
-                if refreshPending { runRefresh() }
+                // A newer reload (for another session) owns the flags now.
+                if refreshRun == run {
+                    refreshInFlight = false
+                    refreshSession = nil
+                    if refreshPending { runRefresh() }
+                }
             }
             do {
                 async let statusTask = Task.detached { try session.status() }.value
@@ -784,14 +797,16 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
-                if generation == graphGeneration {
+                // Paging appends rows without changing the generation, so a list that grew past
+                // what this reload asked for also counts as changed.
+                if generation == graphGeneration, commits.count <= Int(limit) {
                     graphGeneration += 1
                     commits = graphRows
                     graphRevision = UUID()
                     hasMoreCommits = graphRows.count >= Int(limit)
                 } else {
-                    // A search or page load replaced the list while this reload ran, so these
-                    // rows may be for an older query. Reload once more instead of applying them.
+                    // A search or page load changed the list while this reload ran, so these rows
+                    // may be for an older query or too few. Reload once more instead of applying them.
                     refreshPending = true
                 }
 
