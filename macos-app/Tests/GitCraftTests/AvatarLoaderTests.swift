@@ -123,18 +123,15 @@ final class AvatarLoaderTests: XCTestCase {
         XCTAssertNotNil(AvatarLoader.avatarURL(for: "a-b-9@users.noreply.github.com"))
     }
 
-    func testAvatarsAreOffAndUnansweredUntilThePersonChooses() throws {
+    func testAvatarsAreOffUntilThePersonTurnsThemOn() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "gitcraft-avatar-pref-\(UUID().uuidString)"))
         XCTAssertFalse(AvatarPreference.isEnabled(defaults))
-        XCTAssertTrue(AvatarPreference.needsPrompt(defaults))
 
         defaults.set(true, forKey: showAvatarsStorageKey)
         XCTAssertTrue(AvatarPreference.isEnabled(defaults))
-        XCTAssertFalse(AvatarPreference.needsPrompt(defaults))
 
         defaults.set(false, forKey: showAvatarsStorageKey)
         XCTAssertFalse(AvatarPreference.isEnabled(defaults))
-        XCTAssertFalse(AvatarPreference.needsPrompt(defaults))
     }
 
     @MainActor

@@ -87,7 +87,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Show author avatars", isOn: $showAvatars)
-                Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address. When off, nothing is sent and no avatars are shown.")
+                Text("Looks up avatars on Gravatar and GitHub using a hash of the author's email address, or their GitHub username. When off, nothing is sent and no avatars are shown.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
