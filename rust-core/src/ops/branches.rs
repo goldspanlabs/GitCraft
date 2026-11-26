@@ -205,6 +205,16 @@ impl RepoSession {
     /// working tree or index (`git merge-tree --write-tree`, git 2.38+).
     pub fn merge_has_conflicts(&self, commit: String) -> Result<bool, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
+        // `merge-tree` exits 1 both for a conflict and for a name it can't resolve, so
+        // rule out the second first.
+        git_cli::run(
+            &self.path,
+            &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
+        )
+        .map_err(|_| {
+            let label = format_ref_display(&commit);
+            GitCraftError::message(format!("{label} is not a commit in this repository"))
+        })?;
         let out = git_cli::run_status(
             &self.path,
             &[
