@@ -142,6 +142,19 @@ final class WorkspaceState: ObservableObject {
             ensureWelcomeVisible()
             return false
         }
+        return presentOpenRepositoryPanel()
+    }
+
+    @discardableResult
+    func chooseRepositoryAsync() async -> Bool {
+        if await refreshGitAvailabilityAsync() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
+        return presentOpenRepositoryPanel()
+    }
+
+    private func presentOpenRepositoryPanel() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -155,6 +168,15 @@ final class WorkspaceState: ObservableObject {
     @discardableResult
     func openRepository(at url: URL) -> Bool {
         openRepository(at: url, validateGit: true)
+    }
+
+    @discardableResult
+    func openRepositoryAsync(at url: URL) async -> Bool {
+        if await refreshGitAvailabilityAsync() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
+        return openRepository(at: url, validateGit: false)
     }
 
     @discardableResult
@@ -227,9 +249,25 @@ final class WorkspaceState: ObservableObject {
     }
 
     func restoreClosedTab() {
+        guard refreshGitAvailability() == .available else {
+            ensureWelcomeVisible()
+            return
+        }
+        popAndRestoreClosedTab()
+    }
+
+    func restoreClosedTabAsync() async {
+        guard await refreshGitAvailabilityAsync() == .available else {
+            ensureWelcomeVisible()
+            return
+        }
+        popAndRestoreClosedTab()
+    }
+
+    private func popAndRestoreClosedTab() {
         while let path = closedTabPaths.popLast() {
             guard FileManager.default.fileExists(atPath: path) else { continue }
-            if openRepository(at: URL(fileURLWithPath: path)) {
+            if openRepository(at: URL(fileURLWithPath: path), validateGit: false) {
                 return
             }
         }

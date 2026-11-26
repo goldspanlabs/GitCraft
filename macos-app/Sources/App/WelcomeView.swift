@@ -41,7 +41,9 @@ struct WelcomeView: View {
                 )
             } else {
                 Button {
-                    if workspace.chooseRepository() { onOpened() }
+                    Task {
+                        if await workspace.chooseRepositoryAsync() { onOpened() }
+                    }
                 } label: {
                     Label("Open Repository…", systemImage: "folder.badge.plus")
                         .padding(.horizontal, 12)
@@ -62,7 +64,9 @@ struct WelcomeView: View {
                         ForEach(workspace.recentPaths, id: \.self) { path in
                             let url = URL(fileURLWithPath: path)
                             Button {
-                                if workspace.openRepository(at: url) { onOpened() }
+                                Task {
+                                    if await workspace.openRepositoryAsync(at: url) { onOpened() }
+                                }
                             } label: {
                                 HStack {
                                     Image(systemName: "folder")

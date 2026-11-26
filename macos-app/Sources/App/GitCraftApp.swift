@@ -68,9 +68,11 @@ struct RepoCommands: Commands {
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Tab") { workspace.openWelcome() }
                 .keyboardShortcut("t", modifiers: .command)
-            Button("Restore Closed Tab") { workspace.restoreClosedTab() }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
-                .disabled(workspace.closedTabPaths.isEmpty)
+            Button("Restore Closed Tab") {
+                Task { await workspace.restoreClosedTabAsync() }
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(workspace.closedTabPaths.isEmpty)
 
             Divider()
 
@@ -80,15 +82,17 @@ struct RepoCommands: Commands {
 
             Divider()
 
-            Button("Open…") { workspace.chooseRepository() }
-                .keyboardShortcut("o", modifiers: .command)
+            Button("Open…") {
+                Task { await workspace.chooseRepositoryAsync() }
+            }
+            .keyboardShortcut("o", modifiers: .command)
             Menu("Open Recent") {
                 if workspace.recentPaths.isEmpty {
                     Text("No Recent Repositories")
                 } else {
                     ForEach(workspace.recentPaths, id: \.self) { path in
                         Button(recentMenuLabel(for: path, among: workspace.recentPaths)) {
-                            workspace.openRepository(at: URL(fileURLWithPath: path))
+                            Task { await workspace.openRepositoryAsync(at: URL(fileURLWithPath: path)) }
                         }
                     }
                     Divider()

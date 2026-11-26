@@ -132,16 +132,30 @@ struct Captured {
 }
 
 fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Result<Captured> {
+    use std::sync::mpsc;
+
     // Drain both pipes on their own threads so a chatty child can't block on a full pipe.
     let drain = |mut pipe: Box<dyn Read + Send>| {
+        let (tx, rx) = mpsc::sync_channel(1);
         thread::spawn(move || {
             let mut buf = Vec::new();
             let _ = pipe.read_to_end(&mut buf);
-            buf
-        })
+            let _ = tx.send(buf);
+        });
+        rx
     };
-    let stdout = child.stdout.take().map(|p| drain(Box::new(p)));
-    let stderr = child.stderr.take().map(|p| drain(Box::new(p)));
+    let stdout_rx = child.stdout.take().map(|p| drain(Box::new(p)));
+    let stderr_rx = child.stderr.take().map(|p| drain(Box::new(p)));
+
+    let timeout_err = || {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "git {name} timed out after {} seconds and was stopped",
+                timeout.as_secs()
+            ),
+        )
+    };
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -151,24 +165,27 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "git {name} timed out after {} seconds and was stopped",
-                    timeout.as_secs()
-                ),
-            ));
+            return Err(timeout_err());
         }
         thread::sleep(Duration::from_millis(15));
     };
 
-    let collect = |handle: Option<thread::JoinHandle<Vec<u8>>>| {
-        handle.and_then(|h| h.join().ok()).unwrap_or_default()
+    let collect = |rx: Option<mpsc::Receiver<Vec<u8>>>| -> io::Result<Vec<u8>> {
+        let Some(rx) = rx else {
+            return Ok(Vec::new());
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(buf) => Ok(buf),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(Vec::new()),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(timeout_err()),
+        }
     };
+
     Ok(Captured {
         status,
-        stdout: collect(stdout),
-        stderr: collect(stderr),
+        stdout: collect(stdout_rx)?,
+        stderr: collect(stderr_rx)?,
     })
 }
 
@@ -330,7 +347,12 @@ mod tests {
 
         let slow_dir = tempfile::tempdir().unwrap();
         let slow_git = slow_dir.path().join("git");
-        std::fs::write(&slow_git, "#!/bin/sh\nsleep 30\n").unwrap();
+        let sleep_bin = if Path::new("/bin/sleep").exists() {
+            "/bin/sleep"
+        } else {
+            "/usr/bin/sleep"
+        };
+        std::fs::write(&slow_git, format!("#!/bin/sh\nexec {sleep_bin} 30\n")).unwrap();
         let mut slow_perms = std::fs::metadata(&slow_git).unwrap().permissions();
         slow_perms.set_mode(0o755);
         std::fs::set_permissions(&slow_git, slow_perms).unwrap();
@@ -340,7 +362,9 @@ mod tests {
             check_availability_in_path(slow_dir.path().as_os_str(), Duration::from_millis(200)),
             crate::GitAvailability::Missing
         );
-        assert!(started.elapsed() < Duration::from_secs(5));
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(180));
+        assert!(elapsed < Duration::from_secs(5));
     }
 
     #[test]
