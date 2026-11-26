@@ -13,6 +13,7 @@ final class WorkspaceState: ObservableObject {
 
     @Published var recentPaths: [String] = []
     @Published var openError: String?
+    @Published private(set) var gitAvailability: GitAvailability = .available
 
     /// Set to true by the app delegate when quitting, so windows closing during
     /// shutdown don't erase the saved list of open repositories.
@@ -27,7 +28,21 @@ final class WorkspaceState: ObservableObject {
     /// The repository shown in the frontmost GitCraft window.
     @Published private(set) var activeTab: RepoTab?
 
-    init() {
+    private let gitAvailabilityProvider: () -> GitAvailability
+
+    private static var uiTestGitAvailabilityOverride: GitAvailability? {
+        switch UserDefaults.standard.string(forKey: "UITestGitAvailability") {
+        case "missing": return .missing
+        case "needsCommandLineTools": return .needsCommandLineTools
+        case "available": return .available
+        default: return nil
+        }
+    }
+
+    init(gitAvailabilityProvider: @escaping () -> GitAvailability = {
+        WorkspaceState.uiTestGitAvailabilityOverride ?? checkGitAvailability()
+    }) {
+        self.gitAvailabilityProvider = gitAvailabilityProvider
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
         if let legacy = UserDefaults.standard.string(forKey: "recentRepository"),
            !recentPaths.contains(legacy)
@@ -61,6 +76,26 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
+    @discardableResult
+    func refreshGitAvailability() -> GitAvailability {
+        let status = gitAvailabilityProvider()
+        gitAvailability = status
+        return status
+    }
+
+    func installCommandLineTools() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["--install"]
+        try? process.run()
+    }
+
+    func openGitDownloadPage() {
+        if let url = URL(string: "https://git-scm.com/downloads/mac") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Reopens the repositories that were open when the app last quit.
     /// Returns true if it opened any.
     func restoreTabs() -> Bool {
@@ -74,6 +109,10 @@ final class WorkspaceState: ObservableObject {
 
     @discardableResult
     func chooseRepository() -> Bool {
+        if gitAvailability != .available, refreshGitAvailability() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -86,6 +125,10 @@ final class WorkspaceState: ObservableObject {
     /// Opens `url` in a new tab, or brings its existing tab to the front.
     @discardableResult
     func openRepository(at url: URL) -> Bool {
+        if gitAvailability != .available, refreshGitAvailability() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
         let resolvedPath = RepoTab.canonicalPath(for: url.path)
         let resolved = URL(fileURLWithPath: resolvedPath)
         if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
@@ -129,6 +172,15 @@ final class WorkspaceState: ObservableObject {
         let controller = WelcomeWindowController(workspace: self)
         welcomeControllers.append(controller)
         controller.showInTabs()
+    }
+
+    private func ensureWelcomeVisible() {
+        guard NSApp != nil else { return }
+        if let existing = welcomeControllers.first {
+            existing.window?.makeKeyAndOrderFront(nil)
+        } else {
+            openWelcome()
+        }
     }
 
     func windowClosed(_ controller: RepoWindowController) {

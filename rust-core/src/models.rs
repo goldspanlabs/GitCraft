@@ -7,6 +7,9 @@ pub enum GitCraftError {
     /// The operation didn't fail, but there's nothing for it to do; shown as a warning.
     #[error("{msg}")]
     Warning { msg: String },
+    /// The `git` executable could not be found in PATH or standard macOS locations.
+    #[error("Git is not installed or could not be found.")]
+    GitNotFound,
 }
 
 impl GitCraftError {
@@ -21,10 +24,23 @@ impl GitCraftError {
 
 impl From<io::Error> for GitCraftError {
     fn from(err: io::Error) -> Self {
-        Self::Message {
-            msg: err.to_string(),
+        if err.kind() == io::ErrorKind::NotFound {
+            Self::GitNotFound
+        } else {
+            Self::Message {
+                msg: err.to_string(),
+            }
         }
     }
+}
+
+/// Whether the `git` CLI is usable on this system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitAvailability {
+    Available,
+    Missing,
+    /// macOS `/usr/bin/git` shim is present, but Xcode Command Line Tools are not installed.
+    NeedsCommandLineTools,
 }
 
 /// Order in which the commit graph lists commits.

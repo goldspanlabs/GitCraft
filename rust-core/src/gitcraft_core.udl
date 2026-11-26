@@ -1,9 +1,18 @@
-namespace gitcraft_core {};
+namespace gitcraft_core {
+  GitAvailability check_git_availability();
+};
 
 [Error]
 interface GitCraftError {
   Message(string msg);
   Warning(string msg);
+  GitNotFound();
+};
+
+enum GitAvailability {
+  "Available",
+  "Missing",
+  "NeedsCommandLineTools"
 };
 
 enum CommitSort {

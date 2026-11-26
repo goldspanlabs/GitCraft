@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             return
         }
+        if workspace.refreshGitAvailability() != .available {
+            workspace.openWelcome()
+            return
+        }
         if !workspace.restoreTabs() {
             workspace.openWelcome()
         }

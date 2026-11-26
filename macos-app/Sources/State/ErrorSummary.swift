@@ -8,6 +8,8 @@ extension Error {
             switch error {
             case let .Message(msg), let .Warning(msg):
                 return msg.trimmingCharacters(in: .whitespacesAndNewlines)
+            case .GitNotFound:
+                return "Git is not installed or could not be found. Install Git or Xcode Command Line Tools, then try again."
             }
         }
         return localizedDescription
@@ -16,6 +18,12 @@ extension Error {
     /// True for core errors that report a no-op rather than a failure.
     var isWarning: Bool {
         if let error = self as? GitCraftError, case .Warning = error { return true }
+        return false
+    }
+
+    /// True when the `git` CLI executable could not be found.
+    var isGitNotFound: Bool {
+        if let error = self as? GitCraftError, case .GitNotFound = error { return true }
         return false
     }
 }

@@ -14,6 +14,11 @@ mod worktree;
 pub use models::*;
 pub use worktree::WorktreeInfo;
 
+/// Checks whether the `git` CLI is installed and runnable.
+pub fn check_git_availability() -> GitAvailability {
+    git_cli::check_availability()
+}
+
 use std::{
     collections::HashMap,
     path::PathBuf,

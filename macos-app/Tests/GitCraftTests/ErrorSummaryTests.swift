@@ -47,4 +47,10 @@ final class ErrorSummaryTests: XCTestCase {
         let error: Error = GitCraftError.Message(msg: "  fatal: bad ref\n")
         XCTAssertEqual(error.displayMessage, "fatal: bad ref")
     }
+
+    func testGitNotFoundShowsFriendlyMessage() {
+        let error: Error = GitCraftError.GitNotFound
+        XCTAssertTrue(error.isGitNotFound)
+        XCTAssertTrue(error.displayMessage.contains("Git is not installed"))
+    }
 }

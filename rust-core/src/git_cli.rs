@@ -159,6 +159,36 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
     })
 }
 
+/// Checks whether the `git` CLI is installed and runnable using the augmented PATH.
+pub fn check_availability() -> crate::GitAvailability {
+    check_availability_in_path(&augmented_path())
+}
+
+fn check_availability_in_path(path_env: &std::ffi::OsStr) -> crate::GitAvailability {
+    let output = Command::new("git")
+        .arg("--version")
+        .env("PATH", path_env)
+        .env("LC_MESSAGES", "C")
+        .env_remove("LANGUAGE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => crate::GitAvailability::Available,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+            if stderr.contains("xcode-select") || stderr.contains("developer tools") {
+                crate::GitAvailability::NeedsCommandLineTools
+            } else {
+                crate::GitAvailability::Missing
+            }
+        }
+        Err(_) => crate::GitAvailability::Missing,
+    }
+}
+
 /// A GUI app launched from Finder gets a minimal PATH, so tools used by hooks and
 /// credential helpers (Homebrew, /usr/local) would be missing. Append the usual
 /// locations after whatever is already there.
@@ -248,5 +278,43 @@ mod tests {
         let text = path.to_string_lossy();
         assert!(text.contains("/opt/homebrew/bin"));
         assert!(text.contains("/usr/local/bin"));
+    }
+
+    #[test]
+    fn availability_detects_present_missing_and_clt_stub() {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(check_availability(), crate::GitAvailability::Available);
+
+        let empty_dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            check_availability_in_path(empty_dir.path().as_os_str()),
+            crate::GitAvailability::Missing
+        );
+
+        let stub_dir = tempfile::tempdir().unwrap();
+        let fake_git = stub_dir.path().join("git");
+        std::fs::write(
+            &fake_git,
+            "#!/bin/sh\necho 'xcode-select: note: No developer tools were found' >&2\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&fake_git).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, perms).unwrap();
+
+        assert_eq!(
+            check_availability_in_path(stub_dir.path().as_os_str()),
+            crate::GitAvailability::NeedsCommandLineTools
+        );
+    }
+
+    #[test]
+    fn io_not_found_maps_to_git_not_found() {
+        let err = io::Error::new(io::ErrorKind::NotFound, "missing");
+        assert!(matches!(
+            crate::GitCraftError::from(err),
+            crate::GitCraftError::GitNotFound
+        ));
     }
 }
