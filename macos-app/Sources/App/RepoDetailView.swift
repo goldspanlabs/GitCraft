@@ -163,8 +163,10 @@ private struct RepoSheets: ViewModifier {
                     NewTagSheet(tab: tab, target: target)
                 case .newStash:
                     NewStashSheet(tab: tab)
-                case let .remotes(startsAdding):
-                    RemotesSheet(tab: tab, startsAdding: startsAdding)
+                case .addRemote:
+                    RemotesSheet(tab: tab, editing: nil)
+                case let .editRemote(remote):
+                    RemotesSheet(tab: tab, editing: remote)
                 }
             }
             .confirmationDialog(

@@ -1,165 +1,302 @@
 import SwiftUI
 
-struct RemotesSheet: View {
-    @ObservedObject var tab: RepoTab
-    let startsAdding: Bool
-    @Environment(\.dismiss) private var dismiss
-    @State private var newName = ""
-    @State private var newURL = ""
-    @State private var pendingRemoval: RemoteInfo?
-    @FocusState private var isNewNameFocused: Bool
+enum RemoteURLProtocol: String, CaseIterable, Equatable {
+    case https = "HTTPS"
+    case ssh = "SSH"
 
-    private var canAdd: Bool {
-        !newName.trimmingCharacters(in: .whitespaces).isEmpty
-            && !newURL.trimmingCharacters(in: .whitespaces).isEmpty
-            && !tab.isBusy
-    }
-
-    private func add() {
-        guard canAdd else { return }
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        let url = newURL.trimmingCharacters(in: .whitespaces)
-        tab.addRemote(name: name, url: url) {
-            newName = ""
-            newURL = ""
+    static func detect(from url: String) -> RemoteURLProtocol? {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+            return .https
         }
+        if trimmed.hasPrefix("ssh://") || isScpStyleSSH(trimmed) {
+            return .ssh
+        }
+        return nil
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Remotes")
-                .font(.headline)
+    private static func isScpStyleSSH(_ url: String) -> Bool {
+        guard !url.contains("://"),
+              let at = url.firstIndex(of: "@"),
+              let colon = url[at...].firstIndex(of: ":")
+        else { return false }
+        return colon > url.index(after: at)
+    }
 
-            if tab.remotes.isEmpty {
-                Text("This repository has no remotes.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+    func convert(_ url: String) -> String? {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch self {
+        case .https:
+            if trimmed.hasPrefix("https://") { return trimmed }
+            if trimmed.hasPrefix("http://") {
+                return "https://" + trimmed.dropFirst("http://".count)
+            }
+            if trimmed.hasPrefix("ssh://") {
+                var rest = String(trimmed.dropFirst("ssh://".count))
+                if let at = rest.firstIndex(of: "@") {
+                    rest = String(rest[rest.index(after: at)...])
+                }
+                return "https://" + rest
+            }
+            if Self.isScpStyleSSH(trimmed),
+               let at = trimmed.firstIndex(of: "@"),
+               let colon = trimmed[at...].firstIndex(of: ":")
+            {
+                let host = trimmed[trimmed.index(after: at)..<colon]
+                let path = trimmed[trimmed.index(after: colon)...]
+                return "https://\(host)/\(path)"
+            }
+            return nil
+        case .ssh:
+            if trimmed.hasPrefix("ssh://") || Self.isScpStyleSSH(trimmed) {
+                return trimmed
+            }
+            let withoutScheme: Substring
+            if trimmed.hasPrefix("https://") {
+                withoutScheme = trimmed.dropFirst("https://".count)
+            } else if trimmed.hasPrefix("http://") {
+                withoutScheme = trimmed.dropFirst("http://".count)
             } else {
-                VStack(spacing: 8) {
-                    ForEach(tab.remotes, id: \.name) { remote in
-                        RemoteEditRow(tab: tab, remote: remote) {
-                            pendingRemoval = remote
-                        }
-                        .id("\(remote.name)|\(remote.fetchUrl)")
-                    }
-                }
+                return nil
             }
-
-            Divider()
-
-            Text("Add Remote")
-                .font(.subheadline.weight(.semibold))
-            HStack(spacing: 8) {
-                TextField("Name (e.g. origin)", text: $newName)
-                    .frame(width: 140)
-                    .focused($isNewNameFocused)
-                TextField("URL", text: $newURL)
-                    .onSubmit(add)
-                Button("Add", action: add)
-                    .disabled(!canAdd)
+            guard let slash = withoutScheme.firstIndex(of: "/") else { return nil }
+            var host = withoutScheme[..<slash]
+            if let at = host.firstIndex(of: "@") {
+                host = host[host.index(after: at)...]
             }
-            .textFieldStyle(.roundedBorder)
-
-            if let error = tab.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
-
-            HStack {
-                Spacer()
-                Button("Done") {
-                    tab.errorMessage = nil
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 560)
-        .onAppear {
-            tab.errorMessage = nil
-            if startsAdding || tab.remotes.isEmpty {
-                isNewNameFocused = true
-            }
-        }
-        .confirmationDialog(
-            "Remove remote \"\(pendingRemoval?.name ?? "")\"?",
-            isPresented: Binding(
-                get: { pendingRemoval != nil },
-                set: { if !$0 { pendingRemoval = nil } }
-            ),
-            presenting: pendingRemoval
-        ) { remote in
-            Button("Remove", role: .destructive) {
-                tab.removeRemote(remote.name)
-                pendingRemoval = nil
-            }
-            Button("Cancel", role: .cancel) { pendingRemoval = nil }
-        } message: { _ in
-            Text("This removes the remote and its remote-tracking branches from this repository. Local branches are kept. Nothing is changed on the server.")
+            let path = withoutScheme[withoutScheme.index(after: slash)...]
+            guard !host.isEmpty, !path.isEmpty else { return nil }
+            return "git@\(host):\(path)"
         }
     }
 }
 
-private struct RemoteEditRow: View {
+struct RemotesSheet: View {
+    private enum Field: Hashable {
+        case name
+        case url
+    }
+
+    private enum ConnectionTestState: Equatable {
+        case idle
+        case testing
+        case success
+        case failure(String)
+    }
+
     @ObservedObject var tab: RepoTab
-    let remote: RemoteInfo
-    let onRemove: () -> Void
+    let editing: RemoteInfo?
+    @Environment(\.dismiss) private var dismiss
+
     @State private var name: String
     @State private var url: String
+    @State private var connectionTest: ConnectionTestState = .idle
+    @FocusState private var focusedField: Field?
 
-    init(tab: RepoTab, remote: RemoteInfo, onRemove: @escaping () -> Void) {
+    init(tab: RepoTab, editing: RemoteInfo?) {
         self.tab = tab
-        self.remote = remote
-        self.onRemove = onRemove
-        _name = State(initialValue: remote.name)
-        _url = State(initialValue: remote.fetchUrl)
+        self.editing = editing
+        let defaultName = tab.remotes.contains(where: { $0.name == "origin" }) ? "" : "origin"
+        _name = State(initialValue: editing?.name ?? defaultName)
+        _url = State(initialValue: editing?.fetchUrl ?? "")
     }
 
-    private var hasSeparatePushURL: Bool { remote.pushUrl != remote.fetchUrl }
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedURL: String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasSeparatePushURL: Bool {
+        guard let editing else { return false }
+        return editing.pushUrl != editing.fetchUrl
+    }
 
     private var isChanged: Bool {
-        name.trimmingCharacters(in: .whitespaces) != remote.name
-            || url.trimmingCharacters(in: .whitespaces) != remote.fetchUrl
+        guard let editing else { return true }
+        return trimmedName != editing.name || trimmedURL != editing.fetchUrl
     }
 
-    private var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !url.trimmingCharacters(in: .whitespaces).isEmpty
+    private var confirmDisabled: Bool {
+        trimmedName.isEmpty || trimmedURL.isEmpty || tab.isBusy || (editing != nil && !isChanged)
+    }
+
+    private var detectedProtocol: RemoteURLProtocol? {
+        RemoteURLProtocol.detect(from: url)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                TextField("Name", text: $name)
-                    .frame(width: 140)
-                TextField("URL", text: $url)
-                Button("Save") {
-                    tab.updateRemote(remote, newName: name, newURL: url)
+        ActionSheetLayout(
+            title: "Remote",
+            subtitle: editing == nil
+                ? "Add new remote repository reference"
+                : "Edit URL of the remote repository",
+            confirmLabel: editing == nil ? "Add New Remote" : "Edit",
+            confirmDisabled: confirmDisabled,
+            onCancel: {
+                tab.errorMessage = nil
+                dismiss()
+            },
+            onConfirm: submit
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        SheetFieldLabel("Remote:")
+
+                        SheetInputBox(isFocused: focusedField == .name) {
+                            TextField("origin", text: $name)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13))
+                                .focused($focusedField, equals: .name)
+                        }
+                        .frame(minWidth: 400, maxWidth: .infinity)
+                    }
+
+                    GridRow(alignment: .top) {
+                        SheetFieldLabel("Repository URL:")
+                            .padding(.top, 5)
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            SheetInputBox(isFocused: focusedField == .url) {
+                                Image(systemName: "link")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+
+                                TextField("Git Repository URL", text: $url)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13))
+                                    .focused($focusedField, equals: .url)
+                                    .onSubmit(submit)
+                                    .onChange(of: url) { _, _ in
+                                        if connectionTest != .idle {
+                                            connectionTest = .idle
+                                        }
+                                    }
+
+                                if let protocolKind = detectedProtocol {
+                                    Menu {
+                                        ForEach(RemoteURLProtocol.allCases, id: \.self) { kind in
+                                            Button(kind.rawValue) {
+                                                if let converted = kind.convert(url) {
+                                                    url = converted
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        Text(protocolKind.rawValue)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .fixedSize()
+                                }
+                            }
+                            .frame(minWidth: 400, maxWidth: .infinity)
+
+                            testConnectionRow
+                        }
+                    }
                 }
-                .disabled(!isChanged || !isValid || tab.isBusy)
-                Button {
-                    tab.fetchRemote(remote.name)
-                } label: {
-                    Image(systemName: "arrow.down.circle")
+                .padding(.top, 2)
+
+                if let editing, hasSeparatePushURL {
+                    Text("Push URL (\(editing.pushUrl)) is set separately; saving replaces both URLs.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(width: 480, alignment: .leading)
                 }
-                .help("Fetch \(remote.name) (and prune deleted branches)")
-                .disabled(tab.isBusy)
-                Button(role: .destructive, action: onRemove) {
-                    Image(systemName: "trash")
+
+                if let error = tab.errorMessage {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 480, alignment: .leading)
                 }
-                .help("Remove remote")
-                .disabled(tab.isBusy)
             }
-            .textFieldStyle(.roundedBorder)
-            if hasSeparatePushURL {
-                Text("Push URL: \(remote.pushUrl) (set separately; Save replaces both URLs)")
-                    .font(.caption2)
+        }
+        .onAppear {
+            tab.errorMessage = nil
+            focusedField = .name
+        }
+    }
+
+    @ViewBuilder
+    private var testConnectionRow: some View {
+        switch connectionTest {
+        case .idle:
+            Button(action: runConnectionTest) {
+                Text("Test Connection")
+                    .font(.system(size: 12.5))
+                    .underline()
+                    .foregroundStyle(trimmedURL.isEmpty ? Color.secondary : Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(trimmedURL.isEmpty)
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Testing connection…")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            }
+        case .success:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.system(size: 12))
+                Text("Connection succeeded")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+        case let .failure(message):
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.system(size: 12))
+                    .padding(.top, 1)
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 356, alignment: .leading)
+            }
+        }
+    }
+
+    private func runConnectionTest() {
+        let targetURL = trimmedURL
+        guard !targetURL.isEmpty else { return }
+        connectionTest = .testing
+        Task {
+            do {
+                try await tab.testRemoteConnection(url: targetURL)
+                if trimmedURL == targetURL {
+                    connectionTest = .success
+                }
+            } catch {
+                if trimmedURL == targetURL {
+                    connectionTest = .failure(error.displayMessage)
+                }
+            }
+        }
+    }
+
+    private func submit() {
+        guard !confirmDisabled else { return }
+        if let editing {
+            tab.updateRemote(editing, newName: trimmedName, newURL: trimmedURL)
+            dismiss()
+        } else {
+            tab.addRemote(name: trimmedName, url: trimmedURL) {
+                dismiss()
             }
         }
     }

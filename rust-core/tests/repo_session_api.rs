@@ -795,6 +795,24 @@ fn remote_management_rejects_bad_input() {
 }
 
 #[test]
+fn test_remote_connection_succeeds_for_valid_repo_and_fails_for_missing_path() {
+    let remote_dir = init_repo_with_commit();
+    let local_dir = init_repo_with_commit();
+    let session = open(local_dir.path());
+
+    let valid_url = remote_dir.path().to_string_lossy().into_owned();
+    assert!(session.test_remote_connection(valid_url).is_ok());
+
+    let missing = local_dir.path().join("does-not-exist.git");
+    assert!(session
+        .test_remote_connection(missing.to_string_lossy().into_owned())
+        .is_err());
+    assert!(session
+        .test_remote_connection("--upload-pack=evil".into())
+        .is_err());
+}
+
+#[test]
 fn fetch_remote_targets_only_the_named_remote() {
     let origin = init_repo_with_commit();
     let clone_parent = tempfile::tempdir().unwrap();

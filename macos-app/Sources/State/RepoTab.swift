@@ -44,7 +44,8 @@ final class RepoTab: ObservableObject, Identifiable {
         case mergeCommit(oid: String)
         case newTag(target: String?)
         case newStash
-        case remotes(startsAdding: Bool)
+        case addRemote
+        case editRemote(RemoteInfo)
 
         var id: String {
             switch self {
@@ -54,7 +55,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .mergeCommit(oid): return "merge-commit-\(oid)"
             case let .newTag(target): return "new-tag-\(target ?? "head")"
             case .newStash: return "new-stash"
-            case let .remotes(startsAdding): return "remotes-\(startsAdding)"
+            case .addRemote: return "add-remote"
+            case let .editRemote(remote): return "edit-remote-\(remote.name)"
             }
         }
     }
@@ -64,6 +66,7 @@ final class RepoTab: ObservableObject, Identifiable {
         case deleteBranch(name: String, force: Bool)
         case forceDeleteBranch(name: String)
         case deleteRemoteBranch(name: String)
+        case removeRemote(name: String)
         case deleteTag(name: String, deleteRemote: Bool)
         case removeWorktree(path: String, label: String, isActive: Bool)
         case forceRemoveWorktree(path: String, label: String, isActive: Bool)
@@ -81,6 +84,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteBranch(name, force): return "del-branch-\(name)-\(force)"
             case let .forceDeleteBranch(name): return "force-del-branch-\(name)"
             case let .deleteRemoteBranch(name): return "del-remote-branch-\(name)"
+            case let .removeRemote(name): return "remove-remote-\(name)"
             case let .deleteTag(name, remote): return "del-tag-\(name)-\(remote)"
             case let .removeWorktree(path, _, _): return "remove-worktree-\(path)"
             case let .forceRemoveWorktree(path, _, _): return "force-remove-worktree-\(path)"
@@ -100,6 +104,7 @@ final class RepoTab: ObservableObject, Identifiable {
             case let .deleteBranch(name, _): return "Delete branch \"\(name)\"?"
             case let .forceDeleteBranch(name): return "Branch \"\(name)\" isn't merged"
             case let .deleteRemoteBranch(name): return "Delete remote branch \"\(name)\"?"
+            case let .removeRemote(name): return "Remove remote \"\(name)\"?"
             case let .deleteTag(name, remote):
                 return remote ? "Delete tag \"\(name)\" locally and from remote?" : "Delete local tag \"\(name)\"?"
             case let .removeWorktree(_, label, _): return "Remove worktree \"\(label)\"?"
@@ -124,6 +129,8 @@ final class RepoTab: ObservableObject, Identifiable {
                 return "It has commits that aren't in the checked-out branch. Deleting it removes the branch name, and those commits are lost unless they exist elsewhere. Git can often recover them from the reflog for a while."
             case .deleteRemoteBranch:
                 return "This will delete the branch from the remote repository. The local branch of the same name, if any, is kept."
+            case .removeRemote:
+                return "This removes the remote and its remote-tracking branches from this repository. Local branches are kept. Nothing is changed on the server."
             case let .deleteTag(_, remote):
                 return remote
                     ? "This will delete the tag locally and push the deletion to the remote repository."
@@ -159,6 +166,7 @@ final class RepoTab: ObservableObject, Identifiable {
             switch self {
             case .discardFile: return "Discard"
             case .deleteBranch, .deleteRemoteBranch, .deleteTag: return "Delete"
+            case .removeRemote: return "Remove"
             case .forceDeleteBranch: return "Force Delete"
             case .removeWorktree: return "Remove"
             case .forceRemoveWorktree: return "Force Remove"
@@ -408,8 +416,12 @@ final class RepoTab: ObservableObject, Identifiable {
         activeSheet = .newStash
     }
 
-    func presentRemotes(startsAdding: Bool) {
-        activeSheet = .remotes(startsAdding: startsAdding)
+    func presentAddRemote() {
+        activeSheet = .addRemote
+    }
+
+    func presentEditRemote(_ remote: RemoteInfo) {
+        activeSheet = .editRemote(remote)
     }
 
     // MARK: - Watcher & Refresh

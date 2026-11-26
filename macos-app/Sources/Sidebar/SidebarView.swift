@@ -55,6 +55,32 @@ struct SidebarView: View {
         }
     }
 
+    private func remoteContextMenuEntries(for remote: RemoteInfo) -> [MenuEntry] {
+        let displayName = remote.name == "origin" ? "Origin" : remote.name
+        let autoFetchEnabled = AutoFetchInterval.currentMinutes > 0
+        return [
+            .item("Fetch \(remote.name)", enabled: !tab.isBusy) {
+                tab.fetchRemote(remote.name)
+            },
+            .item("Edit \(remote.name)", enabled: !tab.isBusy) {
+                tab.presentEditRemote(remote)
+            },
+            .item("Delete \(remote.name)", enabled: !tab.isBusy) {
+                tab.pendingConfirmation = .removeRemote(name: remote.name)
+            },
+            .separator,
+            .item("Fetch \(displayName) Automatically", checked: autoFetchEnabled) {
+                let next = autoFetchEnabled
+                    ? AutoFetchInterval.off.rawValue
+                    : AutoFetchInterval.fiveMinutes.rawValue
+                UserDefaults.standard.set(next, forKey: AutoFetchInterval.storageKey)
+            },
+            .item("Add New Remote", enabled: !tab.isBusy) {
+                tab.presentAddRemote()
+            },
+        ]
+    }
+
     var body: some View {
         List {
             Section(isExpanded: $isLocalBranchesExpanded) {
@@ -117,6 +143,12 @@ struct SidebarView: View {
                             ) {
                                 toggleFolder(folderID)
                             }
+                            .nativeContextMenu {
+                                guard row.depth == 0,
+                                      let remote = tab.remotes.first(where: { $0.name == name })
+                                else { return [] }
+                                return remoteContextMenuEntries(for: remote)
+                            }
                         case let .branch(branch, leafName):
                             RemoteBranchRowView(
                                 tab: tab,
@@ -129,23 +161,11 @@ struct SidebarView: View {
                 }
             } header: {
                 SectionHeaderLabel(title: "REMOTES") {
-                    var entries: [MenuEntry] = [
-                        .item("Add Remote…") {
-                            tab.presentRemotes(startsAdding: true)
-                        },
-                        .item("Manage Remotes…", enabled: !tab.remotes.isEmpty) {
-                            tab.presentRemotes(startsAdding: false)
+                    [
+                        .item("Add Remote", enabled: !tab.isBusy) {
+                            tab.presentAddRemote()
                         },
                     ]
-                    if !tab.remotes.isEmpty {
-                        entries.append(.separator)
-                        for remote in tab.remotes {
-                            entries.append(.item("Fetch \(remote.name)", enabled: !tab.isBusy) {
-                                tab.fetchRemote(remote.name)
-                            })
-                        }
-                    }
-                    return entries
                 }
             }
 

@@ -38,4 +38,34 @@ final class RemoteHostTests: XCTestCase {
             XCTAssertNotNil(host.icon, "\(host)")
         }
     }
+
+    func testRemoteURLProtocolDetectionAndConversion() {
+        XCTAssertEqual(
+            RemoteURLProtocol.detect(from: "https://github.com/goldspanlabs/GitCraft.git"),
+            .https
+        )
+        XCTAssertEqual(
+            RemoteURLProtocol.detect(from: "git@github.com:goldspanlabs/GitCraft.git"),
+            .ssh
+        )
+        XCTAssertEqual(
+            RemoteURLProtocol.detect(from: "ssh://git@github.com/goldspanlabs/GitCraft.git"),
+            .ssh
+        )
+        XCTAssertNil(RemoteURLProtocol.detect(from: "/tmp/local-bare.git"))
+
+        XCTAssertEqual(
+            RemoteURLProtocol.ssh.convert("https://github.com/goldspanlabs/GitCraft.git"),
+            "git@github.com:goldspanlabs/GitCraft.git"
+        )
+        XCTAssertEqual(
+            RemoteURLProtocol.https.convert("git@github.com:goldspanlabs/GitCraft.git"),
+            "https://github.com/goldspanlabs/GitCraft.git"
+        )
+        XCTAssertEqual(
+            RemoteURLProtocol.https.convert("ssh://git@gitlab.com/team/app.git"),
+            "https://gitlab.com/team/app.git"
+        )
+        XCTAssertNil(RemoteURLProtocol.ssh.convert("/tmp/local-bare.git"))
+    }
 }

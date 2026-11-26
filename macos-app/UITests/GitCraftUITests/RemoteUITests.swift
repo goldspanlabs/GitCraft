@@ -179,6 +179,73 @@ final class RemoteUITests: XCTestCase {
         XCTAssertEqual(try fixture.commitID("HEAD"), headBefore)
     }
 
+    // MARK: Remote modal & context menus
+
+    func testRemotesHeaderMenuAddsRemoteAndTestsConnection() throws {
+        let fixture = try FixtureRepository.make(bareRemote: true)
+        let remotePath = fixture.remotePath
+        try fixture.git(["remote", "remove", "origin"])
+        try launch(fixture: fixture)
+
+        XCTAssertTrue(app.staticTexts["LOCAL BRANCHES"].waitForExistence(timeout: 60))
+        let remotesHeader = app.staticTexts["REMOTES"]
+        XCTAssertTrue(remotesHeader.waitForExistence(timeout: 10))
+        rightClick(remotesHeader)
+
+        let addItem = app.menuItems["Add Remote"]
+        XCTAssertTrue(addItem.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.menuItems["Manage Remotes…"].exists)
+        addItem.click()
+
+        XCTAssertTrue(app.staticTexts["Add new remote repository reference"].waitForExistence(timeout: 10))
+        let urlField = app.textFields["Git Repository URL"]
+        XCTAssertTrue(urlField.waitForExistence(timeout: 10))
+        urlField.click()
+        urlField.typeText(remotePath)
+
+        app.buttons["Test Connection"].click()
+        XCTAssertTrue(app.staticTexts["Connection succeeded"].waitForExistence(timeout: 20))
+
+        app.buttons["Add New Remote"].click()
+        XCTAssertTrue(
+            waitUntil(timeout: 20) { (try? fixture.git(["remote"]))?.contains("origin") == true },
+            "adding via the modal records the remote"
+        )
+    }
+
+    func testRemoteRowContextMenuItemsAndEditDeleteFlow() throws {
+        let fixture = try FixtureRepository.make(twoBranches: true, bareRemote: true)
+        try launch(fixture: fixture)
+
+        let originFolder = app.staticTexts["origin"].firstMatch
+        XCTAssertTrue(originFolder.waitForExistence(timeout: 60))
+        rightClick(originFolder)
+
+        XCTAssertTrue(app.menuItems["Fetch origin"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.menuItems["Edit origin"].exists)
+        XCTAssertTrue(app.menuItems["Delete origin"].exists)
+        XCTAssertTrue(app.menuItems["Fetch Origin Automatically"].exists)
+        XCTAssertTrue(app.menuItems["Add New Remote"].exists)
+
+        app.menuItems["Edit origin"].click()
+        XCTAssertTrue(app.staticTexts["Edit URL of the remote repository"].waitForExistence(timeout: 10))
+        let editButton = app.buttons["Edit"]
+        XCTAssertTrue(editButton.exists)
+        XCTAssertFalse(editButton.isEnabled, "Edit stays disabled until a field changes")
+        app.buttons["Cancel"].click()
+
+        rightClick(originFolder)
+        app.menuItems["Delete origin"].click()
+        let confirmRemove = app.sheets.buttons["Remove"]
+        XCTAssertTrue(confirmRemove.waitForExistence(timeout: 10))
+        confirmRemove.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 20) { (try? fixture.git(["remote"])) == "" },
+            "confirming Delete origin removes the remote"
+        )
+    }
+
     // MARK: Helpers
 
     private func launch(fixture: FixtureRepository) throws {

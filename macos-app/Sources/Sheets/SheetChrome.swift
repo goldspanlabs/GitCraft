@@ -105,3 +105,48 @@ extension View {
         }
     }
 }
+
+/// Right-aligned single-line field label for `Grid`-based action sheets.
+struct SheetFieldLabel: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13))
+            .lineLimit(1)
+            .fixedSize()
+            .gridColumnAlignment(.trailing)
+    }
+}
+
+/// Rounded text-input container with focus ring used across action sheets.
+struct SheetInputBox<Content: View>: View {
+    let isFocused: Bool
+    var verticalPadding: CGFloat = 5
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 6) {
+            content()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, verticalPadding)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(
+                    isFocused
+                        ? Color.accentColor.opacity(0.65)
+                        : Color(nsColor: .separatorColor),
+                    lineWidth: isFocused ? 2.5 : 1
+                )
+        )
+    }
+}

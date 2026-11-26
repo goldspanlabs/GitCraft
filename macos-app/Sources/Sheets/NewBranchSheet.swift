@@ -39,9 +39,7 @@ struct NewBranchSheet: View {
         ) {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
-                    Text("Create branch at:")
-                        .font(.system(size: 13))
-                        .gridColumnAlignment(.trailing)
+                    SheetFieldLabel("Create branch at:")
 
                     HStack(spacing: 5) {
                         PhosphorIcon(glyph: .branch)
@@ -54,11 +52,10 @@ struct NewBranchSheet: View {
                 }
 
                 GridRow {
-                    Text("Branch name:")
-                        .font(.system(size: 13))
+                    SheetFieldLabel("Branch name:")
 
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
+                        SheetInputBox(isFocused: isBranchNameFocused, verticalPadding: 4) {
                             PhosphorIcon(glyph: .branch)
                                 .foregroundStyle(.secondary)
                             TextField("Enter Branch Name", text: $branchName)
@@ -74,22 +71,7 @@ struct NewBranchSheet: View {
                                     }
                                 }
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .frame(width: 310)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(nsColor: .textBackgroundColor))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(
-                                    isBranchNameFocused
-                                        ? Color.accentColor.opacity(0.65)
-                                        : Color(nsColor: .separatorColor),
-                                    lineWidth: isBranchNameFocused ? 2.5 : 1
-                                )
-                        )
+                        .frame(minWidth: 310, maxWidth: .infinity)
 
                         Toggle("Check out after create", isOn: $checkout)
                             .font(.system(size: 13))
@@ -97,8 +79,7 @@ struct NewBranchSheet: View {
                 }
 
                 GridRow(alignment: .top) {
-                    Text("Local changes:")
-                        .font(.system(size: 13))
+                    SheetFieldLabel("Local changes:")
                         .foregroundStyle(checkout ? .primary : .tertiary)
 
                     LocalChangesPicker(selection: $localChanges, disabled: !checkout)

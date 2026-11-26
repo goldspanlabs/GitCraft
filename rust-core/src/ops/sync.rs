@@ -60,6 +60,11 @@ impl RepoSession {
         self.mutate(&["remote", "remove", &name])
     }
 
+    pub fn test_remote_connection(&self, url: String) -> Result<(), GitCraftError> {
+        let url = validate_remote_arg(&url)?;
+        git_cli::run(&self.path, &["ls-remote", "--heads", &url]).map(|_| ())
+    }
+
     fn fetch_impl(&self, remote: Option<&str>, include_tags: bool) -> Result<(), GitCraftError> {
         // `--no-write-fetch-head` keeps this unlocked fetch from rewriting FETCH_HEAD under a
         // `pull` that is reading it (nothing here uses FETCH_HEAD).

@@ -94,6 +94,13 @@ extension RepoTab {
         performMutation { try $0.fetchRemote(name: name, includeTags: includeTags) }
     }
 
+    func testRemoteConnection(url: String) async throws {
+        let session = self.session
+        try await Task.detached(priority: .userInitiated) {
+            try session.testRemoteConnection(url: url)
+        }.value
+    }
+
     // MARK: - Commit & Amend
 
     /// Turns Amend on or off. Turning it on fills an empty message with HEAD's message.
@@ -307,6 +314,8 @@ extension RepoTab {
             deleteBranch(name, force: true)
         case let .deleteRemoteBranch(name):
             deleteRemoteBranch(name)
+        case let .removeRemote(name):
+            removeRemote(name)
         case let .deleteTag(name, deleteRemote):
             deleteTag(name, deleteRemote: deleteRemote)
         case let .removeWorktree(path, label, _):

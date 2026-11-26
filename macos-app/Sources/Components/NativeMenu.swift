@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Declarative entry for building AppKit `NSMenu`s without selector boilerplate.
 enum MenuEntry {
-    case item(String, enabled: Bool = true, action: () -> Void)
+    case item(String, enabled: Bool = true, checked: Bool = false, action: () -> Void)
     case submenu(String, [MenuEntry])
     case separator
 }
@@ -14,12 +14,13 @@ extension NSMenu {
         autoenablesItems = false
         for entry in entries {
             switch entry {
-            case let .item(title, enabled, action):
+            case let .item(title, enabled, checked, action):
                 let item = NSMenuItem(title: title, action: #selector(MenuAction.run), keyEquivalent: "")
                 let target = MenuAction(action)
                 item.target = target
                 item.representedObject = target // keeps the target alive while the menu is open
                 item.isEnabled = enabled
+                item.state = checked ? .on : .off
                 addItem(item)
             case let .submenu(title, children):
                 let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")

@@ -48,6 +48,26 @@ final class RepositoryMenuUITests: XCTestCase {
         app.buttons["Cancel"].click()
     }
 
+    func testCreateTagFromRepositoryMenu() throws {
+        try launch(stagedChange: false)
+
+        let repoMenu = app.menuBarItems["Repository"]
+        repoMenu.click()
+        repoMenu.menuItems["New Tag…"].click()
+
+        XCTAssertTrue(app.staticTexts["Create Tag"].waitForExistence(timeout: 10))
+        let tagField = app.textFields["v1.0.0"]
+        XCTAssertTrue(tagField.waitForExistence(timeout: 10))
+        tagField.click()
+        tagField.typeText("v1.0.0")
+
+        app.buttons["Create Tag"].click()
+        XCTAssertTrue(
+            app.staticTexts["v1.0.0"].waitForExistence(timeout: 20),
+            "created tag appears in the sidebar"
+        )
+    }
+
     func testSaveStashAndCommitFromRepositoryMenu() throws {
         try launch(stagedChange: true)
 
