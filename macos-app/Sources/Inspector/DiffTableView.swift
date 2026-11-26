@@ -133,9 +133,7 @@ struct DiffTableView: NSViewRepresentable {
         }
 
         func tableView(_: NSTableView, heightOfRow row: Int) -> CGFloat {
-            guard rows[row].kind == "header" else { return DiffRowCellView.lineHeight }
-            // The first file has nothing above it to be separated from.
-            return DiffRowCellView.fileHeaderHeight + (row == 0 ? 0 : DiffRowCellView.fileHeaderGap)
+            rows[row].kind == "header" ? DiffRowCellView.fileHeaderHeight : DiffRowCellView.lineHeight
         }
 
         func tableView(_ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
@@ -167,8 +165,6 @@ final class DiffRowCellView: NSTableCellView {
 
     static let lineHeight: CGFloat = 20
     static let fileHeaderHeight: CGFloat = 30
-    /// Blank space between the previous file's last line and the next file's header.
-    static let fileHeaderGap: CGFloat = 16
     private static let fileIconInset: CGFloat = 10
 
     /// 6 + 36 + 4 + 36 + 6 + 1: labels, spacing and the divider.
