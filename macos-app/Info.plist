@@ -11,4 +11,6 @@
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIconName</key><string>AppIcon</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSHumanReadableCopyright</key><string>© 2026 Goldspan Labs Inc.
+Open source under the MIT License</string>
 </dict></plist>

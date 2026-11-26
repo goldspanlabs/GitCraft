@@ -64,7 +64,11 @@ struct RepoCommands: Commands {
     @ObservedObject private var workspace = WorkspaceState.shared
 
     var body: some Commands {
-        CommandGroup(after: .appInfo) {
+        CommandGroup(replacing: .appInfo) {
+            Button("About GitCraft") {
+                // A blank build number leaves just "Version x.y.z" in the About window.
+                NSApp.orderFrontStandardAboutPanel(options: [.version: ""])
+            }
             Button("Check for Updates…") {
                 Task { await UpdatePrompt.checkNow() }
             }
