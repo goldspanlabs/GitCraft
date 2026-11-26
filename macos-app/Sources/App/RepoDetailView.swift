@@ -107,8 +107,15 @@ struct RepoDetailView: View {
                         }
                     )
 
-                    if tab.commits.isEmpty && tab.searchQuery.isEmpty {
-                        EmptyHistoryHint()
+                    if tab.commits.isEmpty {
+                        switch tab.historyState {
+                        case .loading:
+                            HistoryLoadingIndicator()
+                        case .loaded where tab.searchQuery.isEmpty:
+                            EmptyHistoryHint()
+                        case .loaded, .failed:
+                            EmptyView()
+                        }
                     }
                 }
             } bottom: {
@@ -191,6 +198,18 @@ private struct RepoSheets: ViewModifier {
             } message: { action in
                 Text(action.message)
             }
+    }
+}
+
+/// Centred over the commit list while a repository's history is first being read.
+private struct HistoryLoadingIndicator: View {
+    var body: some View {
+        ProgressView("Loading history…")
+            .controlSize(.small)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
     }
 }
 

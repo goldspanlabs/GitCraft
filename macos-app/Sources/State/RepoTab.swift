@@ -181,6 +181,10 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    enum HistoryState {
+        case loading, loaded, failed
+    }
+
     let id = UUID()
     let url: URL
     /// The repository's primary checkout, the folder that owns `.git`. It names the tab.
@@ -204,6 +208,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var stagedFiles: [FileChange] = []
     @Published var unstagedFiles: [FileChange] = []
     @Published var commits: [CommitRow] = []
+    /// Tells an empty `commits` apart: still being read, truly empty, or unreadable.
+    @Published var historyState = HistoryState.loading
     @Published var graphRevision = UUID()
     @Published var branches: [BranchInfo] = []
     @Published var tags: [TagInfo] = []
@@ -794,13 +800,30 @@ final class RepoTab: ObservableObject, Identifiable {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
                 }.value
 
-                let (status, branchList, tagList, stashList, remoteList, graphRows) = try await (
+                // The history goes up as soon as it is ready. The sidebar lists and status can
+                // take much longer on large repositories and fill in afterwards.
+                let graphRows = try await graphTask
+                guard self.session === session else { return }
+                // Paging appends rows without changing the generation, so a list that grew past
+                // what this reload asked for also counts as changed.
+                if generation == graphGeneration, commits.count <= Int(limit) {
+                    graphGeneration += 1
+                    commits = graphRows
+                    graphRevision = UUID()
+                    hasMoreCommits = graphRows.count >= Int(limit)
+                    historyState = .loaded
+                } else {
+                    // A search or page load changed the list while this reload ran, so these rows
+                    // may be for an older query or too few. Reload once more instead of applying them.
+                    refreshPending = true
+                }
+
+                let (status, branchList, tagList, stashList, remoteList) = try await (
                     statusTask,
                     branchesTask,
                     tagsTask,
                     stashesTask,
-                    remotesTask,
-                    graphTask
+                    remotesTask
                 )
                 guard self.session === session else { return }
                 applyStatus(status)
@@ -809,24 +832,14 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
-                // Paging appends rows without changing the generation, so a list that grew past
-                // what this reload asked for also counts as changed.
-                if generation == graphGeneration, commits.count <= Int(limit) {
-                    graphGeneration += 1
-                    commits = graphRows
-                    graphRevision = UUID()
-                    hasMoreCommits = graphRows.count >= Int(limit)
-                } else {
-                    // A search or page load changed the list while this reload ran, so these rows
-                    // may be for an older query or too few. Reload once more instead of applying them.
-                    refreshPending = true
-                }
 
                 if selectedCommit == nil {
                     loadWorkingDiffSelection()
                 }
             } catch {
                 guard self.session === session else { return }
+                // A failure after the history arrived leaves it showing as loaded.
+                if historyState == .loading { historyState = .failed }
                 showError(error)
             }
         }

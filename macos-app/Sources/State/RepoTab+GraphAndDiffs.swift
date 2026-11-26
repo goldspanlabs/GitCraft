@@ -102,6 +102,7 @@ extension RepoTab {
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
+                historyState = .loaded
             } catch {
                 guard self.session === session,
                       requestGeneration == graphGeneration,

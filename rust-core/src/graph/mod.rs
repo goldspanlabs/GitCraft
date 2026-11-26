@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].summary, "Add UI feature");
 
-        let branches = list_branches(&sync_repo).unwrap();
+        let branches = list_branches(p, &sync_repo).unwrap();
         assert_eq!(branches.len(), 2);
         assert!(branches.iter().any(|b| b.name == "main" && b.is_head));
         assert!(branches

@@ -240,7 +240,7 @@ impl RepoSession {
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {
-        graph::list_branches(&self.sync_repo)
+        graph::list_branches(&self.path, &self.sync_repo)
     }
 
     pub fn list_tags(&self) -> Result<Vec<TagInfo>, GitCraftError> {

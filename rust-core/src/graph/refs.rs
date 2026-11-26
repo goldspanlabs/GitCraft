@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use gix::bstr::ByteSlice;
 
-use crate::{BranchInfo, GitCraftError, RefBadge, RefKind, TagInfo};
+use crate::{git_cli, BranchInfo, GitCraftError, RefBadge, RefKind, TagInfo};
 
 pub(crate) type RefsAndTips = (
     HashMap<gix::ObjectId, Vec<RefBadge>>,
@@ -185,6 +186,7 @@ fn ref_kind_rank(kind: RefKind) -> u8 {
 }
 
 pub fn list_branches(
+    repo_path: &Path,
     sync_repo: &gix::ThreadSafeRepository,
 ) -> Result<Vec<BranchInfo>, GitCraftError> {
     let repo = sync_repo.to_thread_local();
@@ -253,6 +255,10 @@ pub fn list_branches(
         .chain(DEFAULT_BRANCH_FALLBACKS.into_iter().map(str::to_owned))
         .find(|candidate| local_entries.iter().any(|(name, ..)| name == candidate));
 
+    let merged_refs = base_oid
+        .map(|base| merged_local_refs(repo_path, base))
+        .unwrap_or_default();
+
     for (name, full_ref, local_oid, is_head) in local_entries {
         let upstream_full = resolve_upstream_ref(&config, &name)
             .filter(|r| remote_oids.contains_key(r))
@@ -278,8 +284,8 @@ pub fn list_branches(
             .is_some_and(|base_name| base_name == name);
         let is_merged = !is_head
             && !is_default_branch
-            && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref())
-            && base_oid.is_some_and(|base| is_fully_merged(&repo, local_oid, base));
+            && merged_refs.contains(&full_ref)
+            && !is_untouched_new_branch(&repo, &full_ref, &remote_oids, base_ref.as_deref());
 
         let is_default = default_local.as_deref() == Some(name.as_str());
         branches.push(BranchInfo {
@@ -440,16 +446,19 @@ fn is_untouched_new_branch(
     seen_entry
 }
 
-/// True when every commit reachable from `tip` is already reachable from `base`.
-fn is_fully_merged(repo: &gix::Repository, tip: gix::ObjectId, base: gix::ObjectId) -> bool {
-    if tip == base {
-        return true;
-    }
-    repo.rev_walk([tip])
-        .with_hidden([base])
-        .all()
-        .map(|mut w| w.next().is_none())
-        .unwrap_or(false)
+/// Full names of the local branches whose every commit is already reachable from `base`.
+///
+/// Asks git once for all of them: it answers with a single walk that uses the commit-graph,
+/// whereas walking history once per branch takes seconds on large repositories. Empty when
+/// git fails, so no branch is flagged as merged on a guess.
+fn merged_local_refs(repo_path: &Path, base: gix::ObjectId) -> HashSet<String> {
+    let merged = format!("--merged={base}");
+    git_cli::run(
+        repo_path,
+        &["for-each-ref", &merged, "--format=%(refname)", "refs/heads"],
+    )
+    .map(|out| out.lines().map(str::to_owned).collect())
+    .unwrap_or_default()
 }
 
 fn compute_ahead_behind(
