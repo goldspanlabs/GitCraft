@@ -165,12 +165,6 @@ fn paged_graph_matches_one_big_fetch_and_follows_ref_changes() {
         rows.iter().map(|r| r.oid_hex.clone()).collect::<Vec<_>>()
     };
     assert_eq!(ids(&paged), ids(&all));
-    // Searches are paged from their own walk, not the unfiltered rows.
-    let hits = session
-        .get_commit_graph(0, 5, Some("commit 11".into()))
-        .unwrap();
-    assert!(hits.iter().all(|r| r.summary.contains("commit 11")));
-
     // A new commit and a new branch show up on the next call despite the cache.
     commit_file(p, "n.txt", "new\n", "brand new");
     run_git(p, &["branch", "marker", "HEAD~3"]);
@@ -180,6 +174,12 @@ fn paged_graph_matches_one_big_fetch_and_follows_ref_changes() {
     assert!(rows
         .iter()
         .any(|r| r.refs.iter().any(|b| b.name == "marker")));
+
+    // Searches are paged from their own walk, not the unfiltered rows.
+    let hits = session
+        .get_commit_graph(0, 5, Some("commit 11".into()))
+        .unwrap();
+    assert!(hits.iter().all(|r| r.summary.contains("commit 11")));
 }
 
 #[test]
