@@ -1,4 +1,4 @@
-use crate::git_cli;
+use crate::{git_cli, worktree};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
@@ -244,22 +244,19 @@ fn any_visible_to_git(worktree: &Path, files: &HashSet<PathBuf>) -> bool {
 ///
 /// Graph-level events also re-scan the registered worktrees, so a checkout added after the
 /// session opened gets watched and classified too.
-pub fn spawn_dirty_watcher(
-    repo: &Path,
-    git_dir: &Path,
-    common_dir: &Path,
-    sibling_worktrees: Vec<PathBuf>,
-    flags: WatchFlags,
-) {
+pub fn spawn_dirty_watcher(repo: &Path, git_dir: &Path, common_dir: &Path, flags: WatchFlags) {
     let worktree = canonical_or_owned(repo);
     let git_dir = canonical_or_owned(git_dir);
     let common_dir = canonical_or_owned(common_dir);
-    let initial_siblings: Vec<PathBuf> = sibling_worktrees
-        .into_iter()
-        .map(|p| canonical_or_owned(&p))
-        .filter(|p| p != &worktree && p.is_dir())
-        .collect();
     thread::spawn(move || {
+        // Asked here so that opening a repository doesn't wait for another git command.
+        let initial_siblings: Vec<PathBuf> = worktree::list_entries(&worktree)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|w| !w.is_prunable)
+            .map(|w| canonical_or_owned(Path::new(&w.path)))
+            .filter(|p| p != &worktree && p.is_dir())
+            .collect();
         let shared_siblings = Arc::new(Mutex::new(initial_siblings.clone()));
         // Starts raised so the first loop pass registers siblings created before this thread ran.
         let reconcile = Arc::new(AtomicBool::new(true));

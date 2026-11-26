@@ -230,8 +230,23 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var pendingConfirmation: DestructiveAction?
     @Published var activeSheet: ActiveSheet?
     @Published var searchQuery = ""
-    @Published var commitSummary = ""
-    @Published var commitBody = ""
+    /// The commit message being typed. Only the composer's fields watch it.
+    let commitDraft = CommitDraft()
+    /// Whether the draft has no summary to commit, the one thing about the message that the
+    /// rest of the tab's views depend on.
+    @Published private(set) var isCommitSummaryBlank = true
+    var commitSummary: String {
+        get { commitDraft.summary }
+        set {
+            commitDraft.summary = newValue
+            publish(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, to: \.isCommitSummaryBlank)
+        }
+    }
+
+    var commitBody: String {
+        get { commitDraft.body }
+        set { commitDraft.body = newValue }
+    }
     /// Commit with `--no-verify`, so pre-commit and commit-msg hooks don't run.
     @Published var skipHooks = false
     /// Rewrite HEAD's commit instead of making a new one.
@@ -449,10 +464,10 @@ final class RepoTab: ObservableObject, Identifiable {
                 else { continue }
                 lastFetch = Date()
                 let includeTags = GitPreferences.fetchIncludesTags
-                let fetched: Bool = await Task.detached {
-                    (try? session.fetch(includeTags: includeTags)) != nil
+                // No reload here: the watcher asks for one if the fetch moved any ref.
+                await Task.detached {
+                    _ = try? session.fetch(includeTags: includeTags)
                 }.value
-                if fetched { self.refresh() }
             }
         }
     }
@@ -742,13 +757,18 @@ final class RepoTab: ObservableObject, Identifiable {
         let session = self.session
         worktreesRefreshTask = Task {
             // Non-fatal on failure: active checkout status and graph remain usable.
-            let worktreeList = try? await Task.detached { try session.listWorktrees() }.value
+            let worktreeList = try? await Task.detached {
+                try session.listWorktreesWithSiblingCounts()
+            }.value
             // A checkout switch already cleared the task slot for the new session.
             guard self.session === session else { return }
             worktreesRefreshTask = nil
-            if let worktreeList {
-                worktrees = worktreeList
-                syncActiveWorktreeDirtyCount()
+            if var worktreeList {
+                // The shown checkout isn't counted by the sweep: its status already says.
+                if let index = worktreeList.firstIndex(where: { $0.path == activeCheckoutPath }) {
+                    worktreeList[index].dirtyCount = UInt32(totalChangesCount)
+                }
+                publish(worktreeList, to: \.worktrees)
             }
             if worktreesRefreshPending {
                 runWorktreesRefresh()
@@ -902,4 +922,11 @@ private enum RecoveryOutcome: @unchecked Sendable {
     case unusable
     case folderReturned
     case ready(RepoSession, String)
+}
+
+/// The commit message being typed, apart from the tab so that a keystroke doesn't redraw
+/// everything watching the tab. Set the summary through `RepoTab.commitSummary`.
+final class CommitDraft: ObservableObject {
+    @Published fileprivate(set) var summary = ""
+    @Published var body = ""
 }

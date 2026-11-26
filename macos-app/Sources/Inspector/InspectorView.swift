@@ -47,7 +47,6 @@ struct InspectorView: View {
 private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
     @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
-    @State private var isExpandingDescription = false
     /// Set by clicking a file, so the arrow keys move through the file lists.
     @FocusState private var fileListFocused: Bool
 
@@ -153,14 +152,9 @@ private struct WorkingChangesInspectorView: View {
         tab.selectWorkingFile(file)
     }
 
-    /// A partly staged file is in both lists, so a row is identified by its list and path.
-    private static func rowID(path: String, staged: Bool) -> String {
-        "\(staged ? "staged" : "unstaged"):\(path)"
-    }
-
     private func scrollToSelection(_ proxy: ScrollViewProxy) {
         guard let path = tab.selectedFilePath else { return }
-        proxy.scrollTo(Self.rowID(path: path, staged: tab.selectedFileStaged))
+        proxy.scrollTo(FileChange.listRowID(path: path, staged: tab.selectedFileStaged))
     }
 
     var body: some View {
@@ -169,7 +163,9 @@ private struct WorkingChangesInspectorView: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
+                        // Lazy, and flat down to the file rows, so thousands of changed files
+                        // only cost the ones on screen.
+                        LazyVStack(alignment: .leading, spacing: 4) {
                             WorkingFileSection(
                                 title: "STAGED CHANGES",
                                 files: tab.stagedFiles,
@@ -184,10 +180,10 @@ private struct WorkingChangesInspectorView: View {
                                     onSelect: { select(file) },
                                     onToggleStaged: { tab.unstageFile(file.path) }
                                 )
-                                .id(Self.rowID(path: file.path, staged: true))
                             }
 
                             Divider()
+                                .padding(.vertical, 8)
 
                             WorkingFileSection(
                                 title: "UNSTAGED CHANGES",
@@ -203,7 +199,6 @@ private struct WorkingChangesInspectorView: View {
                                     onSelect: { select(file) },
                                     onToggleStaged: { tab.stageFile(file.path) }
                                 )
-                                .id(Self.rowID(path: file.path, staged: false))
                                 .contextMenu {
                                     Button("Stage File") { tab.stageFile(file.path) }
                                     if file.status == "?" {
@@ -243,64 +238,7 @@ private struct WorkingChangesInspectorView: View {
 
                 // Commit Composer
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("Commit summary…", text: $tab.commitSummary)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1)
-                        .onChange(of: tab.commitSummary) { _, newValue in
-                            // Pasted text can carry line breaks; a summary is one line.
-                            if newValue.contains(where: \.isNewline) {
-                                tab.commitSummary = newValue.replacingOccurrences(
-                                    of: "\r\n|\n|\r", with: " ", options: .regularExpression
-                                )
-                            }
-                        }
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                        )
-                        .accessibilityIdentifier("commit-summary")
-
-                    ZStack(alignment: .topLeading) {
-                        CommitBodyTextEditor(text: $tab.commitBody)
-                            .padding(4)
-                        if tab.commitBody.isEmpty {
-                            Text("Extended description (optional)…")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 8)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .frame(height: 96)
-                    .overlay(alignment: .topTrailing) {
-                        Button {
-                            isExpandingDescription = true
-                        } label: {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(5)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Expand description")
-                        .accessibilityIdentifier("expand-description")
-                        .padding(3)
-                    }
-                    .sheet(isPresented: $isExpandingDescription) {
-                        ExpandedDescriptionSheet(text: $tab.commitBody)
-                    }
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                    )
+                    CommitMessageFields(tab: tab, draft: tab.commitDraft)
 
                     // Wide: everything on one row. Narrow: options on top, actions below, so
                     // labels never wrap and the Commit button keeps its size.
@@ -348,6 +286,90 @@ private struct WorkingChangesInspectorView: View {
     }
 }
 
+/// The summary and description fields. They watch the draft, so typing redraws only them.
+private struct CommitMessageFields: View {
+    let tab: RepoTab
+    @ObservedObject var draft: CommitDraft
+    @State private var isExpandingDescription = false
+
+    /// Writes go through the tab, which tracks whether there is a summary to commit.
+    private var summary: Binding<String> {
+        Binding(get: { draft.summary }, set: { tab.commitSummary = $0 })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Commit summary…", text: summary)
+                .textFieldStyle(.plain)
+                .lineLimit(1)
+                .onChange(of: draft.summary) { _, newValue in
+                    // Pasted text can carry line breaks; a summary is one line.
+                    if newValue.contains(where: \.isNewline) {
+                        tab.commitSummary = newValue.replacingOccurrences(
+                            of: "\r\n|\n|\r", with: " ", options: .regularExpression
+                        )
+                    }
+                }
+                .font(.system(size: 12))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+                .accessibilityIdentifier("commit-summary")
+
+            ZStack(alignment: .topLeading) {
+                CommitBodyTextEditor(text: $draft.body)
+                    .padding(4)
+                if draft.body.isEmpty {
+                    Text("Extended description (optional)…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: 96)
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    isExpandingDescription = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(5)
+                }
+                .buttonStyle(.plain)
+                .help("Expand description")
+                .accessibilityIdentifier("expand-description")
+                .padding(3)
+            }
+            .sheet(isPresented: $isExpandingDescription) {
+                ExpandedDescriptionSheet(text: $draft.body)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+            )
+        }
+    }
+}
+
+private extension FileChange {
+    /// A partly staged file is in both lists, so a row is identified by its list and path.
+    static func listRowID(path: String, staged: Bool) -> String {
+        "\(staged ? "staged" : "unstaged"):\(path)"
+    }
+
+    var listRowID: String { Self.listRowID(path: path, staged: staged) }
+}
+
 private struct WorkingFileSection<RowContent: View>: View {
     let title: String
     let files: [FileChange]
@@ -356,8 +378,10 @@ private struct WorkingFileSection<RowContent: View>: View {
     let onAction: () -> Void
     @ViewBuilder let row: (FileChange) -> RowContent
 
+    /// A header and rows for the enclosing lazy stack, not a stack of its own: that would
+    /// build every row at once.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        Group {
             HStack {
                 Text("\(title) (\(files.count))")
                     .font(.caption.weight(.semibold))
@@ -380,7 +404,8 @@ private struct WorkingFileSection<RowContent: View>: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
             } else {
-                ForEach(files, id: \.path) { file in
+                // The row's id is what the list scrolls to, including rows not built yet.
+                ForEach(files, id: \.listRowID) { file in
                     row(file)
                 }
             }

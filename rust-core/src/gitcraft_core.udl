@@ -215,6 +215,9 @@ interface RepoSession {
   sequence<WorktreeInfo> list_worktrees();
 
   [Throws=GitCraftError]
+  sequence<WorktreeInfo> list_worktrees_with_sibling_counts();
+
+  [Throws=GitCraftError]
   sequence<WorktreeInfo> list_worktree_entries();
 
   [Throws=GitCraftError]

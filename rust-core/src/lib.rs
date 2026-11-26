@@ -88,12 +88,6 @@ impl RepoSession {
             let repo = sync_repo.to_thread_local();
             (repo.git_dir().to_owned(), repo.common_dir().to_owned())
         };
-        let sibling_worktrees = worktree::list_entries(&path)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|w| !w.is_prunable)
-            .map(|w| PathBuf::from(w.path))
-            .collect();
         let dirty = Arc::new(AtomicBool::new(false));
         let graph_dirty = Arc::new(AtomicBool::new(false));
         let worktrees_dirty = Arc::new(AtomicBool::new(false));
@@ -103,7 +97,6 @@ impl RepoSession {
             &path,
             &git_dir,
             &common_dir,
-            sibling_worktrees,
             watcher::WatchFlags {
                 status_dirty: Arc::clone(&dirty),
                 graph_dirty: Arc::clone(&graph_dirty),

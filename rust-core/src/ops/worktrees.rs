@@ -6,7 +6,13 @@ use crate::{
 
 impl RepoSession {
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>, GitCraftError> {
-        worktree::list(&self.path)
+        worktree::list(&self.path, None)
+    }
+
+    /// Like [`Self::list_worktrees`] without counting this checkout's changes, which its
+    /// status already reports.
+    pub fn list_worktrees_with_sibling_counts(&self) -> Result<Vec<WorktreeInfo>, GitCraftError> {
+        worktree::list(&self.path, Some(&self.path))
     }
 
     /// Lists worktree metadata without querying `git status` per checkout.

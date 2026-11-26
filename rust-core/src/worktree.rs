@@ -127,11 +127,15 @@ pub(crate) fn contains_path(repo: &Path, path: &str) -> Result<bool, GitCraftErr
         .any(|worktree| worktree.path == path))
 }
 
-pub(crate) fn list(repo: &Path) -> Result<Vec<WorktreeInfo>, GitCraftError> {
+/// Lists worktrees with their dirty counts. The checkout at `skip` is not queried and keeps a
+/// count of zero.
+pub(crate) fn list(repo: &Path, skip: Option<&Path>) -> Result<Vec<WorktreeInfo>, GitCraftError> {
     let mut worktrees = list_entries(repo)?;
+    // Git lists resolved paths, so the skipped one is compared in the same form.
+    let skip = skip.map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()));
     let fill_dirty = |worktree: &mut WorktreeInfo| {
         let checkout = Path::new(&worktree.path);
-        if !worktree.is_prunable && checkout.is_dir() {
+        if !worktree.is_prunable && Some(checkout) != skip.as_deref() && checkout.is_dir() {
             worktree.dirty_count = dirty_count(checkout);
         }
     };
