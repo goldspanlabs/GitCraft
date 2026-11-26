@@ -28,9 +28,9 @@ final class WorkspaceState: ObservableObject {
     /// The repository shown in the frontmost GitCraft window.
     @Published private(set) var activeTab: RepoTab?
 
-    private let gitAvailabilityProvider: () -> GitAvailability
+    private let gitAvailabilityProvider: @MainActor () -> GitAvailability
 
-    private static var uiTestGitAvailabilityOverride: GitAvailability? {
+    private nonisolated static var uiTestGitAvailabilityOverride: GitAvailability? {
         switch UserDefaults.standard.string(forKey: "UITestGitAvailability") {
         case "missing": return .missing
         case "needsCommandLineTools": return .needsCommandLineTools
@@ -39,7 +39,7 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
-    init(gitAvailabilityProvider: @escaping () -> GitAvailability = {
+    init(gitAvailabilityProvider: @escaping @MainActor () -> GitAvailability = {
         WorkspaceState.uiTestGitAvailabilityOverride ?? checkGitAvailability()
     }) {
         self.gitAvailabilityProvider = gitAvailabilityProvider
