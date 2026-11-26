@@ -12,6 +12,7 @@ mod watcher;
 mod worktree;
 
 pub use models::*;
+pub use ops::{clone_repository, init_repository};
 pub use worktree::WorktreeInfo;
 
 use std::{
