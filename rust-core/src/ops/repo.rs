@@ -43,7 +43,16 @@ pub fn clone_repository(url: String, destination: String) -> Result<(), GitCraft
         return Err(GitCraftError::message("destination path must not be empty"));
     }
     let dest_path = Path::new(dest);
-    let working_dir = dest_path
+    let abs_dest = if dest_path.is_absolute() {
+        dest_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| {
+                GitCraftError::message(format!("unable to resolve working directory: {e}"))
+            })?
+            .join(dest_path)
+    };
+    let working_dir = abs_dest
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("/"));
@@ -52,7 +61,8 @@ pub fn clone_repository(url: String, destination: String) -> Result<(), GitCraft
             .map_err(|e| GitCraftError::message(format!("unable to create parent folder: {e}")))?;
     }
 
-    git_cli::mutate(working_dir, &["clone", "--", &url, dest])?;
+    let abs_dest_str = abs_dest.to_string_lossy();
+    git_cli::mutate(working_dir, &["clone", "--", &url, &abs_dest_str])?;
     Ok(())
 }
 

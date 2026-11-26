@@ -74,12 +74,18 @@ struct CloneRepositorySheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Folder Name")
                         .font(.system(size: 12, weight: .medium))
-                    TextField("repo", text: $folderName)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isCloning)
-                        .onChange(of: folderName) { _, _ in
-                            hasEditedFolderName = true
-                        }
+                    TextField(
+                        "repo",
+                        text: Binding(
+                            get: { folderName },
+                            set: { newValue in
+                                folderName = newValue
+                                hasEditedFolderName = true
+                            }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isCloning)
                 }
 
                 if !destinationPath.isEmpty {
