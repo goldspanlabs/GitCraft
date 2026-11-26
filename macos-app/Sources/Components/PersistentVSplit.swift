@@ -6,7 +6,7 @@ import SwiftUI
 ///
 /// Dragging the divider down past the minimum height (plus a threshold) collapses the bottom
 /// pane to its tab strip; dragging it back up reopens it. The pane can also be maximized, which
-/// hides the top pane and gives the bottom pane the whole split.
+/// covers the top pane and gives the bottom pane the whole split.
 struct PersistentVSplit<Top: View, Bottom: View>: View {
     let minTop: CGFloat
     let minBottom: CGFloat
@@ -23,17 +23,11 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
         GeometryReader { geo in
             let maxBottom = max(minBottom, geo.size.height - minTop - 1)
             let expandedHeight = min(max(CGFloat(storedHeight), minBottom), maxBottom)
-            let bottomHeight: CGFloat = if isMaximized {
-                max(minBottom, geo.size.height - 1)
-            } else if isCollapsed {
-                BottomPanelDefaults.collapsedHeight
-            } else {
-                expandedHeight
-            }
+            let bottomHeight = isCollapsed ? BottomPanelDefaults.collapsedHeight : expandedHeight
 
             VStack(spacing: 0) {
                 top()
-                    .frame(maxWidth: .infinity, maxHeight: isMaximized ? 0 : .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
 
                 Divider()
@@ -61,10 +55,15 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
                         }
                     }
 
+                // The layout never changes when maximizing: the top pane keeps its size and the
+                // bottom pane grows upward, over it, to fill the whole split. That way nothing
+                // of the top pane (or the divider) peeks out above the pane's tab strip.
                 bottom()
                     .frame(maxWidth: .infinity)
-                    .frame(height: bottomHeight, alignment: .top)
+                    .frame(height: isMaximized ? geo.size.height : bottomHeight, alignment: .top)
+                    .background(isMaximized ? Color(nsColor: .windowBackgroundColor) : Color.clear)
                     .clipped()
+                    .frame(height: bottomHeight, alignment: .bottom)
             }
         }
     }
