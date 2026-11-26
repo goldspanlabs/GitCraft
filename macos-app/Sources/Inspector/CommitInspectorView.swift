@@ -86,6 +86,8 @@ struct CommitInspectorView: View {
     @ObservedObject var tab: RepoTab
     let commit: CommitRow
     @State private var pane: CommitPaneTab = .changes
+    /// Shared by both tabs' file lists. Folders start expanded for every commit.
+    @State private var collapsedFolderPaths: Set<String> = []
     @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
     @FocusState private var fileListFocused: Bool
@@ -108,21 +110,16 @@ struct CommitInspectorView: View {
         }
     }
 
-    /// Moves the selected changed file by `delta` rows, stopping at the first and last file.
+    /// Moves the selected changed file one visible row up or down, stopping at the ends.
     private func moveFileSelection(by delta: Int) {
-        let files = tab.commitDetail?.files ?? []
-        guard !files.isEmpty else { return }
-        let current = files.firstIndex { $0.path == tab.selectedFilePath }
-        let next: Int
-        if let current {
-            next = min(max(current + delta, 0), files.count - 1)
-        } else {
-            // Nothing selected ("All"): down picks the first file, up the last.
-            next = delta > 0 ? 0 : files.count - 1
-        }
-        // At the first or last file, another press changes nothing; skip the diff reload.
-        guard files[next].path != tab.selectedFilePath else { return }
-        tab.selectCommitFile(files[next].path)
+        // At the first or last file there is nowhere to go; skip the diff reload.
+        guard let path = FileTree.filePath(
+            movingFrom: tab.selectedFilePath,
+            by: delta,
+            in: tab.commitDetail?.files ?? [],
+            collapsedFolderPaths: collapsedFolderPaths
+        ) else { return }
+        tab.selectCommitFile(path)
     }
 
     var body: some View {
@@ -135,7 +132,7 @@ struct CommitInspectorView: View {
             }
             switch pane {
             case .commit:
-                CommitMessagePane(tab: tab, commit: commit) { path in
+                CommitMessagePane(tab: tab, commit: commit, collapsedFolderPaths: $collapsedFolderPaths) { path in
                     tab.selectCommitFile(path)
                     pane = .changes
                 }
@@ -150,6 +147,7 @@ struct CommitInspectorView: View {
                 DispatchQueue.main.async { fileListFocused = true }
             }
         }
+        .onChange(of: commit.oidHex) { collapsedFolderPaths = [] }
         .onChange(of: isMaximized) { updateKeyboardFocus() }
         .onChange(of: isCollapsed) {
             // A collapsed pane keeps the file list mounted but clipped, so the arrow keys would
@@ -227,7 +225,9 @@ struct CommitInspectorView: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        CommitFileList(tab: tab) { tab.selectCommitFile($0) }
+                        CommitFileList(tab: tab, collapsedFolderPaths: $collapsedFolderPaths) {
+                            tab.selectCommitFile($0)
+                        }
                     }
                     .focusable()
                     .focused($fileListFocused)
@@ -262,6 +262,7 @@ struct CommitInspectorView: View {
 private struct CommitMessagePane: View {
     @ObservedObject var tab: RepoTab
     let commit: CommitRow
+    @Binding var collapsedFolderPaths: Set<String>
     let onOpenFile: (String) -> Void
 
     private static let dateFormatter: DateFormatter = {
@@ -325,7 +326,13 @@ private struct CommitMessagePane: View {
                 Text("CHANGED FILES (\(tab.commitDetail?.files.count ?? 0))")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
-                CommitFileList(tab: tab, selectsPath: false, edgeInset: 0) { onOpenFile($0 ?? "") }
+                CommitFileList(
+                    tab: tab,
+                    collapsedFolderPaths: $collapsedFolderPaths,
+                    selectsPath: false,
+                    edgeInset: 0,
+                    onSelect: onOpenFile
+                )
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -335,41 +342,95 @@ private struct CommitMessagePane: View {
 
 private struct CommitFileList: View {
     @ObservedObject var tab: RepoTab
+    @Binding var collapsedFolderPaths: Set<String>
     var selectsPath = true
     /// Margin between the pane edge and the row highlight (matches the 10pt header inset).
     var edgeInset: CGFloat = 10
-    let onSelect: (String?) -> Void
+    let onSelect: (String) -> Void
+
+    private static let indent: CGFloat = 14
+    private static let chevronWidth: CGFloat = 10
+
+    private var rows: [FlatFileRow] {
+        FileTree.rows(from: tab.commitDetail?.files ?? [], collapsedFolderPaths: collapsedFolderPaths)
+    }
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 2) {
-            ForEach(tab.commitDetail?.files ?? [], id: \.path) { file in
-                // The row's id is its path, which lets the list scroll to the selected file.
-                Button {
-                    onSelect(file.path)
-                } label: {
-                    HStack(spacing: 6) {
-                        StatusBadge(status: file.status)
-                        Text(file.path)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                        Spacer()
+            ForEach(rows) { row in
+                Group {
+                    switch row.kind {
+                    case let .folder(name, folderPath, isExpanded):
+                        folderRow(name: name, path: folderPath, isExpanded: isExpanded, depth: row.depth)
+                    case let .file(change, name):
+                        // The row's id is its path, which lets the list scroll to the selected file.
+                        fileRow(change, name: name, depth: row.depth)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        selectsPath && tab.selectedFilePath == file.path
-                            ? Color.accentColor.opacity(0.18)
-                            : Color.clear
-                    )
-                    .cornerRadius(4)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, edgeInset)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func folderRow(name: String, path: String, isExpanded: Bool, depth: Int) -> some View {
+        Button {
+            if isExpanded {
+                collapsedFolderPaths.insert(path)
+            } else {
+                collapsedFolderPaths.remove(path)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: Self.chevronWidth)
+                PhosphorIcon(glyph: .folder, size: 14)
+                    .foregroundStyle(.secondary)
+                Text(name)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+            }
+            .padding(.leading, CGFloat(depth) * Self.indent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(path)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+
+    private func fileRow(_ file: FileChange, name: String, depth: Int) -> some View {
+        Button {
+            onSelect(file.path)
+        } label: {
+            HStack(spacing: 6) {
+                // Stands in for a folder's chevron, so badges line up with sibling folder icons.
+                Color.clear.frame(width: Self.chevronWidth, height: 1)
+                StatusBadge(status: file.status)
+                Text(name)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+            }
+            .padding(.leading, CGFloat(depth) * Self.indent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                selectsPath && tab.selectedFilePath == file.path
+                    ? Color.accentColor.opacity(0.18)
+                    : Color.clear
+            )
+            .cornerRadius(4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(file.path)
     }
 }
 
