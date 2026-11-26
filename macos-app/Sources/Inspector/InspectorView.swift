@@ -63,30 +63,34 @@ private struct WorkingChangesInspectorView: View {
     // This view has no tab strip, so a collapsed panel would have no way to reopen.
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
 
-    private var optionToggles: some View {
-        HStack {
-            Toggle("Skip Hooks", isOn: $tab.skipHooks)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .fixedSize()
-            Toggle("Amend", isOn: Binding(
-                get: { tab.amendCommit },
-                set: { tab.setAmend($0) }
-            ))
+    private var skipHooksToggle: some View {
+        Toggle("Skip Hooks", isOn: $tab.skipHooks)
             .toggleStyle(.checkbox)
             .font(.system(size: 12))
             .lineLimit(1)
             .fixedSize()
-        }
     }
 
-    private var stashButton: some View {
-        Button("Stash…") {
-            tab.presentNewStash()
-        }
+    private var amendToggle: some View {
+        Toggle("Amend", isOn: Binding(
+            get: { tab.amendCommit },
+            set: { tab.setAmend($0) }
+        ))
+        .toggleStyle(.checkbox)
+        .font(.system(size: 12))
         .lineLimit(1)
         .fixedSize()
+    }
+
+    private func stashButton(fillWidth: Bool) -> some View {
+        Button {
+            tab.presentNewStash()
+        } label: {
+            Text("Stash…")
+                .lineLimit(1)
+                .frame(maxWidth: fillWidth ? .infinity : nil)
+        }
+        .fixedSize(horizontal: !fillWidth, vertical: true)
         .disabled(tab.totalChangesCount == 0 || tab.isBusy)
     }
 
@@ -272,15 +276,20 @@ private struct WorkingChangesInspectorView: View {
                     // labels never wrap and the Commit button keeps its size.
                     ViewThatFits(in: .horizontal) {
                         HStack {
-                            optionToggles
+                            skipHooksToggle
+                            amendToggle
                             Spacer()
-                            stashButton
+                            stashButton(fillWidth: false)
                             commitControl(fillWidth: false)
                         }
-                        VStack(alignment: .leading, spacing: 8) {
-                            optionToggles
-                            HStack {
-                                stashButton
+                        // Two equal columns, so each row's items line up with the one above.
+                        VStack(spacing: 8) {
+                            HStack(spacing: 8) {
+                                skipHooksToggle.frame(maxWidth: .infinity, alignment: .leading)
+                                amendToggle.frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            HStack(spacing: 8) {
+                                stashButton(fillWidth: true)
                                 commitControl(fillWidth: true)
                             }
                         }
