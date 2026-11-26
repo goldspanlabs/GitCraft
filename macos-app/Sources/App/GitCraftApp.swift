@@ -225,10 +225,24 @@ private struct ActiveTabRepositoryMenuItems: View {
                 Text("No Local Branches")
             } else {
                 ForEach(localBranches, id: \.fullRef) { branch in
-                    Button(branch.isHead ? "✓ \(branch.name)" : branch.name) {
-                        tab.checkoutBranch(branch.name)
+                    let otherWorktree = tab.worktrees.first {
+                        $0.branch == branch.name && $0.path != tab.activeCheckoutPath
                     }
-                    .disabled(branch.isHead || tab.isBusy)
+                    let label: String = if branch.isHead {
+                        "✓ \(branch.name)"
+                    } else if otherWorktree != nil {
+                        "\(branch.name) (Worktree)"
+                    } else {
+                        branch.name
+                    }
+                    Button(label) {
+                        if let wt = otherWorktree {
+                            tab.switchCheckout(to: wt.path)
+                        } else {
+                            tab.checkoutBranch(branch.name)
+                        }
+                    }
+                    .disabled(branch.isHead || tab.isBusy || (otherWorktree?.isPrunable == true))
                 }
             }
         }
