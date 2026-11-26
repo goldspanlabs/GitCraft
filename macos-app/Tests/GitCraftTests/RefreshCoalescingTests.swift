@@ -10,6 +10,7 @@ final class RefreshCoalescingTests: XCTestCase {
         let tab = try RepoTab(url: repo)
         defer { tab.stopWatcher() }
 
+        let runsBefore = tab.refreshRun
         tab.refresh()
         XCTAssertTrue(tab.refreshInFlight)
         XCTAssertFalse(tab.refreshPending)
@@ -26,6 +27,8 @@ final class RefreshCoalescingTests: XCTestCase {
         }
         XCTAssertFalse(tab.refreshInFlight)
         XCTAssertFalse(tab.refreshPending)
+        // The three requests ran as exactly two reloads: the first, and one queued pass.
+        XCTAssertEqual(tab.refreshRun - runsBefore, 2)
         XCTAssertEqual(tab.commits.map(\.summary), ["initial"])
     }
 
