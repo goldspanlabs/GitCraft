@@ -111,8 +111,7 @@ fn discard_file_reports_failure_for_a_conflicted_file() {
 fn editing_a_lock_file_in_the_working_tree_marks_status_dirty() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());
-    thread::sleep(Duration::from_millis(1500));
-    let _ = session.take_dirty();
+    wait_for_watcher(&session);
 
     write(dir.path(), "Cargo.lock", "# changed\n");
     let deadline = Instant::now() + Duration::from_secs(10);

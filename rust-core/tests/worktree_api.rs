@@ -1,8 +1,11 @@
 //! `RepoSession` worktree APIs against real repositories: listing, dirty counts, lock and
 //! unlock, pruning missing folders, and rejecting paths git does not list.
 
+mod common;
+
 use std::{fs, path::Path, process::Command};
 
+use common::wait_for_watcher;
 use gitcraft_core::RepoSession;
 
 fn run_git(dir: &Path, args: &[&str]) -> String {
@@ -258,10 +261,7 @@ fn linked_worktree_watcher_detects_commits_and_ref_changes() {
     );
 
     let session = RepoSession::open(&linked).unwrap();
-    // Let the watcher thread attach and drain any startup events.
-    thread::sleep(Duration::from_millis(600));
-    let _ = session.take_dirty();
-    let _ = session.take_graph_dirty();
+    wait_for_watcher(&session);
 
     // Creating a commit with `--allow-empty` touches only the linked worktree's gitdir and
     // the shared commondir (refs/heads/feature/watch), not the checkout's working tree.
@@ -663,10 +663,7 @@ fn sibling_worktree_file_edit_flags_worktrees_dirty_without_dirtying_active_stat
     );
 
     let session = RepoSession::open(repo.path()).unwrap();
-    thread::sleep(Duration::from_millis(600));
-    let _ = session.take_dirty();
-    let _ = session.take_graph_dirty();
-    let _ = session.take_worktrees_dirty();
+    wait_for_watcher(&session);
 
     fs::write(sibling.join("README.md"), "edited in sibling\n").unwrap();
 

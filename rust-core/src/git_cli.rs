@@ -1,7 +1,8 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     io::{self, Read},
-    path::Path,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -46,7 +47,8 @@ fn execute_raw(
     timeout: Duration,
     mutating: bool,
 ) -> Result<CommandOutput, crate::GitCraftError> {
-    let mut command = Command::new("git");
+    let path_env = augmented_path();
+    let mut command = Command::new(resolve_git(&path_env));
     command
         // Report non-ASCII paths verbatim instead of as "\303\251" escapes.
         .args(["-c", "core.quotepath=off"])
@@ -59,7 +61,7 @@ fn execute_raw(
         ])
         .args(args)
         .current_dir(repo)
-        .env("PATH", augmented_path())
+        .env("PATH", path_env)
         // There is no terminal to prompt on: fail with an error instead of waiting.
         .env("GIT_TERMINAL_PROMPT", "0")
         // The app matches some of git's messages (for example "divergent branches"), so keep
@@ -216,11 +218,8 @@ pub fn check_availability() -> crate::GitAvailability {
     check_availability_in_path(&augmented_path(), PROBE_TIMEOUT)
 }
 
-fn check_availability_in_path(
-    path_env: &std::ffi::OsStr,
-    timeout: Duration,
-) -> crate::GitAvailability {
-    let child = match Command::new("git")
+fn check_availability_in_path(path_env: &OsStr, timeout: Duration) -> crate::GitAvailability {
+    let child = match Command::new(resolve_git(path_env))
         .arg("--version")
         .env("PATH", path_env)
         .env("LC_MESSAGES", "C")
@@ -246,6 +245,24 @@ fn check_availability_in_path(
         }
         Err(_) => crate::GitAvailability::Missing,
     }
+}
+
+/// The first executable `git` in an absolute directory of `path_env`, or plain "git" when
+/// there is none, so that spawning reports it as missing.
+///
+/// Passing a full path matters on macOS: given a bare name and a custom `PATH`, `Command`
+/// uses `fork` instead of `posix_spawn`, and a forked child of a multithreaded process can
+/// crash in a system library before it reaches `exec`. That shows up as git dying with
+/// SIGKILL.
+fn resolve_git(path_env: &OsStr) -> PathBuf {
+    std::env::split_paths(path_env)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| {
+            std::fs::metadata(candidate)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+        .unwrap_or_else(|| PathBuf::from("git"))
 }
 
 /// A GUI app launched from Finder gets a minimal PATH, so tools used by hooks and
@@ -329,6 +346,36 @@ mod tests {
         let dir = temp_repo();
         let out = run(dir.path(), &["-c", "alias.msg=!echo $LC_MESSAGES", "msg"]).unwrap();
         assert_eq!(out.trim(), "C");
+    }
+
+    #[test]
+    fn git_commands_are_spawned_without_forking() {
+        use std::{cell::Cell, ffi::c_int, sync::Once};
+
+        extern "C" {
+            fn pthread_atfork(
+                prepare: Option<extern "C" fn()>,
+                parent: Option<extern "C" fn()>,
+                child: Option<extern "C" fn()>,
+            ) -> c_int;
+        }
+        // The prepare handler runs on the forking thread, so a thread-local count ignores
+        // forks made by tests running in parallel.
+        thread_local!(static FORKS: Cell<u32> = const { Cell::new(0) });
+        extern "C" fn count_fork() {
+            FORKS.with(|forks| forks.set(forks.get() + 1));
+        }
+        static REGISTER: Once = Once::new();
+        REGISTER.call_once(|| {
+            assert_eq!(unsafe { pthread_atfork(Some(count_fork), None, None) }, 0);
+        });
+
+        let dir = temp_repo();
+        run(dir.path(), &["status"]).unwrap();
+        mutate(dir.path(), &["add", "-A"]).unwrap();
+        assert_eq!(check_availability(), crate::GitAvailability::Available);
+
+        assert_eq!(FORKS.with(Cell::get), 0);
     }
 
     #[test]

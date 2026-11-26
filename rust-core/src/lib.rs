@@ -49,6 +49,7 @@ pub struct RepoSession {
     dirty: Arc<AtomicBool>,
     graph_dirty: Arc<AtomicBool>,
     worktrees_dirty: Arc<AtomicBool>,
+    watcher_ready: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
     commit_sort: AtomicU8,
     graph_cache: graph::SharedGraphCache,
@@ -96,6 +97,7 @@ impl RepoSession {
         let dirty = Arc::new(AtomicBool::new(false));
         let graph_dirty = Arc::new(AtomicBool::new(false));
         let worktrees_dirty = Arc::new(AtomicBool::new(false));
+        let watcher_ready = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicBool::new(false));
         watcher::spawn_dirty_watcher(
             &path,
@@ -106,6 +108,7 @@ impl RepoSession {
                 status_dirty: Arc::clone(&dirty),
                 graph_dirty: Arc::clone(&graph_dirty),
                 worktrees_dirty: Arc::clone(&worktrees_dirty),
+                ready: Arc::clone(&watcher_ready),
                 stopped: Arc::clone(&stopped),
             },
         );
@@ -116,10 +119,18 @@ impl RepoSession {
             dirty,
             graph_dirty,
             worktrees_dirty,
+            watcher_ready,
             stopped,
             commit_sort: AtomicU8::new(0),
             graph_cache: Default::default(),
         })
+    }
+
+    /// Whether the background watcher has set up its watches. Not part of the app's API:
+    /// tests wait for this before making the change they expect to be noticed.
+    #[doc(hidden)]
+    pub fn is_watcher_ready(&self) -> bool {
+        self.watcher_ready.load(Ordering::Acquire)
     }
 
     /// Serializes mutating git operations on this repository so concurrent UI requests, even
