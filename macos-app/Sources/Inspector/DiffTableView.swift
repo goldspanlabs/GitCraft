@@ -25,7 +25,7 @@ struct DiffTableView: NSViewRepresentable {
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsetsZero
         table.usesAutomaticRowHeights = false
-        table.rowHeight = 20
+        table.rowHeight = DiffRowCellView.lineHeight
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .none
         table.backgroundColor = .textBackgroundColor
@@ -132,6 +132,12 @@ struct DiffTableView: NSViewRepresentable {
             rows.count
         }
 
+        func tableView(_: NSTableView, heightOfRow row: Int) -> CGFloat {
+            guard rows[row].kind == "header" else { return DiffRowCellView.lineHeight }
+            // The first file has nothing above it to be separated from.
+            return DiffRowCellView.fileHeaderHeight + (row == 0 ? 0 : DiffRowCellView.fileHeaderGap)
+        }
+
         func tableView(_ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
             let cell = (tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self) as? DiffRowCellView)
                 ?? DiffRowCellView(identifier: Self.cellIdentifier)
@@ -149,8 +155,21 @@ final class DiffRowCellView: NSTableCellView {
     private let newLineLabel = NSTextField(labelWithString: "")
     private let gutterDivider = NSBox()
     private let codeLabel = NSTextField(labelWithString: "")
+    /// The bar naming each file when the diff spans several files.
+    private let fileHeader = NSView()
+    private let fileHeaderTopRule = NSBox()
+    private let fileHeaderBottomRule = NSBox()
+    private let fileIcon = NSImageView()
+    private let fileNameLabel = NSTextField(labelWithString: "")
     private var gutterLeading: NSLayoutConstraint?
+    private var fileIconLeading: NSLayoutConstraint?
     private var row: DiffRow?
+
+    static let lineHeight: CGFloat = 20
+    static let fileHeaderHeight: CGFloat = 30
+    /// Blank space between the previous file's last line and the next file's header.
+    static let fileHeaderGap: CGFloat = 16
+    private static let fileIconInset: CGFloat = 10
 
     /// 6 + 36 + 4 + 36 + 6 + 1: labels, spacing and the divider.
     private static let gutterWidth: CGFloat = 89
@@ -159,7 +178,10 @@ final class DiffRowCellView: NSTableCellView {
 
     /// Horizontal scroll offset the gutter is shifted by so it stays visible.
     var gutterOffset: CGFloat = 0 {
-        didSet { gutterLeading?.constant = gutterOffset }
+        didSet {
+            gutterLeading?.constant = gutterOffset
+            fileIconLeading?.constant = gutterOffset + Self.fileIconInset
+        }
     }
 
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -206,6 +228,7 @@ final class DiffRowCellView: NSTableCellView {
 
         let leading = gutterView.leadingAnchor.constraint(equalTo: leadingAnchor)
         gutterLeading = leading
+        setupFileHeader()
 
         NSLayoutConstraint.activate([
             leading,
@@ -238,6 +261,57 @@ final class DiffRowCellView: NSTableCellView {
         ])
     }
 
+    private func setupFileHeader() {
+        for view in [fileHeader, fileHeaderTopRule, fileHeaderBottomRule, fileIcon, fileNameLabel] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        fileHeader.wantsLayer = true
+        fileHeaderTopRule.boxType = .separator
+        fileHeaderBottomRule.boxType = .separator
+        fileIcon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        fileIcon.contentTintColor = .secondaryLabelColor
+        fileNameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        fileNameLabel.textColor = .labelColor
+        fileNameLabel.lineBreakMode = .byClipping
+        fileNameLabel.isSelectable = true
+
+        addSubview(fileHeader)
+        for view in [fileHeaderTopRule, fileHeaderBottomRule, fileIcon, fileNameLabel] {
+            fileHeader.addSubview(view)
+        }
+
+        // Like the gutter, the icon and name stay put while the code scrolls horizontally.
+        let iconLeading = fileIcon.leadingAnchor.constraint(
+            equalTo: fileHeader.leadingAnchor, constant: Self.fileIconInset
+        )
+        fileIconLeading = iconLeading
+
+        NSLayoutConstraint.activate([
+            fileHeader.leadingAnchor.constraint(equalTo: leadingAnchor),
+            fileHeader.trailingAnchor.constraint(equalTo: trailingAnchor),
+            fileHeader.bottomAnchor.constraint(equalTo: bottomAnchor),
+            fileHeader.heightAnchor.constraint(equalToConstant: Self.fileHeaderHeight),
+
+            fileHeaderTopRule.leadingAnchor.constraint(equalTo: fileHeader.leadingAnchor),
+            fileHeaderTopRule.trailingAnchor.constraint(equalTo: fileHeader.trailingAnchor),
+            fileHeaderTopRule.topAnchor.constraint(equalTo: fileHeader.topAnchor),
+            fileHeaderTopRule.heightAnchor.constraint(equalToConstant: 1),
+
+            fileHeaderBottomRule.leadingAnchor.constraint(equalTo: fileHeader.leadingAnchor),
+            fileHeaderBottomRule.trailingAnchor.constraint(equalTo: fileHeader.trailingAnchor),
+            fileHeaderBottomRule.bottomAnchor.constraint(equalTo: fileHeader.bottomAnchor),
+            fileHeaderBottomRule.heightAnchor.constraint(equalToConstant: 1),
+
+            iconLeading,
+            fileIcon.centerYAnchor.constraint(equalTo: fileHeader.centerYAnchor),
+            fileIcon.widthAnchor.constraint(equalToConstant: 16),
+
+            fileNameLabel.leadingAnchor.constraint(equalTo: fileIcon.trailingAnchor, constant: 6),
+            fileNameLabel.centerYAnchor.constraint(equalTo: fileHeader.centerYAnchor),
+        ])
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         // Layer background and highlight colors are resolved to concrete CGColors
@@ -258,6 +332,19 @@ final class DiffRowCellView: NSTableCellView {
     }
 
     private func applyConfiguration(row: DiffRow, isDark: Bool) {
+        // Cells are reused, so every row sets which of the two layouts is showing.
+        let isFileHeader = row.kind == "header"
+        fileHeader.isHidden = !isFileHeader
+        gutterView.isHidden = isFileHeader
+        codeLabel.isHidden = isFileHeader
+        if isFileHeader {
+            layer?.backgroundColor = NSColor.clear.cgColor
+            fileHeader.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            fileNameLabel.stringValue = row.text
+            codeLabel.stringValue = ""
+            return
+        }
+
         oldLineLabel.stringValue = row.oldLine.map(String.init) ?? ""
         newLineLabel.stringValue = row.newLine.map(String.init) ?? ""
 
@@ -273,9 +360,6 @@ final class DiffRowCellView: NSTableCellView {
         case "hunk":
             bgColor = NSColor.systemBlue.withAlphaComponent(0.10)
             defaultTextColor = NSColor.systemBlue
-        case "header":
-            bgColor = NSColor.controlBackgroundColor
-            defaultTextColor = NSColor.secondaryLabelColor
         default:
             bgColor = NSColor.clear
             defaultTextColor = NSColor.labelColor
