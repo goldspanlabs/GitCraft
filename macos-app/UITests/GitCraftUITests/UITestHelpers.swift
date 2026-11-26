@@ -13,7 +13,10 @@ extension XCTestCase {
     /// `isHittable` is not a valid predicate key path for queries, so the label query is
     /// filtered here in Swift instead. Falls back to the first match if none becomes hittable.
     func openMenuItem(_ title: String, in app: XCUIApplication, timeout: TimeInterval = 10) -> XCUIElement {
-        let matches = app.menuItems.matching(NSPredicate(format: "label == %@", title))
+        // Matches on the same keys as `app.menuItems[title]`; a label-only query found nothing in CI.
+        let matches = app.menuItems.matching(
+            NSPredicate(format: "title == %@ OR identifier == %@ OR label == %@", title, title, title)
+        )
         func hittableMatch() -> XCUIElement? {
             (0..<matches.count).lazy.map { matches.element(boundBy: $0) }.first { $0.isHittable }
         }
