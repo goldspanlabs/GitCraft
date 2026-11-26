@@ -275,8 +275,11 @@ struct FixtureRepository {
         process.currentDirectoryURL = directory
         // Ignore the developer's own git settings (merge.ff, rebase.backend, commit signing and
         // so on), so fixtures come out the same on every machine.
+        // Tests poll `git status` while the app works on the same repository. Without
+        // GIT_OPTIONAL_LOCKS=0 it locks the index to refresh it, and the app's own command fails.
         process.environment = ProcessInfo.processInfo.environment
             .merging(GitCraftApp.isolatedGitEnvironment) { _, isolated in isolated }
+            .merging(["GIT_OPTIONAL_LOCKS": "0"]) { _, ours in ours }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

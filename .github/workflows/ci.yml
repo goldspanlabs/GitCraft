@@ -110,9 +110,10 @@ jobs:
           ref: ${{ env.OLDEST_GIT }}
           path: git-source
       # The tests only use local repositories, so HTTP support and translations are left out.
+      # -std=gnu17: newer compilers default to C23, whose `unreachable` macro breaks this source.
       - name: Build the old git
         if: steps.old-git.outputs.cache-hit != 'true'
-        run: make -C git-source -j"$(nproc)" prefix="$HOME/oldest-git" NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_TCLTK=1 all install
+        run: make -C git-source -j"$(nproc)" prefix="$HOME/oldest-git" NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_TCLTK=1 CFLAGS="-O2 -std=gnu17" all install
       - name: Put the old git first
         run: echo "$HOME/oldest-git/bin" >> "$GITHUB_PATH"
       - name: Confirm the version
