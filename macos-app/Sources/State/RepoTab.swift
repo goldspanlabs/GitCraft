@@ -254,6 +254,8 @@ final class RepoTab: ObservableObject, Identifiable {
     /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
     /// page fetches that started against the old list can detect they are stale.
     var graphGeneration = 0
+    var refreshInFlight = false
+    var refreshPending = false
     /// Search replacements still fetching their first page. While > 0, `commits` and
     /// `searchQuery` describe different lists, so paging must wait.
     var pendingSearchReplacements = 0
@@ -728,8 +730,21 @@ final class RepoTab: ObservableObject, Identifiable {
         }
     }
 
+    /// Reloads everything. A request made while a reload is running doesn't start a second
+    /// one alongside it: it queues one more pass after the current one, so a mutation's own
+    /// refresh and the watcher's refresh of the same change collapse into one or two ordered
+    /// passes instead of overlapping and finishing in either order.
     func refresh() {
+        refreshPending = true
+        guard !refreshInFlight else { return }
+        runRefresh()
+    }
+
+    private func runRefresh() {
+        refreshPending = false
+        refreshInFlight = true
         let session = self.session
+        let generation = graphGeneration
         let query = activeSearchQuery
         // Reload at least everything already loaded: refreshing only the first page would
         // shrink the list under a user who has scrolled further down, yanking the table
@@ -740,6 +755,10 @@ final class RepoTab: ObservableObject, Identifiable {
         refreshWorktrees()
 
         Task {
+            defer {
+                refreshInFlight = false
+                if refreshPending { runRefresh() }
+            }
             do {
                 async let statusTask = Task.detached { try session.status() }.value
                 async let branchesTask = Task.detached { try session.listBranches() }.value
@@ -765,10 +784,16 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
-                graphGeneration += 1
-                commits = graphRows
-                graphRevision = UUID()
-                hasMoreCommits = graphRows.count >= Int(limit)
+                if generation == graphGeneration {
+                    graphGeneration += 1
+                    commits = graphRows
+                    graphRevision = UUID()
+                    hasMoreCommits = graphRows.count >= Int(limit)
+                } else {
+                    // A search or page load replaced the list while this reload ran, so these
+                    // rows may be for an older query. Reload once more instead of applying them.
+                    refreshPending = true
+                }
 
                 if selectedCommit == nil {
                     loadWorkingDiffSelection()
