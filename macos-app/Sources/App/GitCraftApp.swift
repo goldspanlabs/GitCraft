@@ -34,13 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             return
         }
+        workspace.deferTabRestore()
         Task { @MainActor in
-            if await workspace.refreshGitAvailabilityAsync() != .available {
-                workspace.deferTabRestore()
-                workspace.openWelcome()
-                return
-            }
-            if !workspace.restoreTabs() {
+            let status = await workspace.refreshGitAvailabilityAsync()
+            if status != .available || !workspace.hasOpenRepositories {
                 workspace.openWelcome()
             }
         }

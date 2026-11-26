@@ -88,7 +88,12 @@ fn execute_raw(
             crate::GitCraftError::from(err)
         }
     })?;
-    let captured = wait_with_timeout(child, timeout, args.first().copied().unwrap_or("git"))?;
+    let captured = wait_with_timeout(
+        child,
+        timeout,
+        args.first().copied().unwrap_or("git"),
+        mutating,
+    )?;
     Ok(CommandOutput {
         status: captured.status,
         stdout: String::from_utf8_lossy(&captured.stdout).into_owned(),
@@ -131,7 +136,12 @@ struct Captured {
     stderr: Vec<u8>,
 }
 
-fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Result<Captured> {
+fn wait_with_timeout(
+    mut child: Child,
+    timeout: Duration,
+    name: &str,
+    allow_incomplete_output: bool,
+) -> io::Result<Captured> {
     use std::sync::mpsc;
 
     // Drain both pipes on their own threads so a chatty child can't block on a full pipe.
@@ -147,16 +157,6 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
     let stdout_rx = child.stdout.take().map(|p| drain(Box::new(p)));
     let stderr_rx = child.stderr.take().map(|p| drain(Box::new(p)));
 
-    let timeout_err = || {
-        io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!(
-                "git {name} timed out after {} seconds and was stopped",
-                timeout.as_secs()
-            ),
-        )
-    };
-
     let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -165,12 +165,18 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(timeout_err());
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "git {name} timed out after {} seconds and was stopped",
+                    timeout.as_secs()
+                ),
+            ));
         }
         thread::sleep(Duration::from_millis(15));
     };
 
-    let collect = |rx: Option<mpsc::Receiver<Vec<u8>>>| -> io::Result<Vec<u8>> {
+    let collect = |rx: Option<mpsc::Receiver<Vec<u8>>>| -> Result<Vec<u8>, ()> {
         let Some(rx) = rx else {
             return Ok(Vec::new());
         };
@@ -178,15 +184,31 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
         match rx.recv_timeout(remaining) {
             Ok(buf) => Ok(buf),
             Err(mpsc::RecvTimeoutError::Disconnected) => Ok(Vec::new()),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(timeout_err()),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(()),
         }
     };
 
-    Ok(Captured {
-        status,
-        stdout: collect(stdout_rx)?,
-        stderr: collect(stderr_rx)?,
-    })
+    let stdout = collect(stdout_rx);
+    let stderr = collect(stderr_rx);
+    match (stdout, stderr) {
+        (Ok(stdout), Ok(stderr)) => Ok(Captured {
+            status,
+            stdout,
+            stderr,
+        }),
+        (stdout, stderr) if allow_incomplete_output => Ok(Captured {
+            status,
+            stdout: stdout.unwrap_or_default(),
+            stderr: stderr.unwrap_or_default(),
+        }),
+        _ => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "git {name} exited ({status}), but a background process kept output open after {} seconds",
+                timeout.as_secs()
+            ),
+        )),
+    }
 }
 
 /// Checks whether the `git` CLI is installed and runnable using the augmented PATH.
@@ -212,7 +234,7 @@ fn check_availability_in_path(
         Err(_) => return crate::GitAvailability::Missing,
     };
 
-    match wait_with_timeout(child, timeout, "--version") {
+    match wait_with_timeout(child, timeout, "--version", false) {
         Ok(captured) if captured.status.success() => crate::GitAvailability::Available,
         Ok(captured) => {
             let stderr = String::from_utf8_lossy(&captured.stderr).to_ascii_lowercase();
@@ -263,7 +285,7 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let err = match wait_with_timeout(child, Duration::from_millis(300), "slow") {
+        let err = match wait_with_timeout(child, Duration::from_millis(300), "slow", false) {
             Ok(_) => panic!("expected a timeout"),
             Err(e) => e,
         };
