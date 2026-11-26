@@ -45,6 +45,7 @@ pub struct RepoSession {
     worktrees_dirty: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
     commit_sort: AtomicU8,
+    graph_cache: graph::SharedGraphCache,
 }
 
 impl Drop for RepoSession {
@@ -111,6 +112,7 @@ impl RepoSession {
             worktrees_dirty,
             stopped,
             commit_sort: AtomicU8::new(0),
+            graph_cache: Default::default(),
         })
     }
 
@@ -176,6 +178,7 @@ impl RepoSession {
     ) -> Result<Vec<CommitRow>, GitCraftError> {
         graph::get_commit_graph(
             &self.sync_repo,
+            &self.graph_cache,
             offset,
             limit,
             search_query,
@@ -191,6 +194,7 @@ impl RepoSession {
     ) -> Result<Vec<CommitRow>, GitCraftError> {
         graph::get_branch_graph(
             &self.sync_repo,
+            &self.graph_cache,
             offset,
             limit,
             search_query,
