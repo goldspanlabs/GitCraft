@@ -34,41 +34,6 @@ lightweight app you never have to pay for.
   There's no account to create and nothing to sign in to.
 - **Open source.** Read the code, file an issue, or send a pull request.
 
-## Features
-
-### See your whole history at a glance
-
-A clean commit graph with colour-coded lanes, branch and tag labels, author avatars, and
-instant filtering. Select any commit to see its message, changed files and a
-syntax-highlighted diff.
-
-### Stage and commit with confidence
-
-Staged, unstaged and untracked changes are clearly separated. Stage a single file or
-everything at once, write your message and commit, or amend the last commit.
-
-### Branches, worktrees, tags and stashes in one sidebar
-
-- Create, check out, merge and delete branches. With Git 2.38 or later, GitCraft checks for
-  conflicts *before* you merge.
-- First-class **worktrees**: add, open, lock and prune them without the command line.
-- Create annotated tags and push them to your remote.
-- Stash work in progress (untracked files included), then apply or pop it later.
-- See which branches are ahead of or behind their remote, with GitHub, GitLab, Bitbucket,
-  Codeberg, Gitea and SourceHut remotes recognised automatically.
-
-### Powerful history tools
-
-Rebase, reset, cherry-pick and revert straight from the commit graph. When something stops
-on a conflict, GitCraft tells you exactly where you are and lets you continue or abort.
-
-### Stays out of your way
-
-- Fetch, pull and push from the toolbar, with background auto-fetch on a schedule you choose.
-- Pull with merge or rebase, or follow your own git config.
-- Open several repositories as tabs in one window.
-- Light, dark or system appearance.
-
 ## Install
 
 ### Homebrew
