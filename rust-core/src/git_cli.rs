@@ -251,6 +251,9 @@ fn check_availability_in_path(path_env: &OsStr, timeout: Duration) -> crate::Git
                 crate::GitAvailability::Missing
             }
         }
+        // Git is there but slow, as on the first run after a boot. Calling it missing would
+        // drop the repository being opened; real commands have their own timeouts.
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => crate::GitAvailability::Available,
         Err(_) => crate::GitAvailability::Missing,
     }
 }
@@ -481,7 +484,8 @@ mod tests {
         let started = Instant::now();
         assert_eq!(
             check_availability_in_path(slow_dir.path().as_os_str(), Duration::from_millis(200)),
-            crate::GitAvailability::Missing
+            // The first run on a cold machine can be slow; that doesn't mean git is absent.
+            crate::GitAvailability::Available
         );
         let elapsed = started.elapsed();
         assert!(elapsed >= Duration::from_millis(180));
