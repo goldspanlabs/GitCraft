@@ -322,14 +322,17 @@ struct CommitTableView: NSViewRepresentable {
         }
 
         /// Lets other views hand keyboard focus back to the commit list (see `.focusCommitTable`).
-        /// A table that isn't in a window, such as one in a background tab, ignores the request.
+        /// Only the key window's table responds: other repository windows and background tabs
+        /// keep whatever they had focused.
         func observeFocusRequests() {
             focusObserver = NotificationCenter.default.addObserver(
                 forName: .focusCommitTable,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                guard let table = self?.tableView, let window = table.window else { return }
+                guard let table = self?.tableView, let window = table.window,
+                      window.isKeyWindow, !table.isHiddenOrHasHiddenAncestor
+                else { return }
                 window.makeFirstResponder(table)
             }
         }

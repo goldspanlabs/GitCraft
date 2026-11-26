@@ -131,6 +131,13 @@ struct CommitInspectorView: View {
                 changesPane
             }
         }
+        .onAppear {
+            // An inspector created while the panel is already maximized (a new selection, or
+            // a relaunch) never sees `isMaximized` change, so claim focus here too.
+            if isMaximized && pane == .changes {
+                DispatchQueue.main.async { fileListFocused = true }
+            }
+        }
         .onChange(of: isMaximized) { updateKeyboardFocus() }
         .onChange(of: pane) {
             if isMaximized && pane == .changes { fileListFocused = true }

@@ -107,33 +107,34 @@ struct RepoDetailView: View {
                         EmptyHistoryHint()
                     }
                 }
-                .overlay(alignment: .top) {
-                    VStack(spacing: 6) {
-                        if let error = tab.errorMessage {
-                            ToastView(message: error, tint: .red) {
-                                tab.errorMessage = nil
-                            }
-                            // UI tests wait for this to see that an action failed.
-                            .accessibilityElement(children: .contain)
-                            .accessibilityIdentifier("error-toast")
-                            .id(error)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-                        if let toast = tab.toast {
-                            ToastView(message: toast.message, autoDismissAfter: 4) {
-                                tab.toast = nil
-                            }
-                            .id(toast.id)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-                    }
-                    .padding(.top, 10)
-                }
-                .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
-                .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
             } bottom: {
                 InspectorView(tab: tab)
             }
+            // On the split, not the graph pane, so they stay visible while the bottom pane is maximized.
+            .overlay(alignment: .top) {
+                VStack(spacing: 6) {
+                    if let error = tab.errorMessage {
+                        ToastView(message: error, tint: .red) {
+                            tab.errorMessage = nil
+                        }
+                        // UI tests wait for this to see that an action failed.
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("error-toast")
+                        .id(error)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    if let toast = tab.toast {
+                        ToastView(message: toast.message, autoDismissAfter: 4) {
+                            tab.toast = nil
+                        }
+                        .id(toast.id)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .padding(.top, 10)
+            }
+            .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
+            .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
         }
         .modifier(RepoSheets(tab: tab))
         // Hairline under the toolbar: the title bar's own separator doesn't show here.
