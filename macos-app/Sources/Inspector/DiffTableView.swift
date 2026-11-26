@@ -71,6 +71,7 @@ struct DiffTableView: NSViewRepresentable {
         private var frameObserver: NSObjectProtocol?
         private var boundsObserver: NSObjectProtocol?
         private var gutterOffset: CGFloat = 0
+        private var visibleWidth: CGFloat = 0
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("DiffRowCell")
 
         init(rows: [DiffRow]) {
@@ -128,6 +129,11 @@ struct DiffTableView: NSViewRepresentable {
             if let col = table.tableColumns.first, abs(col.width - targetWidth) > 0.5 {
                 col.width = targetWidth
             }
+            guard abs(visibleWidth - self.visibleWidth) > 0.5 else { return }
+            self.visibleWidth = visibleWidth
+            table.enumerateAvailableRowViews { rowView, _ in
+                (rowView.view(atColumn: 0) as? DiffRowCellView)?.visibleWidth = visibleWidth
+            }
         }
 
         func numberOfRows(in _: NSTableView) -> Int {
@@ -151,6 +157,7 @@ struct DiffTableView: NSViewRepresentable {
                 ?? DiffRowCellView(identifier: Self.cellIdentifier)
             cell.configure(row: rows[row])
             cell.gutterOffset = gutterOffset
+            cell.visibleWidth = visibleWidth
             cell.endsFile = row + 1 < rows.count && rows[row + 1].kind == "header"
             return cell
         }
@@ -183,11 +190,14 @@ final class DiffRowCellView: NSTableCellView {
     private let fileNameLabel = NSTextField(labelWithString: "")
     private var gutterLeading: NSLayoutConstraint?
     private var fileIconLeading: NSLayoutConstraint?
+    private var fileNameMaxWidth: NSLayoutConstraint?
     private var row: DiffRow?
 
     static let lineHeight: CGFloat = 20
     static let fileHeaderHeight: CGFloat = 30
     private static let fileIconInset: CGFloat = 10
+    private static let fileIconWidth: CGFloat = 16
+    private static let fileNameSpacing: CGFloat = 6
 
     /// 6 + 36 + 4 + 36 + 6 + 1: labels, spacing and the divider.
     private static let gutterWidth: CGFloat = 89
@@ -199,6 +209,15 @@ final class DiffRowCellView: NSTableCellView {
         didSet {
             gutterLeading?.constant = gutterOffset
             fileIconLeading?.constant = gutterOffset + Self.fileIconInset
+        }
+    }
+
+    /// Width of the scroll view's visible area. A pinned header can't be scrolled sideways,
+    /// so its file name has to fit inside this.
+    var visibleWidth: CGFloat = 0 {
+        didSet {
+            let chrome = Self.fileIconInset * 2 + Self.fileIconWidth + Self.fileNameSpacing
+            fileNameMaxWidth?.constant = max(0, visibleWidth - chrome)
         }
     }
 
@@ -294,7 +313,10 @@ final class DiffRowCellView: NSTableCellView {
         fileIcon.contentTintColor = .secondaryLabelColor
         // Quieter than the pane's title bar above it.
         fileNameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        fileNameLabel.lineBreakMode = .byClipping
+        // Truncate the front of a long path, so the file's own name stays readable.
+        fileNameLabel.lineBreakMode = .byTruncatingHead
+        fileNameLabel.usesSingleLineMode = true
+        fileNameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         fileNameLabel.isSelectable = true
 
         addSubview(fileHeader)
@@ -309,6 +331,8 @@ final class DiffRowCellView: NSTableCellView {
             equalTo: fileHeader.leadingAnchor, constant: Self.fileIconInset
         )
         fileIconLeading = iconLeading
+        let nameMaxWidth = fileNameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 0)
+        fileNameMaxWidth = nameMaxWidth
 
         NSLayoutConstraint.activate([
             fileHeader.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -318,9 +342,12 @@ final class DiffRowCellView: NSTableCellView {
 
             iconLeading,
             fileIcon.centerYAnchor.constraint(equalTo: fileHeader.centerYAnchor),
-            fileIcon.widthAnchor.constraint(equalToConstant: 16),
+            fileIcon.widthAnchor.constraint(equalToConstant: Self.fileIconWidth),
 
-            fileNameLabel.leadingAnchor.constraint(equalTo: fileIcon.trailingAnchor, constant: 6),
+            nameMaxWidth,
+            fileNameLabel.leadingAnchor.constraint(
+                equalTo: fileIcon.trailingAnchor, constant: Self.fileNameSpacing
+            ),
             fileNameLabel.centerYAnchor.constraint(equalTo: fileHeader.centerYAnchor),
         ])
     }
@@ -370,6 +397,7 @@ final class DiffRowCellView: NSTableCellView {
             fileHeader.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
             fileNameLabel.textColor = NSColor.labelColor.withAlphaComponent(0.65)
             fileNameLabel.stringValue = row.text
+            fileNameLabel.toolTip = row.text
             codeLabel.stringValue = ""
             return
         }
