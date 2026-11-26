@@ -190,6 +190,21 @@ pub struct WatchFlags {
     pub stopped: Arc<AtomicBool>,
 }
 
+/// How often the polling fallback marks everything dirty.
+const POLL_FALLBACK_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Used when file watching can't start: marks status and graph dirty on a timer, so the UI
+/// still refreshes (at the cost of a periodic reload) instead of silently going stale.
+fn poll_until_stopped(
+    (status_dirty, graph_dirty, stopped): (Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>),
+) {
+    while !stopped.load(Ordering::Acquire) {
+        thread::sleep(POLL_FALLBACK_INTERVAL);
+        status_dirty.store(true, Ordering::Release);
+        graph_dirty.store(true, Ordering::Release);
+    }
+}
+
 /// Watches the checkout (plus its gitdir, commondir, and any sibling worktrees)
 /// and raises:
 /// - `status_dirty` when the active checkout's working tree or index changes,
@@ -222,6 +237,11 @@ pub fn spawn_dirty_watcher(
         let cb_common_dir = common_dir.clone();
         let cb_siblings = Arc::clone(&shared_siblings);
         let cb_reconcile = Arc::clone(&reconcile);
+        let fallback = (
+            Arc::clone(&flags.status_dirty),
+            Arc::clone(&flags.graph_dirty),
+            Arc::clone(&flags.stopped),
+        );
         let status_dirty = flags.status_dirty;
         let graph_dirty = flags.graph_dirty;
         let worktrees_dirty = flags.worktrees_dirty;
@@ -249,9 +269,12 @@ pub fn spawn_dirty_watcher(
             Config::default().with_poll_interval(Duration::from_millis(500)),
         ) {
             Ok(w) => w,
-            Err(_) => return,
+            Err(_) => return poll_until_stopped(fallback),
         };
-        let _ = watcher.watch(&worktree, RecursiveMode::Recursive);
+        // Without a watch on the checkout (the OS watch limit, say) nothing would ever refresh.
+        if watcher.watch(&worktree, RecursiveMode::Recursive).is_err() {
+            return poll_until_stopped(fallback);
+        }
         // Linked worktrees keep their metadata outside the checkout folder (`.git` is a file).
         if !common_dir.starts_with(&worktree) {
             let _ = watcher.watch(&common_dir, RecursiveMode::Recursive);
