@@ -38,6 +38,7 @@ final class WorkspaceState: ObservableObject {
         switch UserDefaults.standard.string(forKey: "UITestGitAvailability") {
         case "missing": return .missing
         case "needsCommandLineTools": return .needsCommandLineTools
+        case "outdated": return .outdated
         case "available": return .available
         default: return nil
         }

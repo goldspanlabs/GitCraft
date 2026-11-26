@@ -75,12 +75,58 @@ jobs:
           key: ${{ runner.os }}-rust-${{ hashFiles('rust-core/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-
+      - name: Show tool versions
+        run: git --version && cargo --version
       - name: Check formatting
         run: cargo fmt --manifest-path rust-core/Cargo.toml --check
       - name: Run clippy
         run: cargo clippy --manifest-path rust-core/Cargo.toml --all-targets -- -D warnings
       - name: Run Rust tests
         if: needs.changes.outputs.rust_tests == 'true'
+        run: cargo test --manifest-path rust-core/Cargo.toml
+
+  # The Rust tests against the oldest git the app supports (MINIMUM_VERSION in git_cli.rs).
+  rust-oldest-git:
+    needs: changes
+    if: needs.changes.outputs.rust_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OLDEST_GIT: v2.39.5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache the old git
+        id: old-git
+        uses: actions/cache@v4
+        with:
+          path: ~/oldest-git
+          key: ${{ runner.os }}-${{ runner.arch }}-git-${{ env.OLDEST_GIT }}
+      - name: Check out git's source
+        if: steps.old-git.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: git/git
+          ref: ${{ env.OLDEST_GIT }}
+          path: git-source
+      # The tests only use local repositories, so HTTP support and translations are left out.
+      - name: Build the old git
+        if: steps.old-git.outputs.cache-hit != 'true'
+        run: make -C git-source -j"$(nproc)" prefix="$HOME/oldest-git" NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_TCLTK=1 all install
+      - name: Put the old git first
+        run: echo "$HOME/oldest-git/bin" >> "$GITHUB_PATH"
+      - name: Confirm the version
+        run: |
+          git --version
+          git --version | grep -qF "git version ${OLDEST_GIT#v}"
+      - name: Cache Rust builds
+        uses: actions/cache@v4
+        with:
+          path: rust-core/target
+          key: ${{ runner.os }}-rust-oldest-git-${{ hashFiles('rust-core/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-
+      - name: Run Rust tests
         run: cargo test --manifest-path rust-core/Cargo.toml
 
   build-app:
@@ -111,6 +157,8 @@ jobs:
           key: ${{ runner.os }}-app-swift-${{ hashFiles('macos-app/Package.swift', 'macos-app/Sources/**') }}
           restore-keys: |
             ${{ runner.os }}-app-swift-
+      - name: Show tool versions
+        run: sw_vers && xcodebuild -version && git --version
       - name: Run Swift tests
         if: needs.changes.outputs.swift_tests == 'true'
         run: make test-swift

@@ -15,9 +15,14 @@ pub use models::*;
 pub use ops::{clone_repository, init_repository};
 pub use worktree::WorktreeInfo;
 
-/// Checks whether the `git` CLI is installed and runnable.
+/// Checks whether the `git` CLI is installed, runnable and recent enough.
 pub fn check_git_availability() -> GitAvailability {
     git_cli::check_availability()
+}
+
+/// The oldest supported git version, such as `2.39`.
+pub fn minimum_git_version() -> String {
+    git_cli::minimum_version()
 }
 
 use std::{

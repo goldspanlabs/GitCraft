@@ -14,7 +14,7 @@ lightweight app you never have to pay for.
 
 [![Latest release](https://img.shields.io/github/v/release/goldspanlabs/gitcraft?label=release)](https://github.com/goldspanlabs/gitcraft/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![macOS 14+](https://img.shields.io/badge/macOS-14%2B-lightgrey?logo=apple)
+![macOS 15+](https://img.shields.io/badge/macOS-15%2B-lightgrey?logo=apple)
 
 <br>
 
@@ -62,7 +62,7 @@ automatic checks off in **Settings**. It never installs anything itself: for a H
 banner copies `brew upgrade --cask gitcraft` for you to run, and otherwise it downloads the new DMG
 in your browser.
 
-GitCraft needs macOS 14 Sonoma or later on an Apple Silicon Mac, and `git` 2.38 or later (installed
+GitCraft needs macOS 15 Sequoia or later on an Apple Silicon Mac, and `git` 2.39 or later (installed
 with the Xcode Command Line Tools: `xcode-select --install`).
 
 ## Build from source

@@ -8,7 +8,19 @@ permissions:
   contents: write
 
 jobs:
+  # A release only goes out if the tests pass on the oldest macOS the app supports.
+  oldest-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Show tool versions
+        run: sw_vers && xcodebuild -version && git --version
+      - run: make test-swift
+
   macos:
+    needs: oldest-macos
     runs-on: macos-latest
     outputs:
       sha256: ${{ steps.dmg.outputs.sha256 }}

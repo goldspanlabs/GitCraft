@@ -1,5 +1,6 @@
 namespace gitcraft_core {
   GitAvailability check_git_availability();
+  string minimum_git_version();
 
   [Throws=GitCraftError]
   void init_repository(string path, string? initial_branch);
@@ -18,7 +19,8 @@ interface GitCraftError {
 enum GitAvailability {
   "Available",
   "Missing",
-  "NeedsCommandLineTools"
+  "NeedsCommandLineTools",
+  "Outdated"
 };
 
 enum CommitSort {

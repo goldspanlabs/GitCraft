@@ -37,6 +37,8 @@ pub enum GitAvailability {
     Missing,
     /// macOS `/usr/bin/git` shim is present, but Xcode Command Line Tools are not installed.
     NeedsCommandLineTools,
+    /// Git runs but is older than the minimum version.
+    Outdated,
 }
 
 /// Order in which the commit graph lists commits.

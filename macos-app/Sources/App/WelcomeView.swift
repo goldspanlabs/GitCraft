@@ -115,6 +115,8 @@ private struct GitMissingCard: View {
         switch availability {
         case .needsCommandLineTools:
             return "Xcode Command Line Tools Required"
+        case .outdated:
+            return "Git Needs an Update"
         case .missing, .available:
             return "Git Is Required to Use GitCraft"
         }
@@ -124,6 +126,8 @@ private struct GitMissingCard: View {
         switch availability {
         case .needsCommandLineTools:
             return "macOS has the git shim installed, but Xcode Command Line Tools are not set up yet."
+        case .outdated:
+            return "GitCraft needs git \(minimumGitVersion()) or later. Update the Command Line Tools in System Settings → General → Software Update, then check again."
         case .missing, .available:
             return "GitCraft couldn’t find git in PATH, Homebrew (/opt/homebrew/bin), or /usr/local/bin."
         }
@@ -147,8 +151,11 @@ private struct GitMissingCard: View {
             }
 
             HStack(spacing: 8) {
-                Button("Install Command Line Tools…", action: onInstallCLT)
-                    .buttonStyle(.borderedProminent)
+                // The installer can't update tools that are already there.
+                if availability != .outdated {
+                    Button("Install Command Line Tools…", action: onInstallCLT)
+                        .buttonStyle(.borderedProminent)
+                }
                 if availability == .missing {
                     Button("Download Git…", action: onDownloadGit)
                         .buttonStyle(.bordered)

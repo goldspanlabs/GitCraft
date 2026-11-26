@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "GitCraft",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("15.0")],
     products: [.executable(name: "GitCraft", targets: ["GitCraft"])],
     targets: [
         .executableTarget(

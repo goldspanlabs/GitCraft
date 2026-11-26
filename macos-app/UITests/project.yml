@@ -5,7 +5,7 @@ name: GitCraftUITests
 options:
   bundleIdPrefix: dev.gitcraft
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
 settings:
   base:
     SWIFT_VERSION: "5.9"

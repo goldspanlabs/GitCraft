@@ -245,7 +245,23 @@ fn wait_with_timeout(
     }
 }
 
-/// Checks whether the `git` CLI is installed and runnable using the augmented PATH.
+/// The oldest git the app is tested with, as major and minor version. CI runs the Rust tests
+/// against it, and the README states it.
+const MINIMUM_VERSION: (u32, u32) = (2, 39);
+
+/// [`MINIMUM_VERSION`] as shown to the user.
+pub fn minimum_version() -> String {
+    format!("{}.{}", MINIMUM_VERSION.0, MINIMUM_VERSION.1)
+}
+
+/// Major and minor version from `git version 2.39.5 (Apple Git-154)`.
+fn parse_version(output: &str) -> Option<(u32, u32)> {
+    let mut parts = output.trim().strip_prefix("git version ")?.split('.');
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Checks whether the `git` CLI is installed, runnable and recent enough, using the augmented
+/// PATH.
 pub fn check_availability() -> crate::GitAvailability {
     check_availability_in_path(&augmented_path(), PROBE_TIMEOUT)
 }
@@ -269,7 +285,12 @@ fn check_availability_in_path(path_env: &OsStr, timeout: Duration) -> crate::Git
     };
 
     match wait_with_timeout(child, timeout, "--version", false) {
-        Ok(captured) if captured.status.success() => crate::GitAvailability::Available,
+        Ok(captured) if captured.status.success() => {
+            match parse_version(&String::from_utf8_lossy(&captured.stdout)) {
+                Some(version) if version < MINIMUM_VERSION => crate::GitAvailability::Outdated,
+                _ => crate::GitAvailability::Available,
+            }
+        }
         Ok(captured) => {
             let stderr = String::from_utf8_lossy(&captured.stderr).to_ascii_lowercase();
             if stderr.contains("xcode-select") || stderr.contains("developer tools") {
@@ -474,6 +495,40 @@ mod tests {
         let text = path.to_string_lossy();
         assert!(text.contains("/opt/homebrew/bin"));
         assert!(text.contains("/usr/local/bin"));
+    }
+
+    /// How a `git` that prints `output` for `--version` is judged.
+    fn availability_of(output: &str) -> crate::GitAvailability {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join("git");
+        std::fs::write(&git, format!("#!/bin/sh\necho '{output}'\n")).unwrap();
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        check_availability_in_path(dir.path().as_os_str(), PROBE_TIMEOUT)
+    }
+
+    #[test]
+    fn git_older_than_the_minimum_is_reported_as_outdated() {
+        use crate::GitAvailability::{Available, Outdated};
+
+        for old in [
+            "git version 2.38.1",
+            "git version 2.32.0 (Apple Git-132)",
+            "git version 1.9.5",
+        ] {
+            assert_eq!(availability_of(old), Outdated, "{old}");
+        }
+        for new in [
+            "git version 2.39.0",
+            "git version 2.39.5 (Apple Git-154)",
+            "git version 2.100.0",
+            "git version 3.0.0-rc1",
+        ] {
+            assert_eq!(availability_of(new), Available, "{new}");
+        }
+        // Not being able to read the version is no reason to lock the user out.
+        assert_eq!(availability_of("something else"), Available);
     }
 
     #[test]
