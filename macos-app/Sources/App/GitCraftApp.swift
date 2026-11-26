@@ -80,7 +80,7 @@ struct RepoCommands: Commands {
                     Text("No Recent Repositories")
                 } else {
                     ForEach(workspace.recentPaths, id: \.self) { path in
-                        Button(URL(fileURLWithPath: path).lastPathComponent) {
+                        Button(recentMenuLabel(for: path, among: workspace.recentPaths)) {
                             workspace.openRepository(at: URL(fileURLWithPath: path))
                         }
                     }
@@ -93,8 +93,10 @@ struct RepoCommands: Commands {
 
             Button("Close Window") { workspace.closeActiveWindow() }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
+                .disabled(!workspace.hasOpenWindows)
             Button("Close Tab") { workspace.closeActiveTab() }
                 .keyboardShortcut("w", modifiers: .command)
+                .disabled(!workspace.hasOpenWindows)
         }
         CommandGroup(after: .sidebar) {
             Button("Refresh") { workspace.activeTab?.refresh() }
@@ -108,6 +110,16 @@ struct RepoCommands: Commands {
             Divider()
             ShowTagsMenuItem(tab: workspace.activeTab)
         }
+    }
+
+    private func recentMenuLabel(for path: String, among paths: [String]) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let hasDuplicate = paths.filter { URL(fileURLWithPath: $0).lastPathComponent == name }.count > 1
+        guard hasDuplicate else { return name }
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let shortParent = parent.hasPrefix(home) ? "~" + parent.dropFirst(home.count) : parent
+        return "\(name) — \(shortParent)"
     }
 }
 

@@ -27,6 +27,7 @@ final class WorkspaceState: ObservableObject {
 
     /// The repository shown in the frontmost GitCraft window.
     @Published private(set) var activeTab: RepoTab?
+    @Published private(set) var hasOpenWindows = false
 
     init() {
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
@@ -59,6 +60,10 @@ final class WorkspaceState: ObservableObject {
         let current = (NSApp?.keyWindow?.windowController as? RepoWindowController)?.tab
         if activeTab !== current {
             activeTab = current
+        }
+        let open = !repoControllers.isEmpty || !welcomeControllers.isEmpty
+        if hasOpenWindows != open {
+            hasOpenWindows = open
         }
     }
 
@@ -130,12 +135,14 @@ final class WorkspaceState: ObservableObject {
     func openWelcome() {
         let controller = WelcomeWindowController(workspace: self)
         welcomeControllers.append(controller)
+        refreshActiveTab()
         controller.showInTabs()
     }
 
     func openNewWindow() {
         let controller = WelcomeWindowController(workspace: self)
         welcomeControllers.append(controller)
+        refreshActiveTab()
         controller.showInNewWindow()
     }
 
@@ -203,6 +210,7 @@ final class WorkspaceState: ObservableObject {
 
     func welcomeClosed(_ controller: WelcomeWindowController) {
         welcomeControllers.removeAll { $0 === controller }
+        refreshActiveTab()
     }
 
     /// UI tests open a throwaway fixture repository via `-UITestOpenRepository`. It must not leak

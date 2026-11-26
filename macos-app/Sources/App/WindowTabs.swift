@@ -18,15 +18,20 @@ enum WindowTabs {
         window.isRestorable = false // GitCraft reopens its own repositories at launch
         window.tabbingIdentifier = identifier
         window.tabbingMode = .preferred
-        let host = inNewWindow
-            ? nil
-            : NSApp.windows.first {
+        let host: NSWindow?
+        if inNewWindow {
+            host = nil
+        } else {
+            let isEligible: (NSWindow) -> Bool = {
                 $0 !== window
                     && $0.tabbingIdentifier == identifier
                     && $0.tabbingMode == .preferred
                     && $0.isVisible
                     && !$0.isMiniaturized
             }
+            host = NSApp.keyWindow.flatMap { isEligible($0) ? $0 : nil }
+                ?? NSApp.windows.first(where: isEligible)
+        }
         if let host {
             host.addTabbedWindow(window, ordered: .above)
         } else {
@@ -53,14 +58,29 @@ enum WindowTabs {
         let parent = NSApp.keyWindow
         // Retain the controller until the sheet/window finishes closing.
         var retained: NSWindowController? = controller
+        var closeObserver: NSObjectProtocol?
+        let release: () -> Void = {
+            if let observer = closeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                closeObserver = nil
+            }
+            retained = nil
+            _ = retained
+        }
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: panel,
+            queue: .main
+        ) { _ in
+            release()
+        }
         let dismiss: () -> Void = {
             if let parent {
                 parent.endSheet(panel)
             } else {
                 panel.close()
             }
-            retained = nil
-            _ = retained
+            release()
         }
 
         let hosting = NSHostingController(rootView: AppearanceScoped { content(dismiss) })
@@ -69,8 +89,7 @@ enum WindowTabs {
 
         if let parent {
             parent.beginSheet(panel) { _ in
-                retained = nil
-                _ = retained
+                release()
             }
         } else {
             panel.center()

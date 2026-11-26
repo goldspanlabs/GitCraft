@@ -8,6 +8,7 @@ struct CreateRepositorySheet: View {
     @State private var folderPath = ""
     @State private var initialBranch = "main"
     @State private var isCreating = false
+    @State private var isDismissed = false
     @State private var errorMessage: String?
 
     private var trimmedPath: String {
@@ -20,7 +21,10 @@ struct CreateRepositorySheet: View {
             subtitle: "Initialize an empty Git repository in a local folder.",
             confirmLabel: isCreating ? "Creating…" : "Create",
             confirmDisabled: trimmedPath.isEmpty || isCreating,
-            onCancel: onDismiss,
+            onCancel: {
+                isDismissed = true
+                onDismiss()
+            },
             onConfirm: createRepository
         ) {
             VStack(alignment: .leading, spacing: 10) {
@@ -80,6 +84,7 @@ struct CreateRepositorySheet: View {
                     try initRepository(path: path, initialBranch: branch.isEmpty ? nil : branch)
                 }.value
                 isCreating = false
+                guard !isDismissed else { return }
                 if workspace.openRepository(at: URL(fileURLWithPath: path)) {
                     onDismiss()
                 } else {

@@ -7,9 +7,9 @@ final class FileMenuUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        fixture = try FixtureRepository.create()
-        app = XCUIApplication()
-        app.launchArguments = ["-UITestOpenRepository", fixture.repoURL.path]
+        fixture = try FixtureRepository.make(stagedChange: false)
+        app = XCUIApplication(url: try GitCraftApp.bundleURL())
+        app.launchArguments = ["-UITestOpenRepository", fixture.mainPath]
         app.launch()
         XCTAssertTrue(app.staticTexts["LOCAL BRANCHES"].waitForExistence(timeout: 60))
     }

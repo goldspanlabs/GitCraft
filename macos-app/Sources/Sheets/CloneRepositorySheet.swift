@@ -10,6 +10,7 @@ struct CloneRepositorySheet: View {
     @State private var folderName = ""
     @State private var hasEditedFolderName = false
     @State private var isCloning = false
+    @State private var isDismissed = false
     @State private var errorMessage: String?
 
     private var trimmedURL: String {
@@ -38,7 +39,10 @@ struct CloneRepositorySheet: View {
             subtitle: "Clone a remote Git repository into a local folder.",
             confirmLabel: isCloning ? "Cloning…" : "Clone",
             confirmDisabled: trimmedURL.isEmpty || trimmedParent.isEmpty || trimmedFolderName.isEmpty || isCloning,
-            onCancel: onDismiss,
+            onCancel: {
+                isDismissed = true
+                onDismiss()
+            },
             onConfirm: cloneRepo
         ) {
             VStack(alignment: .leading, spacing: 10) {
@@ -143,6 +147,7 @@ struct CloneRepositorySheet: View {
                     try cloneRepository(url: url, destination: dest)
                 }.value
                 isCloning = false
+                guard !isDismissed else { return }
                 if workspace.openRepository(at: URL(fileURLWithPath: dest)) {
                     onDismiss()
                 } else {
