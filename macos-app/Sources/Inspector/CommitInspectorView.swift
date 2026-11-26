@@ -77,6 +77,8 @@ struct CommitInspectorView: View {
     @ObservedObject var tab: RepoTab
     let commit: CommitRow
     @State private var pane: CommitPaneTab = .changes
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
+    @FocusState private var fileListFocused: Bool
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -84,6 +86,32 @@ struct CommitInspectorView: View {
         f.timeStyle = .short
         return f
     }()
+
+    /// Maximizing hands the arrow keys to the changed-files list; restoring hands them back to
+    /// the commit list, so the keys always drive whatever the person is looking at.
+    private func updateKeyboardFocus() {
+        if isMaximized {
+            if pane == .changes { fileListFocused = true }
+        } else {
+            fileListFocused = false
+            NotificationCenter.default.post(name: .focusCommitTable, object: nil)
+        }
+    }
+
+    /// Moves the selected changed file by `delta` rows, stopping at the first and last file.
+    private func moveFileSelection(by delta: Int) {
+        let files = tab.commitDetail?.files ?? []
+        guard !files.isEmpty else { return }
+        let current = files.firstIndex { $0.path == tab.selectedFilePath }
+        let next: Int
+        if let current {
+            next = min(max(current + delta, 0), files.count - 1)
+        } else {
+            // Nothing selected ("All"): down picks the first file, up the last.
+            next = delta > 0 ? 0 : files.count - 1
+        }
+        tab.selectCommitFile(files[next].path)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,6 +130,10 @@ struct CommitInspectorView: View {
             case .changes:
                 changesPane
             }
+        }
+        .onChange(of: isMaximized) { updateKeyboardFocus() }
+        .onChange(of: pane) {
+            if isMaximized && pane == .changes { fileListFocused = true }
         }
     }
 
@@ -166,8 +198,24 @@ struct CommitInspectorView: View {
 
                 Divider()
 
-                ScrollView {
-                    CommitFileList(tab: tab) { tab.selectCommitFile($0) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        CommitFileList(tab: tab) { tab.selectCommitFile($0) }
+                    }
+                    .focusable()
+                    .focused($fileListFocused)
+                    .focusEffectDisabled()
+                    .onKeyPress(.upArrow) {
+                        moveFileSelection(by: -1)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        moveFileSelection(by: 1)
+                        return .handled
+                    }
+                    .onChange(of: tab.selectedFilePath) {
+                        if let path = tab.selectedFilePath { proxy.scrollTo(path) }
+                    }
                 }
             }
             .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
@@ -268,6 +316,7 @@ private struct CommitFileList: View {
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(tab.commitDetail?.files ?? [], id: \.path) { file in
+                // The row's id is its path, which lets the list scroll to the selected file.
                 Button {
                     onSelect(file.path)
                 } label: {

@@ -10,6 +10,11 @@ enum CommitAction {
     case revert
 }
 
+extension Notification.Name {
+    /// Posted to move keyboard focus (arrow keys) back to the commit list.
+    static let focusCommitTable = Notification.Name("GitCraft.focusCommitTable")
+}
+
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
     let graphRevision: UUID
@@ -82,6 +87,7 @@ struct CommitTableView: NSViewRepresentable {
 
         context.coordinator.tableView = table
         context.coordinator.observeScroll(scrollView.contentView)
+        context.coordinator.observeFocusRequests()
 
         return scrollView
     }
@@ -215,6 +221,7 @@ struct CommitTableView: NSViewRepresentable {
         var isRestoringSelection = false
         weak var tableView: NSTableView?
         private var boundsObserver: NSObjectProtocol?
+        private var focusObserver: NSObjectProtocol?
 
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("CommitRowCell")
 
@@ -308,6 +315,22 @@ struct CommitTableView: NSViewRepresentable {
         deinit {
             if let boundsObserver {
                 NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            if let focusObserver {
+                NotificationCenter.default.removeObserver(focusObserver)
+            }
+        }
+
+        /// Lets other views hand keyboard focus back to the commit list (see `.focusCommitTable`).
+        /// A table that isn't in a window, such as one in a background tab, ignores the request.
+        func observeFocusRequests() {
+            focusObserver = NotificationCenter.default.addObserver(
+                forName: .focusCommitTable,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let table = self?.tableView, let window = table.window else { return }
+                window.makeFirstResponder(table)
             }
         }
 
