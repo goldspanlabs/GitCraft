@@ -1,7 +1,8 @@
 use std::{
-    ffi::OsString,
+    ffi::{CString, OsStr, OsString},
     io::{self, Read},
-    path::Path,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -46,7 +47,13 @@ fn execute_raw(
     timeout: Duration,
     mutating: bool,
 ) -> Result<CommandOutput, crate::GitCraftError> {
-    let mut command = Command::new("git");
+    let path_env = augmented_path();
+    let Some(git) = resolve_git(&path_env) else {
+        // A missing repository folder is the more useful thing to report.
+        std::fs::metadata(repo)?;
+        return Err(crate::GitCraftError::GitNotFound);
+    };
+    let mut command = Command::new(git);
     command
         // Report non-ASCII paths verbatim instead of as "\303\251" escapes.
         .args(["-c", "core.quotepath=off"])
@@ -59,7 +66,7 @@ fn execute_raw(
         ])
         .args(args)
         .current_dir(repo)
-        .env("PATH", augmented_path())
+        .env("PATH", path_env)
         // There is no terminal to prompt on: fail with an error instead of waiting.
         .env("GIT_TERMINAL_PROMPT", "0")
         // The app matches some of git's messages (for example "divergent branches"), so keep
@@ -216,11 +223,11 @@ pub fn check_availability() -> crate::GitAvailability {
     check_availability_in_path(&augmented_path(), PROBE_TIMEOUT)
 }
 
-fn check_availability_in_path(
-    path_env: &std::ffi::OsStr,
-    timeout: Duration,
-) -> crate::GitAvailability {
-    let child = match Command::new("git")
+fn check_availability_in_path(path_env: &OsStr, timeout: Duration) -> crate::GitAvailability {
+    let Some(git) = resolve_git(path_env) else {
+        return crate::GitAvailability::Missing;
+    };
+    let child = match Command::new(git)
         .arg("--version")
         .env("PATH", path_env)
         .env("LC_MESSAGES", "C")
@@ -246,6 +253,29 @@ fn check_availability_in_path(
         }
         Err(_) => crate::GitAvailability::Missing,
     }
+}
+
+/// The first `git` this process may execute in an absolute directory of `path_env`.
+///
+/// Passing a full path matters on macOS: given a bare name and a custom `PATH`, `Command`
+/// uses `fork` instead of `posix_spawn`, and a forked child of a multithreaded process can
+/// crash in a system library before it reaches `exec`. That shows up as git dying with
+/// SIGKILL.
+fn resolve_git(path_env: &OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path_env)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file() && is_executable(candidate))
+}
+
+/// Asks the system whether the effective user may execute `path`. The mode bits alone
+/// don't say: they depend on who owns the file, and access control lists can override them.
+fn is_executable(path: &Path) -> bool {
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a NUL-terminated string that outlives the call.
+    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
 }
 
 /// A GUI app launched from Finder gets a minimal PATH, so tools used by hooks and
@@ -329,6 +359,75 @@ mod tests {
         let dir = temp_repo();
         let out = run(dir.path(), &["-c", "alias.msg=!echo $LC_MESSAGES", "msg"]).unwrap();
         assert_eq!(out.trim(), "C");
+    }
+
+    #[test]
+    fn git_commands_are_spawned_without_forking() {
+        use std::{cell::Cell, ffi::c_int, sync::Once};
+
+        extern "C" {
+            fn pthread_atfork(
+                prepare: Option<extern "C" fn()>,
+                parent: Option<extern "C" fn()>,
+                child: Option<extern "C" fn()>,
+            ) -> c_int;
+        }
+        // The prepare handler runs on the forking thread, so a thread-local count ignores
+        // forks made by tests running in parallel.
+        thread_local!(static FORKS: Cell<u32> = const { Cell::new(0) });
+        extern "C" fn count_fork() {
+            FORKS.with(|forks| forks.set(forks.get() + 1));
+        }
+        static REGISTER: Once = Once::new();
+        REGISTER.call_once(|| {
+            assert_eq!(unsafe { pthread_atfork(Some(count_fork), None, None) }, 0);
+        });
+
+        let dir = temp_repo();
+        run(dir.path(), &["status"]).unwrap();
+        mutate(dir.path(), &["add", "-A"]).unwrap();
+        assert_eq!(check_availability(), crate::GitAvailability::Available);
+
+        assert_eq!(FORKS.with(Cell::get), 0);
+    }
+
+    fn fake_git(dir: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = dir.join("git");
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn git_lookup_skips_a_file_this_user_cannot_execute() {
+        let blocked = tempfile::tempdir().unwrap();
+        let usable = tempfile::tempdir().unwrap();
+        // Executable by the group and others, but not by the owner running the test.
+        fake_git(blocked.path(), 0o655);
+        fake_git(usable.path(), 0o755);
+        let path = std::env::join_paths([blocked.path(), usable.path()]).unwrap();
+
+        assert_eq!(
+            check_availability_in_path(&path, PROBE_TIMEOUT),
+            crate::GitAvailability::Available
+        );
+    }
+
+    #[test]
+    fn git_in_a_relative_path_entry_is_not_run() {
+        let dir = tempfile::tempdir().unwrap();
+        fake_git(dir.path(), 0o755);
+        // The same folder, spelled relative to the current directory.
+        let depth = std::env::current_dir().unwrap().components().count() - 1;
+        let relative =
+            PathBuf::from("../".repeat(depth)).join(dir.path().strip_prefix("/").unwrap());
+        assert!(relative.join("git").exists());
+
+        assert_eq!(
+            check_availability_in_path(relative.as_os_str(), PROBE_TIMEOUT),
+            crate::GitAvailability::Missing
+        );
     }
 
     #[test]

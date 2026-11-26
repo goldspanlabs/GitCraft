@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use common::{configure_git_identity, run_git};
+use common::{configure_git_identity, run_git, wait_for_watcher};
 use gitcraft_core::{PullStrategy, RefKind, RepoSession};
 
 #[test]
@@ -330,9 +330,7 @@ fn file_watcher_sets_dirty_flag_on_worktree_change() {
     run_git(dir.path(), &["init", "-b", "main"]);
     let session = RepoSession::new(dir.path().to_string_lossy().into_owned()).unwrap();
 
-    // Drain any initial events while watcher settles
-    thread::sleep(Duration::from_millis(600));
-    let _ = session.take_dirty();
+    wait_for_watcher(&session);
 
     fs::write(dir.path().join("watched.txt"), "change\n").unwrap();
 

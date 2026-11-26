@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::Path,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 use gitcraft_core::RepoSession;
 
@@ -69,4 +75,24 @@ pub fn commit_file(dir: &Path, name: &str, contents: &str, msg: &str) -> String 
     run_git(dir, &["add", "-A"]);
     run_git(dir, &["commit", "-m", msg]);
     head(dir)
+}
+
+/// Waits until the session's file watcher is listening, then lets startup events arrive and
+/// discards them, so flags raised afterwards come from changes the test makes.
+///
+/// A fixed sleep is not enough: registering watches can take over a second, for example when
+/// the test binary sits in a folder holding tens of thousands of build artifacts.
+pub fn wait_for_watcher(session: &RepoSession) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !session.is_watcher_ready() {
+        assert!(
+            Instant::now() < deadline,
+            "the file watcher never became ready"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(600));
+    let _ = session.take_dirty();
+    let _ = session.take_graph_dirty();
+    let _ = session.take_worktrees_dirty();
 }

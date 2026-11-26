@@ -187,6 +187,8 @@ pub struct WatchFlags {
     pub status_dirty: Arc<AtomicBool>,
     pub graph_dirty: Arc<AtomicBool>,
     pub worktrees_dirty: Arc<AtomicBool>,
+    /// Set once the watches are in place; changes made before that can go unnoticed.
+    pub ready: Arc<AtomicBool>,
     pub stopped: Arc<AtomicBool>,
 }
 
@@ -247,6 +249,7 @@ pub fn spawn_dirty_watcher(
         let graph_dirty = flags.graph_dirty;
         let worktrees_dirty = flags.worktrees_dirty;
         let stopped = flags.stopped;
+        let ready = flags.ready;
         let callback = move |result: notify::Result<Event>| {
             let Ok(event) = result else { return };
             let Ok(siblings) = cb_siblings.lock() else {
@@ -270,10 +273,14 @@ pub fn spawn_dirty_watcher(
             Config::default().with_poll_interval(Duration::from_millis(500)),
         ) {
             Ok(w) => w,
-            Err(_) => return poll_until_stopped(fallback, POLL_FALLBACK_INTERVAL),
+            Err(_) => {
+                ready.store(true, Ordering::Release);
+                return poll_until_stopped(fallback, POLL_FALLBACK_INTERVAL);
+            }
         };
         // Without a watch on the checkout (the OS watch limit, say) nothing would ever refresh.
         if watcher.watch(&worktree, RecursiveMode::Recursive).is_err() {
+            ready.store(true, Ordering::Release);
             return poll_until_stopped(fallback, POLL_FALLBACK_INTERVAL);
         }
         // Linked worktrees keep their metadata outside the checkout folder (`.git` is a file).
@@ -291,6 +298,7 @@ pub fn spawn_dirty_watcher(
                 if let Ok(mut shared) = shared_siblings.lock() {
                     *shared = siblings;
                 }
+                ready.store(true, Ordering::Release);
             }
             thread::sleep(Duration::from_millis(500));
         }
