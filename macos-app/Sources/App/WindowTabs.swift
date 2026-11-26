@@ -191,6 +191,12 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
     func reveal() { WindowTabs.reveal(window!) }
 
+    /// Puts the cursor in the toolbar's commit filter, expanding it if the toolbar collapsed it.
+    func focusSearchField() {
+        let search = window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first
+        search?.beginSearchInteraction()
+    }
+
     private func refreshChrome() {
         window?.title = tab.checkoutName
         window?.subtitle = tab.currentBranch

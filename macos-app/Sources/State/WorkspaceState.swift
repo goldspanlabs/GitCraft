@@ -28,7 +28,6 @@ final class WorkspaceState: ObservableObject {
 
     /// The repository shown in the frontmost GitCraft window.
     @Published private(set) var activeTab: RepoTab?
-    @Published private(set) var hasOpenWindows = false
 
     private let gitAvailabilityProvider: @Sendable () -> GitAvailability
     private var hasDeferredTabRestore = false
@@ -78,10 +77,6 @@ final class WorkspaceState: ObservableObject {
         let current = (NSApp?.keyWindow?.windowController as? RepoWindowController)?.tab
         if activeTab !== current {
             activeTab = current
-        }
-        let open = !repoControllers.isEmpty || !welcomeControllers.isEmpty
-        if hasOpenWindows != open {
-            hasOpenWindows = open
         }
     }
 
@@ -278,6 +273,10 @@ final class WorkspaceState: ObservableObject {
         guard !Self.isUITestRun else { return }
         UserDefaults.standard.removeObject(forKey: Self.recentKey)
         UserDefaults.standard.removeObject(forKey: "recentRepository")
+    }
+
+    func focusCommitFilter() {
+        (NSApp.keyWindow?.windowController as? RepoWindowController)?.focusSearchField()
     }
 
     func closeActiveTab() {

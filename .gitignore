@@ -4,3 +4,4 @@ build/
 DerivedData/
 macos-app/Sources/Generated/
 macos-app/UITests/*.xcodeproj/
+/docs/superpowers/
