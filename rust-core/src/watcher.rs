@@ -1,5 +1,5 @@
 use crate::{git_cli, worktree};
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
     fs,
@@ -211,6 +211,13 @@ fn poll_until_stopped(
     }
 }
 
+/// False for events that only report a file being opened, read or closed. Linux sends those
+/// too, so counting them would turn our own git commands' reads into changes. A write also
+/// arrives as a create or modify event.
+fn may_change_files(kind: &EventKind) -> bool {
+    !kind.is_access()
+}
+
 /// Past this many changed files between two looks, they are not checked against the ignore
 /// rules: the checkout is simply reported as changed.
 const MAX_PENDING_FILES: usize = 20_000;
@@ -281,6 +288,9 @@ pub fn spawn_dirty_watcher(repo: &Path, git_dir: &Path, common_dir: &Path, flags
         let ready = flags.ready;
         let callback = move |result: notify::Result<Event>| {
             let Ok(event) = result else { return };
+            if !may_change_files(&event.kind) {
+                return;
+            }
             let Ok(siblings) = cb_siblings.lock() else {
                 return;
             };
@@ -358,6 +368,29 @@ pub fn spawn_dirty_watcher(repo: &Path, git_dir: &Path, common_dir: &Path, flags
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_a_file_is_not_a_change() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind,
+        };
+
+        for read in [
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Write),
+        ] {
+            assert!(!may_change_files(&EventKind::Access(read)));
+        }
+        for change in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Any,
+            EventKind::Other,
+        ] {
+            assert!(may_change_files(&change), "{change:?}");
+        }
+    }
 
     #[test]
     fn classifies_events_in_primary_checkout() {
