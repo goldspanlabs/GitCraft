@@ -13,6 +13,7 @@ final class WorkspaceState: ObservableObject {
 
     @Published var recentPaths: [String] = []
     @Published var openError: String?
+    @Published private(set) var closedTabPaths: [String] = []
 
     /// Set to true by the app delegate when quitting, so windows closing during
     /// shutdown don't erase the saved list of open repositories.
@@ -99,6 +100,7 @@ final class WorkspaceState: ObservableObject {
                 return true
             }
             openError = nil
+            closedTabPaths.removeAll { $0 == resolvedPath || $0 == tab.activeCheckoutPath }
             recordRecent(path: tab.repoPath)
             let controller = RepoWindowController(tab: tab, workspace: self)
             repoControllers.append(controller)
@@ -131,12 +133,71 @@ final class WorkspaceState: ObservableObject {
         controller.showInTabs()
     }
 
+    func openNewWindow() {
+        let controller = WelcomeWindowController(workspace: self)
+        welcomeControllers.append(controller)
+        controller.showInNewWindow()
+    }
+
+    func restoreClosedTab() {
+        while let path = closedTabPaths.popLast() {
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            if openRepository(at: URL(fileURLWithPath: path)) {
+                return
+            }
+        }
+    }
+
+    func clearRecentRepositories() {
+        recentPaths = []
+        guard !Self.isUITestRun else { return }
+        UserDefaults.standard.removeObject(forKey: Self.recentKey)
+        UserDefaults.standard.removeObject(forKey: "recentRepository")
+    }
+
+    func closeActiveTab() {
+        NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
+    }
+
+    func closeActiveWindow() {
+        guard let window = NSApp.keyWindow else { return }
+        if let group = window.tabGroup {
+            for tabWindow in Array(group.windows) {
+                tabWindow.performClose(nil)
+            }
+        } else {
+            window.performClose(nil)
+        }
+    }
+
+    func presentCreateRepositorySheet() {
+        WindowTabs.presentSheet { dismiss in
+            CreateRepositorySheet(workspace: self, onDismiss: dismiss)
+        }
+    }
+
+    func presentCloneRepositorySheet() {
+        WindowTabs.presentSheet { dismiss in
+            CloneRepositorySheet(workspace: self, onDismiss: dismiss)
+        }
+    }
+
     func windowClosed(_ controller: RepoWindowController) {
+        let closedPath = controller.tab.activeCheckoutPath
         controller.tab.stopWatcher()
         repoControllers.removeAll { $0 === controller }
         refreshActiveTab()
         if !Self.isTerminating {
+            recordClosedTab(path: closedPath)
             saveOpenTabs()
+        }
+    }
+
+    private func recordClosedTab(path: String) {
+        closedTabPaths.removeAll { $0 == path }
+        closedTabPaths.append(path)
+        if closedTabPaths.count > 20 {
+            closedTabPaths.removeFirst(closedTabPaths.count - 20)
         }
     }
 

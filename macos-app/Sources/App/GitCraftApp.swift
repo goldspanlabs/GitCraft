@@ -56,16 +56,51 @@ struct RepoCommands: Commands {
     @ObservedObject private var workspace = WorkspaceState.shared
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Open Repository…") { workspace.chooseRepository() }
-                .keyboardShortcut("o", modifiers: .command)
-            Button("New Repository Tab…") { workspace.chooseRepository() }
+        CommandGroup(replacing: .newItem) {
+            Button("New Window") { workspace.openNewWindow() }
+                .keyboardShortcut("n", modifiers: .command)
+            Button("New Tab") { workspace.openWelcome() }
                 .keyboardShortcut("t", modifiers: .command)
+            Button("Restore Closed Tab") { workspace.restoreClosedTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(workspace.closedTabPaths.isEmpty)
+
             Divider()
-            Button("Refresh") { workspace.activeTab?.refresh() }
-                .keyboardShortcut("r", modifiers: .command)
+
+            Button("Create New Local Repository…") { workspace.presentCreateRepositorySheet() }
+            Button("Clone…") { workspace.presentCloneRepositorySheet() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Open…") { workspace.chooseRepository() }
+                .keyboardShortcut("o", modifiers: .command)
+            Menu("Open Recent") {
+                if workspace.recentPaths.isEmpty {
+                    Text("No Recent Repositories")
+                } else {
+                    ForEach(workspace.recentPaths, id: \.self) { path in
+                        Button(URL(fileURLWithPath: path).lastPathComponent) {
+                            workspace.openRepository(at: URL(fileURLWithPath: path))
+                        }
+                    }
+                    Divider()
+                    Button("Clear Menu") { workspace.clearRecentRepositories() }
+                }
+            }
+
+            Divider()
+
+            Button("Close Window") { workspace.closeActiveWindow() }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Button("Close Tab") { workspace.closeActiveTab() }
+                .keyboardShortcut("w", modifiers: .command)
         }
         CommandGroup(after: .sidebar) {
+            Button("Refresh") { workspace.activeTab?.refresh() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(workspace.activeTab == nil)
+            Divider()
             Button("Toggle Sidebar") {
                 NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
             }

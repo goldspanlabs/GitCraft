@@ -1,4 +1,10 @@
-namespace gitcraft_core {};
+namespace gitcraft_core {
+  [Throws=GitCraftError]
+  void init_repository(string path, string? initial_branch);
+
+  [Throws=GitCraftError]
+  void clone_repository(string url, string destination);
+};
 
 [Error]
 interface GitCraftError {
