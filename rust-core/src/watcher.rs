@@ -52,6 +52,11 @@ fn classify_inside_git_dir(inside: &str, is_active_worktree: bool) -> Change {
     if inside.starts_with("objects/") || inside.starts_with("logs/") {
         return Change::Irrelevant;
     }
+    // Bookkeeping files that git rewrites next to a change that is already seen through its
+    // own file (a ref, HEAD or the index), or that the app refreshes after itself (fetch).
+    if matches!(inside, "FETCH_HEAD" | "ORIG_HEAD" | "COMMIT_EDITMSG") {
+        return Change::Irrelevant;
+    }
     if inside == "index" || inside == "MERGE_HEAD" || inside == "MERGE_MSG" {
         return if is_active_worktree {
             Change::Status
@@ -289,6 +294,9 @@ mod tests {
         assert_eq!(classify("/r/app/Podfile.lock"), Change::Status);
         assert_eq!(classify("/r/.git/objects/ab/cdef"), Change::Irrelevant);
         assert_eq!(classify("/r/.git/logs/HEAD"), Change::Irrelevant);
+        assert_eq!(classify("/r/.git/FETCH_HEAD"), Change::Irrelevant);
+        assert_eq!(classify("/r/.git/ORIG_HEAD"), Change::Irrelevant);
+        assert_eq!(classify("/r/.git/COMMIT_EDITMSG"), Change::Irrelevant);
         assert_eq!(classify("/r/.git/HEAD"), Change::Graph);
         assert_eq!(classify("/r/.git/refs/heads/main"), Change::Graph);
         assert_eq!(classify("/r/.git/packed-refs"), Change::Graph);

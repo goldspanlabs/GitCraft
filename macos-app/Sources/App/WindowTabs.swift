@@ -243,7 +243,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSSearchField, field === searchField else { return }
-        tab.updateSearch(field.stringValue)
+        tab.updateSearchDebounced(field.stringValue)
     }
 }
 
