@@ -13,6 +13,7 @@ final class WorkspaceState: ObservableObject {
 
     @Published var recentPaths: [String] = []
     @Published var openError: String?
+    @Published private(set) var gitAvailability: GitAvailability = .available
     @Published private(set) var closedTabPaths: [String] = []
 
     /// Set to true by the app delegate when quitting, so windows closing during
@@ -29,7 +30,24 @@ final class WorkspaceState: ObservableObject {
     @Published private(set) var activeTab: RepoTab?
     @Published private(set) var hasOpenWindows = false
 
-    init() {
+    private let gitAvailabilityProvider: @Sendable () -> GitAvailability
+    private var hasDeferredTabRestore = false
+
+    var hasOpenRepositories: Bool { !repoControllers.isEmpty }
+
+    private nonisolated static var uiTestGitAvailabilityOverride: GitAvailability? {
+        switch UserDefaults.standard.string(forKey: "UITestGitAvailability") {
+        case "missing": return .missing
+        case "needsCommandLineTools": return .needsCommandLineTools
+        case "available": return .available
+        default: return nil
+        }
+    }
+
+    init(gitAvailabilityProvider: @escaping @Sendable () -> GitAvailability = {
+        WorkspaceState.uiTestGitAvailabilityOverride ?? checkGitAvailability()
+    }) {
+        self.gitAvailabilityProvider = gitAvailabilityProvider
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
         if let legacy = UserDefaults.standard.string(forKey: "recentRepository"),
            !recentPaths.contains(legacy)
@@ -67,31 +85,106 @@ final class WorkspaceState: ObservableObject {
         }
     }
 
+    func deferTabRestore() {
+        hasDeferredTabRestore = true
+    }
+
+    @discardableResult
+    func refreshGitAvailability() -> GitAvailability {
+        let status = gitAvailabilityProvider()
+        applyGitAvailability(status)
+        return status
+    }
+
+    @discardableResult
+    func refreshGitAvailabilityAsync() async -> GitAvailability {
+        let provider = gitAvailabilityProvider
+        let status = await Task.detached { provider() }.value
+        applyGitAvailability(status)
+        return status
+    }
+
+    private func applyGitAvailability(_ status: GitAvailability) {
+        gitAvailability = status
+        if status == .available, hasDeferredTabRestore {
+            hasDeferredTabRestore = false
+            _ = restoreTabs()
+        }
+    }
+
+    func installCommandLineTools() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["--install"]
+        try? process.run()
+    }
+
+    func openGitDownloadPage() {
+        if let url = URL(string: "https://git-scm.com/downloads/mac") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Reopens the repositories that were open when the app last quit.
     /// Returns true if it opened any.
     func restoreTabs() -> Bool {
         let saved = UserDefaults.standard.stringArray(forKey: Self.openTabsKey) ?? []
         var opened = false
         for path in saved where FileManager.default.fileExists(atPath: path) {
-            if openRepository(at: URL(fileURLWithPath: path)) { opened = true }
+            if openRepository(at: URL(fileURLWithPath: path), validateGit: false) { opened = true }
         }
         return opened
     }
 
     @discardableResult
     func chooseRepository() -> Bool {
+        if refreshGitAvailability() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
+        return presentOpenRepositoryPanel()
+    }
+
+    @discardableResult
+    func chooseRepositoryAsync() async -> Bool {
+        if await refreshGitAvailabilityAsync() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
+        return presentOpenRepositoryPanel()
+    }
+
+    private func presentOpenRepositoryPanel() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Open Repository"
         guard panel.runModal() == .OK, let url = panel.url else { return false }
-        return openRepository(at: url)
+        return openRepository(at: url, validateGit: false)
     }
 
     /// Opens `url` in a new tab, or brings its existing tab to the front.
     @discardableResult
     func openRepository(at url: URL) -> Bool {
+        openRepository(at: url, validateGit: true)
+    }
+
+    @discardableResult
+    func openRepositoryAsync(at url: URL) async -> Bool {
+        if await refreshGitAvailabilityAsync() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
+        return openRepository(at: url, validateGit: false)
+    }
+
+    @discardableResult
+    private func openRepository(at url: URL, validateGit: Bool) -> Bool {
+        if validateGit, refreshGitAvailability() != .available {
+            ensureWelcomeVisible()
+            return false
+        }
         let resolvedPath = RepoTab.canonicalPath(for: url.path)
         let resolved = URL(fileURLWithPath: resolvedPath)
         if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
@@ -139,6 +232,15 @@ final class WorkspaceState: ObservableObject {
         controller.showInTabs()
     }
 
+    private func ensureWelcomeVisible() {
+        guard NSApp != nil else { return }
+        if let existing = welcomeControllers.first {
+            existing.window?.makeKeyAndOrderFront(nil)
+        } else {
+            openWelcome()
+        }
+    }
+
     func openNewWindow() {
         let controller = WelcomeWindowController(workspace: self)
         welcomeControllers.append(controller)
@@ -147,9 +249,25 @@ final class WorkspaceState: ObservableObject {
     }
 
     func restoreClosedTab() {
+        guard refreshGitAvailability() == .available else {
+            ensureWelcomeVisible()
+            return
+        }
+        popAndRestoreClosedTab()
+    }
+
+    func restoreClosedTabAsync() async {
+        guard await refreshGitAvailabilityAsync() == .available else {
+            ensureWelcomeVisible()
+            return
+        }
+        popAndRestoreClosedTab()
+    }
+
+    private func popAndRestoreClosedTab() {
         while let path = closedTabPaths.popLast() {
             guard FileManager.default.fileExists(atPath: path) else { continue }
-            if openRepository(at: URL(fileURLWithPath: path)) {
+            if openRepository(at: URL(fileURLWithPath: path), validateGit: false) {
                 return
             }
         }

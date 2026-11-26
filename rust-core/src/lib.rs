@@ -15,6 +15,11 @@ pub use models::*;
 pub use ops::{clone_repository, init_repository};
 pub use worktree::WorktreeInfo;
 
+/// Checks whether the `git` CLI is installed and runnable.
+pub fn check_git_availability() -> GitAvailability {
+    git_cli::check_availability()
+}
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -212,7 +217,7 @@ impl RepoSession {
         oid_hex: String,
         path: Option<String>,
     ) -> Result<Vec<DiffRow>, GitCraftError> {
-        Ok(diff::commit_diff(&self.path, &oid_hex, path.as_deref())?)
+        diff::commit_diff(&self.path, &oid_hex, path.as_deref())
     }
 
     pub fn get_working_diff(
@@ -220,11 +225,7 @@ impl RepoSession {
         path: Option<String>,
         staged: bool,
     ) -> Result<Vec<DiffRow>, GitCraftError> {
-        Ok(diff::working_tree_file(
-            &self.path,
-            path.as_deref(),
-            staged,
-        )?)
+        diff::working_tree_file(&self.path, path.as_deref(), staged)
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {

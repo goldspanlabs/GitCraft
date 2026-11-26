@@ -1,4 +1,6 @@
 namespace gitcraft_core {
+  GitAvailability check_git_availability();
+
   [Throws=GitCraftError]
   void init_repository(string path, string? initial_branch);
 
@@ -10,6 +12,13 @@ namespace gitcraft_core {
 interface GitCraftError {
   Message(string msg);
   Warning(string msg);
+  GitNotFound();
+};
+
+enum GitAvailability {
+  "Available",
+  "Missing",
+  "NeedsCommandLineTools"
 };
 
 enum CommitSort {
