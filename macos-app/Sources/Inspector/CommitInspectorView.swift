@@ -42,9 +42,13 @@ private struct BottomPaneBar: View {
             Spacer()
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
-                    isMaximized.toggle()
-                    // Maximizing from the collapsed strip goes straight to full size.
-                    if isMaximized { isCollapsed = false }
+                    // From the collapsed strip this only reopens the panel at its last height;
+                    // a second click maximizes.
+                    if isCollapsed {
+                        isCollapsed = false
+                    } else {
+                        isMaximized.toggle()
+                    }
                 }
             } label: {
                 PhosphorIcon(glyph: .maximize, size: 16)
@@ -58,7 +62,10 @@ private struct BottomPaneBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isMaximized ? "Restore the bottom panel size" : "Maximize the bottom panel")
+            .help(
+                isCollapsed ? "Show the bottom panel"
+                    : isMaximized ? "Restore the bottom panel size" : "Maximize the bottom panel"
+            )
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
