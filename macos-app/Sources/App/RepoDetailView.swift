@@ -7,6 +7,8 @@ struct RepoDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            UpdateBanner(checker: .shared)
+
             if let error = workspace.openError {
                 ErrorBannerView(message: error) {
                     workspace.openError = nil

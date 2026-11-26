@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             return
         }
+        // UI tests that don't open a fixture still must not reach GitHub.
+        if UserDefaults.standard.string(forKey: "UITestGitAvailability") == nil {
+            Task { await UpdateChecker.shared.checkAutomatically() }
+        }
         workspace.deferTabRestore()
         Task { @MainActor in
             let status = await workspace.refreshGitAvailabilityAsync()
@@ -60,6 +64,11 @@ struct RepoCommands: Commands {
     @ObservedObject private var workspace = WorkspaceState.shared
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                Task { await UpdatePrompt.checkNow() }
+            }
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Window") { workspace.openNewWindow() }
                 .keyboardShortcut("n", modifiers: .command)

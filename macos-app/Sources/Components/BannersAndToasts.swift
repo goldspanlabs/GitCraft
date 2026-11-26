@@ -33,6 +33,49 @@ struct OperationBanner: View {
     }
 }
 
+/// Says a newer release is out. Draws nothing until the checker finds one.
+struct UpdateBanner: View {
+    @ObservedObject var checker: UpdateChecker
+    /// The version whose upgrade command was just copied, to confirm the click.
+    @State private var copiedVersion: String?
+
+    var body: some View {
+        if let update = checker.availableUpdate {
+            let install = InstallType.current
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                Text("GitCraft v\(update.version) is available")
+                    .font(.caption)
+                    .lineLimit(1)
+                Spacer()
+                Button("Skip This Version") { checker.skip(update) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button(copiedVersion == update.version ? "Copied" : install.updateActionTitle) {
+                    install.performUpdate(to: update)
+                    if install == .homebrew { copiedVersion = update.version }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help(install == .homebrew ? "Run in Terminal: \(InstallType.homebrewUpgradeCommand)" : "")
+                Button { checker.dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.bold())
+                }
+                .buttonStyle(.plain)
+                .help("Hide until GitCraft is reopened")
+                .accessibilityLabel("Dismiss")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentColor.opacity(0.12))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("update-banner")
+        }
+    }
+}
+
 /// Shared row used by both `ToastView` and `ErrorBannerView`: icon, summarized message,
 /// optional `Show Details…` sheet trigger, and dismiss button.
 private struct ErrorSummaryRow: View {
