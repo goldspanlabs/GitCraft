@@ -45,11 +45,6 @@ syntax-highlighted diff.
 
 ### Stage and commit with confidence
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/working-changes-dark.png">
-  <img src="docs/screenshots/working-changes-light.png" alt="Staged, unstaged and untracked changes with a syntax-highlighted diff">
-</picture>
-
 Staged, unstaged and untracked changes are clearly separated. Stage a single file or
 everything at once, write your message and commit, or amend the last commit.
 
@@ -67,8 +62,6 @@ everything at once, write your message and commit, or amend the last commit.
 
 Rebase, reset, cherry-pick and revert straight from the commit graph. When something stops
 on a conflict, GitCraft tells you exactly where you are and lets you continue or abort.
-
-<img src="docs/screenshots/sheet-light.png" alt="The new branch sheet open over the GitCraft window">
 
 ### Stays out of your way
 
