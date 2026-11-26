@@ -339,7 +339,7 @@ final class DiffRowCellView: NSTableCellView {
         codeLabel.isHidden = isFileHeader
         if isFileHeader {
             layer?.backgroundColor = NSColor.clear.cgColor
-            fileHeader.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            fileHeader.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
             fileNameLabel.stringValue = row.text
             codeLabel.stringValue = ""
             return
