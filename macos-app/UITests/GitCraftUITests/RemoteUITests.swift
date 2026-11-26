@@ -86,7 +86,7 @@ final class RemoteUITests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 20))
         XCTAssertTrue(wait(for: menu, toSatisfy: "isEnabled == true", timeout: 20))
         menu.click()
-        let commitAndPush = app.menuItems["Commit and Push"]
+        let commitAndPush = openMenuItem("Commit and Push", in: app)
         XCTAssertTrue(commitAndPush.waitForExistence(timeout: 10))
         commitAndPush.click()
 

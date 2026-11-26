@@ -64,7 +64,7 @@ struct CommitTableView: NSViewRepresentable {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
 
-        let table = NSTableView()
+        let table = CommitNSTableView()
         table.headerView = nil
         table.usesAutomaticRowHeights = false
         table.rowHeight = 26
@@ -73,6 +73,11 @@ struct CommitTableView: NSViewRepresentable {
         table.backgroundColor = .textBackgroundColor
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
+        table.oidForCopy = { [weak table, weak coordinator = context.coordinator] in
+            guard let table, let coordinator else { return nil }
+            return coordinator.commitOid(atRow: table.selectedRow)
+        }
+        table.onCopy = { [weak coordinator = context.coordinator] in coordinator?.onCopyOid($0) }
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit"))
         column.resizingMask = .autoresizingMask
@@ -249,6 +254,12 @@ struct CommitTableView: NSViewRepresentable {
             self.canRemoveWorktree = canRemoveWorktree
             self.onRemoveWorktree = onRemoveWorktree
             self.onCheckoutCommit = onCheckoutCommit
+        }
+
+        /// The SHA of the commit shown in `row`; `nil` for Working Changes (row 0) or no row.
+        func commitOid(atRow row: Int) -> String? {
+            guard row > 0, row - 1 < rows.count else { return nil }
+            return rows[row - 1].oidHex
         }
 
         func menuNeedsUpdate(_ menu: NSMenu) {

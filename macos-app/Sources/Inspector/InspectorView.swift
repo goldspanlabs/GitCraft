@@ -50,14 +50,7 @@ private struct WorkingChangesInspectorView: View {
     @State private var isExpandingDescription = false
 
     private var canCommit: Bool {
-        GitPreferences.canCommit(
-            summary: tab.commitSummary,
-            stagedCount: tab.stagedFiles.count,
-            changedCount: tab.totalChangesCount,
-            autoStage: autoStageOnCommit,
-            isBusy: tab.isBusy,
-            amend: tab.amendCommit
-        )
+        tab.canCommit(autoStage: autoStageOnCommit)
     }
 
     // This view has no tab strip or maximize button, so a collapsed or maximized panel would
@@ -262,6 +255,7 @@ private struct WorkingChangesInspectorView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Expand description")
+                        .accessibilityIdentifier("expand-description")
                         .padding(3)
                     }
                     .sheet(isPresented: $isExpandingDescription) {

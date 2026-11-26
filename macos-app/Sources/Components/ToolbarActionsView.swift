@@ -19,7 +19,7 @@ struct RepoToolbarActionsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(tab.isBusy)
-                .help("Fetch from remote")
+                .help("Fetch from remote (⇧⌘F)")
 
                 TopBarSeparator()
 
@@ -32,7 +32,7 @@ struct RepoToolbarActionsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(tab.isBusy)
-                .help("Pull from remote")
+                .help("Pull from remote (⇧⌘P)")
 
                 TopBarSeparator()
 
@@ -45,7 +45,7 @@ struct RepoToolbarActionsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(tab.isBusy)
-                .help("Push to remote")
+                .help("Push to remote (⇧⌘U)")
             }
 
             TopBarStashItem(tab: tab)
@@ -61,8 +61,8 @@ struct RepoToolbarActionsView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("graph-scope-toggle")
             .help(tab.scopeToCurrentBranch
-                ? "Showing the current branch and its base branch — click to show all branches"
-                : "Showing all branches — click to show only the current branch and its base branch")
+                ? "Showing the current branch and its base branch — click to show all branches (⇧⌘A)"
+                : "Showing all branches — click to show only the current branch and its base branch (⇧⌘A)")
         }
         .fixedSize()
         .padding(.horizontal, 6)
@@ -130,7 +130,7 @@ private struct TopBarStashItem: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(tab.totalChangesCount == 0 || tab.isBusy)
-                .help("Stash working changes")
+                .help("Stash working changes (⇧⌘S)")
 
                 Rectangle()
                     .fill(Color.secondary.opacity(0.28))
