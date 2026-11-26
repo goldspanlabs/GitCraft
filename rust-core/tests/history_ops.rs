@@ -224,6 +224,35 @@ fn merge_has_conflicts_reports_an_error_for_an_unknown_commit() {
         .is_err());
 }
 
+#[test]
+fn merge_has_conflicts_keeps_gits_explanation_when_a_commit_cannot_be_resolved() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    fs::remove_dir_all(dir.path().join(".git")).unwrap();
+
+    let error = session.merge_has_conflicts("main".into()).unwrap_err();
+
+    assert!(
+        error.to_string().contains("not a git repository"),
+        "{error}"
+    );
+}
+
+#[test]
+fn merge_has_conflicts_passes_on_a_failure_to_start_git() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    // With the folder gone, git cannot be started in it at all.
+    fs::remove_dir_all(dir.path()).unwrap();
+
+    let error = session.merge_has_conflicts("main".into()).unwrap_err();
+
+    assert!(
+        error.to_string().contains("No such file or directory"),
+        "{error}"
+    );
+}
+
 // ---------------------------------------------------------- remote branches ---
 
 /// A repo with a bare `origin` holding `main` and `topic/login`, plus the local branches.

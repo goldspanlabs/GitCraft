@@ -207,14 +207,22 @@ impl RepoSession {
         let commit = validate_ref_arg(&commit)?;
         // `merge-tree` exits 1 both for a conflict and for a name it can't resolve, so
         // rule out the second first.
-        git_cli::run(
+        // Failing to run git at all (including `GitNotFound`) is passed on as it is.
+        let resolved = git_cli::run_status(
             &self.path,
             &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
-        )
-        .map_err(|_| {
+        )?;
+        if !resolved.status.success() {
             let label = format_ref_display(&commit);
-            GitCraftError::message(format!("{label} is not a commit in this repository"))
-        })?;
+            // A killed process says nothing, so fall back to how it exited.
+            let detail = match resolved.stderr.trim() {
+                "" => resolved.status.to_string(),
+                stderr => stderr.to_owned(),
+            };
+            return Err(GitCraftError::message(format!(
+                "Could not resolve {label} to a commit: {detail}"
+            )));
+        }
         let out = git_cli::run_status(
             &self.path,
             &[
