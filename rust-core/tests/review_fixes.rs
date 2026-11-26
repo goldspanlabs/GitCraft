@@ -145,3 +145,63 @@ fn merge_commit_detail_survives_a_missing_parent_object() {
     let detail = session.get_commit_detail(head(clone.path())).unwrap();
     assert_eq!(detail.parent_oids.len(), 2);
 }
+
+#[test]
+fn paged_graph_matches_one_big_fetch_and_follows_ref_changes() {
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    for i in 0..120 {
+        commit_file(p, "n.txt", &format!("{i}\n"), &format!("commit {i}"));
+    }
+    // The baseline comes from another session, so the paged session starts with an empty
+    // cache and has to grow it page by page.
+    let all = open(p).get_commit_graph(0, 500, None).unwrap();
+    let session = open(p);
+    let mut paged = Vec::new();
+    for offset in (0..all.len() as u32).step_by(25) {
+        paged.extend(session.get_commit_graph(offset, 25, None).unwrap());
+    }
+    let ids = |rows: &[gitcraft_core::CommitRow]| {
+        rows.iter().map(|r| r.oid_hex.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&paged), ids(&all));
+    // A new commit and a new branch show up on the next call despite the cache.
+    commit_file(p, "n.txt", "new\n", "brand new");
+    run_git(p, &["branch", "marker", "HEAD~3"]);
+    let rows = session.get_commit_graph(0, 500, None).unwrap();
+    // Commits made within one second tie on date, so look for it rather than expect row 0.
+    assert!(rows.iter().any(|r| r.summary == "brand new"));
+    assert!(rows
+        .iter()
+        .any(|r| r.refs.iter().any(|b| b.name == "marker")));
+
+    // Searches are paged from their own walk, not the unfiltered rows.
+    let hits = session
+        .get_commit_graph(0, 5, Some("commit 11".into()))
+        .unwrap();
+    assert!(hits.iter().all(|r| r.summary.contains("commit 11")));
+}
+
+#[test]
+fn graph_cache_notices_a_shallow_clone_being_deepened() {
+    let source = init_repo_with_commit();
+    for i in 0..5 {
+        commit_file(source.path(), "n.txt", &format!("{i}\n"), &format!("c{i}"));
+    }
+    let clone = tempfile::tempdir().unwrap();
+    run_git(
+        clone.path(),
+        &[
+            "clone",
+            "--depth",
+            "1",
+            &format!("file://{}", source.path().display()),
+            ".",
+        ],
+    );
+    let session = open(clone.path());
+    assert_eq!(session.get_commit_graph(0, 100, None).unwrap().len(), 1);
+
+    run_git(clone.path(), &["fetch", "--unshallow"]);
+    assert_eq!(session.get_commit_graph(0, 100, None).unwrap().len(), 6);
+}

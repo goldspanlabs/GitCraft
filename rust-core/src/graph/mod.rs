@@ -3,6 +3,7 @@ mod lanes;
 mod refs;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use gix::bstr::ByteSlice;
 
@@ -15,26 +16,44 @@ use detail::extract_commit_metadata;
 use lanes::{LaneState, RawCommit};
 use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
 
+/// Rows from the last graph walk, kept so that paging down doesn't re-walk history from the
+/// tips for every page. It holds one walk, identified by `key` (refs, HEAD, query, scope and
+/// sort); any change to those starts a new walk.
+#[derive(Default)]
+pub(crate) struct GraphCache {
+    key: String,
+    rows: Vec<CommitRow>,
+    /// The walk ran out of commits, so `rows` is the whole list.
+    exhausted: bool,
+}
+
+/// Past this many rows a walk is not cached, to bound memory on very large histories.
+const MAX_CACHED_ROWS: usize = 50_000;
+
+pub(crate) type SharedGraphCache = Mutex<GraphCache>;
+
 pub fn get_commit_graph(
     sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
     offset: u32,
     limit: u32,
     search_query: Option<String>,
     sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
-    graph_walk(sync_repo, offset, limit, search_query, false, sort)
+    graph_walk(sync_repo, cache, offset, limit, search_query, false, sort)
 }
 
 /// Like [`get_commit_graph`], but limited to the checked-out branch's history.
 /// Falls back to the full graph when HEAD is detached or no default branch exists.
 pub fn get_branch_graph(
     sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
     offset: u32,
     limit: u32,
     search_query: Option<String>,
     sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
-    graph_walk(sync_repo, offset, limit, search_query, true, sort)
+    graph_walk(sync_repo, cache, offset, limit, search_query, true, sort)
 }
 
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be
@@ -51,6 +70,7 @@ fn branch_scope(repo: &gix::Repository) -> Option<(Vec<gix::ObjectId>, Vec<gix::
 
 fn graph_walk(
     sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
     offset: u32,
     limit: u32,
     search_query: Option<String>,
@@ -74,14 +94,41 @@ fn graph_walk(
             hidden = scoped_hidden;
         }
     }
-    let has_local_refs = !local_reachable.is_empty();
-    let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
-
     let query = search_query
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty());
 
     let target_count = offset.saturating_add(limit) as usize;
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        query.as_deref(),
+        scoped,
+        sort,
+    );
+    let mut cached_len = 0;
+    if let Ok(guard) = cache.lock() {
+        if guard.key == key {
+            if guard.rows.len() >= target_count || guard.exhausted {
+                return Ok(page(&guard.rows, offset, limit));
+            }
+            cached_len = guard.rows.len();
+        }
+    }
+    // Walking further than asked, in steps that double, keeps the total cost of paging down
+    // proportional to the history shown rather than to pages times history.
+    let walk_count = if target_count <= MAX_CACHED_ROWS {
+        target_count
+            .max(cached_len.saturating_mul(2))
+            .min(MAX_CACHED_ROWS)
+    } else {
+        target_count
+    };
+
+    let has_local_refs = !local_reachable.is_empty();
+    let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
 
     let graph_err = |e: &dyn std::fmt::Display| GitCraftError::message(e.to_string());
     let ids: Box<dyn Iterator<Item = Result<gix::ObjectId, GitCraftError>>> = match sort {
@@ -112,11 +159,25 @@ fn graph_walk(
     let mut lanes = LaneState::default();
     let mut results: Vec<CommitRow> = Vec::new();
 
+    // Set when the walk fails after the requested range is already filled. The extra rows
+    // were only a lookahead for the cache, so the page is still returned, but the partial
+    // walk is not cached.
+    let mut lookahead_failed = false;
+
     for entry in ids {
-        let oid = entry?;
-        let commit = repo
-            .find_commit(oid)
-            .map_err(|e| GitCraftError::message(e.to_string()))?;
+        let step = entry.and_then(|oid| {
+            repo.find_commit(oid)
+                .map(|commit| (oid, commit))
+                .map_err(|e| GitCraftError::message(e.to_string()))
+        });
+        let (oid, commit) = match step {
+            Ok(found) => found,
+            Err(_) if results.len() >= target_count => {
+                lookahead_failed = true;
+                break;
+            }
+            Err(e) => return Err(e),
+        };
 
         let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
 
@@ -154,17 +215,80 @@ fn graph_walk(
 
         if matches_query {
             results.push(row);
-            if results.len() >= target_count {
+            if results.len() >= walk_count {
                 break;
             }
         }
     }
 
-    Ok(results
-        .into_iter()
+    let exhausted = results.len() < walk_count;
+    let out = page(&results, offset, limit);
+    if lookahead_failed {
+        return Ok(out);
+    }
+    if let Ok(mut guard) = cache.lock() {
+        if results.len() <= MAX_CACHED_ROWS {
+            *guard = GraphCache {
+                key,
+                rows: results,
+                exhausted,
+            };
+        } else {
+            *guard = GraphCache::default();
+        }
+    }
+    Ok(out)
+}
+
+fn page(rows: &[CommitRow], offset: u32, limit: u32) -> Vec<CommitRow> {
+    rows.iter()
         .skip(offset as usize)
         .take(limit as usize)
-        .collect())
+        .cloned()
+        .collect()
+}
+
+/// Everything the rows depend on besides the commits themselves, which never change: the
+/// refs (badges, tips, which commits count as local), HEAD, whether the upstream is gone,
+/// and how the walk was asked for.
+fn cache_key(
+    repo: &gix::Repository,
+    refs_by_oid: &HashMap<gix::ObjectId, Vec<RefBadge>>,
+    tips: &[gix::ObjectId],
+    local_tips: &HashSet<gix::ObjectId>,
+    query: Option<&str>,
+    scoped: bool,
+    sort: CommitSort,
+) -> String {
+    let mut refs: Vec<String> = refs_by_oid
+        .iter()
+        .map(|(oid, badges)| format!("{oid}{badges:?}"))
+        .collect();
+    refs.sort();
+    // Which commits count as local also depends on checked-out detached worktrees, whose
+    // HEAD can sit on a commit that no ref names.
+    let mut local: Vec<String> = local_tips.iter().map(|oid| oid.to_string()).collect();
+    local.sort();
+    // Deepening or unshallowing a clone adds history without touching any ref.
+    let shallow = std::fs::metadata(repo.common_dir().join("shallow"))
+        .ok()
+        .map(|m| (m.len(), m.modified().ok()));
+    let head = repo.head().ok();
+    let head_state = head.as_ref().map(|h| {
+        let name = h
+            .referent_name()
+            .map(|n| n.as_bstr().to_str_lossy().into_owned());
+        let gone = name
+            .as_deref()
+            .and_then(|n| n.strip_prefix("refs/heads/"))
+            .is_some_and(|b| upstream_is_gone(repo, b));
+        (name, h.id().map(|id| id.detach()), gone)
+    });
+    let sort_id = match sort {
+        CommitSort::ByDate => 0,
+        CommitSort::Topological => 1,
+    };
+    format!("{refs:?}|{tips:?}|{local:?}|{shallow:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
 }
 
 /// Upper bound on how many unpushed commits we mark, so a never-pushed branch with a huge
@@ -264,7 +388,15 @@ mod tests {
 
         let sync_repo = gix::ThreadSafeRepository::open(p).unwrap();
 
-        let all_rows = get_commit_graph(&sync_repo, 0, 50, None, CommitSort::ByDate).unwrap();
+        let all_rows = get_commit_graph(
+            &sync_repo,
+            &SharedGraphCache::default(),
+            0,
+            50,
+            None,
+            CommitSort::ByDate,
+        )
+        .unwrap();
         assert_eq!(all_rows.len(), 3);
         assert_eq!(all_rows[0].summary, "Merge UI");
         assert!(all_rows[0]
@@ -276,12 +408,21 @@ mod tests {
             .iter()
             .any(|r| r.name == "v0.1.0" && matches!(r.kind, RefKind::Tag)));
 
-        let page2 = get_commit_graph(&sync_repo, 1, 1, None, CommitSort::ByDate).unwrap();
+        let page2 = get_commit_graph(
+            &sync_repo,
+            &SharedGraphCache::default(),
+            1,
+            1,
+            None,
+            CommitSort::ByDate,
+        )
+        .unwrap();
         assert_eq!(page2.len(), 1);
         assert_eq!(page2[0].oid_hex, all_rows[1].oid_hex);
 
         let filtered = get_commit_graph(
             &sync_repo,
+            &SharedGraphCache::default(),
             0,
             10,
             Some("UI feature".into()),
