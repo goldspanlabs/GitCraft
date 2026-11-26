@@ -10,10 +10,19 @@ extension XCTestCase {
     /// A menu item titled `title` that is currently on screen. The menu bar's Repository menu
     /// carries the same titles (New Branch…, New Worktree…) and stays in the tree while closed,
     /// so a plain `app.menuItems[title]` matches two elements and can't be clicked.
-    func openMenuItem(_ title: String, in app: XCUIApplication) -> XCUIElement {
-        app.menuItems
-            .matching(NSPredicate(format: "label == %@ AND isHittable == true", title))
-            .firstMatch
+    /// `isHittable` is not a valid predicate key path for queries, so the label query is
+    /// filtered here in Swift instead. Falls back to the first match if none becomes hittable.
+    func openMenuItem(_ title: String, in app: XCUIApplication, timeout: TimeInterval = 10) -> XCUIElement {
+        let matches = app.menuItems.matching(NSPredicate(format: "label == %@", title))
+        func hittableMatch() -> XCUIElement? {
+            (0..<matches.count).lazy.map { matches.element(boundBy: $0) }.first { $0.isHittable }
+        }
+        var found: XCUIElement?
+        _ = waitUntil(timeout: timeout) {
+            found = hittableMatch()
+            return found != nil
+        }
+        return found ?? matches.firstMatch
     }
 
     /// Polls `element` against `predicate` at a short interval until it holds or `timeout` passes.
