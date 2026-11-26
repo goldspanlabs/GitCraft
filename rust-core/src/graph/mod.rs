@@ -99,7 +99,15 @@ fn graph_walk(
         .filter(|s| !s.is_empty());
 
     let target_count = offset.saturating_add(limit) as usize;
-    let key = cache_key(&repo, &refs_by_oid, &tips, query.as_deref(), scoped, sort);
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        query.as_deref(),
+        scoped,
+        sort,
+    );
     let mut cached_len = 0;
     if let Ok(guard) = cache.lock() {
         if guard.key == key {
@@ -230,6 +238,7 @@ fn cache_key(
     repo: &gix::Repository,
     refs_by_oid: &HashMap<gix::ObjectId, Vec<RefBadge>>,
     tips: &[gix::ObjectId],
+    local_tips: &HashSet<gix::ObjectId>,
     query: Option<&str>,
     scoped: bool,
     sort: CommitSort,
@@ -239,6 +248,10 @@ fn cache_key(
         .map(|(oid, badges)| format!("{oid}{badges:?}"))
         .collect();
     refs.sort();
+    // Which commits count as local also depends on checked-out detached worktrees, whose
+    // HEAD can sit on a commit that no ref names.
+    let mut local: Vec<String> = local_tips.iter().map(|oid| oid.to_string()).collect();
+    local.sort();
     let head = repo.head().ok();
     let head_state = head.as_ref().map(|h| {
         let name = h
@@ -254,7 +267,7 @@ fn cache_key(
         CommitSort::ByDate => 0,
         CommitSort::Topological => 1,
     };
-    format!("{refs:?}|{tips:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
+    format!("{refs:?}|{tips:?}|{local:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
 }
 
 /// Upper bound on how many unpushed commits we mark, so a never-pushed branch with a huge

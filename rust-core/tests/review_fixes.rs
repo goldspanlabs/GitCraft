@@ -153,9 +153,10 @@ fn paged_graph_matches_one_big_fetch_and_follows_ref_changes() {
     for i in 0..120 {
         commit_file(p, "n.txt", &format!("{i}\n"), &format!("commit {i}"));
     }
+    // The baseline comes from another session, so the paged session starts with an empty
+    // cache and has to grow it page by page.
+    let all = open(p).get_commit_graph(0, 500, None).unwrap();
     let session = open(p);
-
-    let all = session.get_commit_graph(0, 500, None).unwrap();
     let mut paged = Vec::new();
     for offset in (0..all.len() as u32).step_by(25) {
         paged.extend(session.get_commit_graph(offset, 25, None).unwrap());
