@@ -110,6 +110,8 @@ struct CommitInspectorView: View {
             // Nothing selected ("All"): down picks the first file, up the last.
             next = delta > 0 ? 0 : files.count - 1
         }
+        // At the first or last file, another press changes nothing; skip the diff reload.
+        guard files[next].path != tab.selectedFilePath else { return }
         tab.selectCommitFile(files[next].path)
     }
 

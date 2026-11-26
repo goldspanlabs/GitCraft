@@ -88,7 +88,13 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
         if shouldCollapse != isCollapsed {
             withAnimation(.easeInOut(duration: 0.18)) { isCollapsed = shouldCollapse }
         }
-        if !shouldCollapse {
+        if shouldCollapse {
+            // The drag shrank the stored height on its way down; put back the height the pane had
+            // when the drag began, so reopening doesn't depend on how many drag events fired.
+            if !dragStartedCollapsed, let start = dragStartHeight {
+                storedHeight = Double(min(max(CGFloat(start), minBottom), maxBottom))
+            }
+        } else {
             let clamped = Double(min(max(proposed, minBottom), maxBottom))
             // Reopening from the collapsed strip restores the last height; only pulling beyond it
             // makes the pane taller.
