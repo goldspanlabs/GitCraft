@@ -70,6 +70,15 @@ private struct BottomPaneBar: View {
         .padding(.horizontal, 8)
         .frame(height: 30)
         .background(Color(nsColor: .controlBackgroundColor))
+        // Collapsing is a divider drag, which VoiceOver and keyboard users can't do, so expose
+        // the same toggle as a labeled action on the bar.
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: isCollapsed ? "Show Panel" : "Collapse Panel") {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if isMaximized { isMaximized = false }
+                isCollapsed.toggle()
+            }
+        }
     }
 }
 
