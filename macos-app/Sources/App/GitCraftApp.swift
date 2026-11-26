@@ -117,6 +117,8 @@ struct RepoCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command, .shift])
             Divider()
             ShowTagsMenuItem(tab: workspace.activeTab)
+            Divider()
+            BottomPanelMenuItems(tab: workspace.activeTab)
         }
         CommandMenu("Repository") {
             RepositoryMenuItems(tab: workspace.activeTab)
@@ -152,6 +154,57 @@ private struct ActiveTabShowTagsToggle: View {
 
     var body: some View {
         Toggle("Show Tags", isOn: $tab.showTags)
+    }
+}
+
+/// View ▸ Maximize / Hide Bottom Panel: keyboard-reachable versions of the pane header's
+/// maximize button and the divider drag that collapses it.
+private struct BottomPanelMenuItems: View {
+    let tab: RepoTab?
+
+    var body: some View {
+        if let tab {
+            ActiveTabBottomPanelItems(tab: tab)
+        } else {
+            Button("Maximize Bottom Panel") {}
+                .disabled(true)
+            Button("Hide Bottom Panel") {}
+                .disabled(true)
+        }
+    }
+}
+
+private struct ActiveTabBottomPanelItems: View {
+    @ObservedObject var tab: RepoTab
+    @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
+
+    var body: some View {
+        // Only a selected commit's inspector can be collapsed or maximized; the working-changes
+        // inspector has neither control.
+        let hasCommit = tab.selectedCommit != nil
+
+        Button(isMaximized ? "Restore Bottom Panel Size" : "Maximize Bottom Panel") {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                // Same steps as the pane header's button: a collapsed pane reopens first.
+                if isCollapsed {
+                    isCollapsed = false
+                } else {
+                    isMaximized.toggle()
+                }
+            }
+        }
+        .keyboardShortcut("m", modifiers: [.command, .shift])
+        .disabled(!hasCommit)
+
+        Button(isCollapsed ? "Show Bottom Panel" : "Hide Bottom Panel") {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if isMaximized { isMaximized = false }
+                isCollapsed.toggle()
+            }
+        }
+        .keyboardShortcut("j", modifiers: .command)
+        .disabled(!hasCommit)
     }
 }
 
