@@ -54,7 +54,9 @@ struct RepoDetailView: View {
             }
 
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
-            PersistentVSplit(minTop: 200, minBottom: 312) {
+            // The working-changes inspector has no tab strip to reopen a collapsed pane from, so
+            // only a selected commit's inspector can be collapsed by dragging.
+            PersistentVSplit(minTop: 200, minBottom: 312, canCollapse: tab.selectedCommit != nil) {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,

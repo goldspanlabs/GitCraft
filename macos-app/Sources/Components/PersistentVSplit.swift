@@ -10,6 +10,9 @@ import SwiftUI
 struct PersistentVSplit<Top: View, Bottom: View>: View {
     let minTop: CGFloat
     let minBottom: CGFloat
+    /// Whether dragging the divider down can collapse the bottom pane. Off for a bottom pane that
+    /// has no tab strip to reopen it from; the divider then only resizes.
+    var canCollapse = true
     @ViewBuilder let top: () -> Top
     @ViewBuilder let bottom: () -> Bottom
 
@@ -82,7 +85,7 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
         let shouldCollapse = if dragStartedCollapsed {
             proposed <= BottomPanelDefaults.collapsedHeight + BottomPanelDefaults.expandDragThreshold
         } else {
-            proposed < minBottom - BottomPanelDefaults.collapseDragThreshold
+            canCollapse && proposed < minBottom - BottomPanelDefaults.collapseDragThreshold
         }
 
         if shouldCollapse != isCollapsed {
