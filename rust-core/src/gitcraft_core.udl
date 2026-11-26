@@ -1,5 +1,11 @@
 namespace gitcraft_core {
   GitAvailability check_git_availability();
+
+  [Throws=GitCraftError]
+  void init_repository(string path, string? initial_branch);
+
+  [Throws=GitCraftError]
+  void clone_repository(string url, string destination);
 };
 
 [Error]

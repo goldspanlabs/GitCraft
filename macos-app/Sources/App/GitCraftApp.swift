@@ -60,16 +60,53 @@ struct RepoCommands: Commands {
     @ObservedObject private var workspace = WorkspaceState.shared
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Open Repository…") { workspace.chooseRepository() }
-                .keyboardShortcut("o", modifiers: .command)
-            Button("New Repository Tab…") { workspace.chooseRepository() }
+        CommandGroup(replacing: .newItem) {
+            Button("New Window") { workspace.openNewWindow() }
+                .keyboardShortcut("n", modifiers: .command)
+            Button("New Tab") { workspace.openWelcome() }
                 .keyboardShortcut("t", modifiers: .command)
+            Button("Restore Closed Tab") { workspace.restoreClosedTab() }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(workspace.closedTabPaths.isEmpty)
+
             Divider()
-            Button("Refresh") { workspace.activeTab?.refresh() }
-                .keyboardShortcut("r", modifiers: .command)
+
+            Button("Create New Local Repository…") { workspace.presentCreateRepositorySheet() }
+            Button("Clone…") { workspace.presentCloneRepositorySheet() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Open…") { workspace.chooseRepository() }
+                .keyboardShortcut("o", modifiers: .command)
+            Menu("Open Recent") {
+                if workspace.recentPaths.isEmpty {
+                    Text("No Recent Repositories")
+                } else {
+                    ForEach(workspace.recentPaths, id: \.self) { path in
+                        Button(recentMenuLabel(for: path, among: workspace.recentPaths)) {
+                            workspace.openRepository(at: URL(fileURLWithPath: path))
+                        }
+                    }
+                    Divider()
+                    Button("Clear Menu") { workspace.clearRecentRepositories() }
+                }
+            }
+
+            Divider()
+
+            Button("Close Window") { workspace.closeActiveWindow() }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .disabled(!workspace.hasOpenWindows)
+            Button("Close Tab") { workspace.closeActiveTab() }
+                .keyboardShortcut("w", modifiers: .command)
+                .disabled(!workspace.hasOpenWindows)
         }
         CommandGroup(after: .sidebar) {
+            Button("Refresh") { workspace.activeTab?.refresh() }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(workspace.activeTab == nil)
+            Divider()
             Button("Toggle Sidebar") {
                 NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
             }
@@ -77,6 +114,16 @@ struct RepoCommands: Commands {
             Divider()
             ShowTagsMenuItem(tab: workspace.activeTab)
         }
+    }
+
+    private func recentMenuLabel(for path: String, among paths: [String]) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let hasDuplicate = paths.filter { URL(fileURLWithPath: $0).lastPathComponent == name }.count > 1
+        guard hasDuplicate else { return name }
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let shortParent = parent.hasPrefix(home) ? "~" + parent.dropFirst(home.count) : parent
+        return "\(name) — \(shortParent)"
     }
 }
 

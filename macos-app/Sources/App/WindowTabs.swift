@@ -11,18 +11,26 @@ extension NSToolbarItem.Identifier {
 enum WindowTabs {
     static let identifier = "GitCraft.repository"
 
-    /// Shows `window`, as a native tab of an existing GitCraft window if there is one.
+    /// Shows `window`, as a native tab of an existing GitCraft window if there is one
+    /// (unless `inNewWindow` is true).
     @MainActor
-    static func show(_ window: NSWindow) {
+    static func show(_ window: NSWindow, inNewWindow: Bool = false) {
         window.isRestorable = false // GitCraft reopens its own repositories at launch
         window.tabbingIdentifier = identifier
         window.tabbingMode = .preferred
-        let host = NSApp.windows.first {
-            $0 !== window
-                && $0.tabbingIdentifier == identifier
-                && $0.tabbingMode == .preferred
-                && $0.isVisible
-                && !$0.isMiniaturized
+        let host: NSWindow?
+        if inNewWindow {
+            host = nil
+        } else {
+            let isEligible: (NSWindow) -> Bool = {
+                $0 !== window
+                    && $0.tabbingIdentifier == identifier
+                    && $0.tabbingMode == .preferred
+                    && $0.isVisible
+                    && !$0.isMiniaturized
+            }
+            host = NSApp.keyWindow.flatMap { isEligible($0) ? $0 : nil }
+                ?? NSApp.windows.first(where: isEligible)
         }
         if let host {
             host.addTabbedWindow(window, ordered: .above)
@@ -30,6 +38,63 @@ enum WindowTabs {
             window.center()
         }
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Presents a SwiftUI view as a sheet on the key window, or as a standalone window if none is open.
+    @MainActor
+    static func presentSheet<Content: View>(
+        @ViewBuilder content: @escaping (_ dismiss: @escaping () -> Void) -> Content
+    ) {
+        let controller = NSWindowController()
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isReleasedWhenClosed = false
+        controller.window = panel
+
+        let parent = NSApp.keyWindow
+        // Retain the controller until the sheet/window finishes closing.
+        var retained: NSWindowController? = controller
+        var closeObserver: NSObjectProtocol?
+        let release: () -> Void = {
+            if let observer = closeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                closeObserver = nil
+            }
+            retained = nil
+            _ = retained
+        }
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: panel,
+            queue: .main
+        ) { _ in
+            release()
+        }
+        let dismiss: () -> Void = {
+            if let parent {
+                parent.endSheet(panel)
+            } else {
+                panel.close()
+            }
+            release()
+        }
+
+        let hosting = NSHostingController(rootView: AppearanceScoped { content(dismiss) })
+        panel.contentViewController = hosting
+        panel.setContentSize(hosting.view.fittingSize)
+
+        if let parent {
+            parent.beginSheet(panel) { _ in
+                release()
+            }
+        } else {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
 
     /// Brings the tab holding `window` to the front.
@@ -123,6 +188,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     required init?(coder _: NSCoder) { fatalError("not used") }
 
     func showInTabs() { WindowTabs.show(window!) }
+    func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
     func reveal() { WindowTabs.reveal(window!) }
 
     private func refreshChrome() {
@@ -274,6 +340,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder _: NSCoder) { fatalError("not used") }
 
     func showInTabs() { WindowTabs.show(window!) }
+    func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
 
     func windowWillClose(_: Notification) {
         workspace.welcomeClosed(self)
