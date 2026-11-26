@@ -190,6 +190,22 @@ pub struct WatchFlags {
     pub stopped: Arc<AtomicBool>,
 }
 
+/// How often the polling fallback marks everything dirty.
+const POLL_FALLBACK_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Used when file watching can't start: marks status and graph dirty on a timer, so the UI
+/// still refreshes (at the cost of a periodic reload) instead of silently going stale.
+fn poll_until_stopped(
+    (status_dirty, graph_dirty, stopped): (Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>),
+    interval: Duration,
+) {
+    while !stopped.load(Ordering::Acquire) {
+        thread::sleep(interval);
+        status_dirty.store(true, Ordering::Release);
+        graph_dirty.store(true, Ordering::Release);
+    }
+}
+
 /// Watches the checkout (plus its gitdir, commondir, and any sibling worktrees)
 /// and raises:
 /// - `status_dirty` when the active checkout's working tree or index changes,
@@ -222,6 +238,11 @@ pub fn spawn_dirty_watcher(
         let cb_common_dir = common_dir.clone();
         let cb_siblings = Arc::clone(&shared_siblings);
         let cb_reconcile = Arc::clone(&reconcile);
+        let fallback = (
+            Arc::clone(&flags.status_dirty),
+            Arc::clone(&flags.graph_dirty),
+            Arc::clone(&flags.stopped),
+        );
         let status_dirty = flags.status_dirty;
         let graph_dirty = flags.graph_dirty;
         let worktrees_dirty = flags.worktrees_dirty;
@@ -249,9 +270,12 @@ pub fn spawn_dirty_watcher(
             Config::default().with_poll_interval(Duration::from_millis(500)),
         ) {
             Ok(w) => w,
-            Err(_) => return,
+            Err(_) => return poll_until_stopped(fallback, POLL_FALLBACK_INTERVAL),
         };
-        let _ = watcher.watch(&worktree, RecursiveMode::Recursive);
+        // Without a watch on the checkout (the OS watch limit, say) nothing would ever refresh.
+        if watcher.watch(&worktree, RecursiveMode::Recursive).is_err() {
+            return poll_until_stopped(fallback, POLL_FALLBACK_INTERVAL);
+        }
         // Linked worktrees keep their metadata outside the checkout folder (`.git` is a file).
         if !common_dir.starts_with(&worktree) {
             let _ = watcher.watch(&common_dir, RecursiveMode::Recursive);
@@ -419,5 +443,34 @@ mod tests {
         // A registration whose folder has been deleted is not watched.
         fs::remove_dir_all(checkout.path()).unwrap();
         assert!(current_siblings(Path::new("/nowhere"), &[], &common_dir).is_empty());
+    }
+
+    #[test]
+    fn polling_fallback_raises_both_flags_repeatedly_and_stops() {
+        let status = Arc::new(AtomicBool::new(false));
+        let graph = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flags = (
+            Arc::clone(&status),
+            Arc::clone(&graph),
+            Arc::clone(&stopped),
+        );
+        let worker = thread::spawn(move || poll_until_stopped(flags, Duration::from_millis(10)));
+
+        let wait_for = |flag: &AtomicBool| {
+            for _ in 0..500 {
+                if flag.swap(false, Ordering::AcqRel) {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            false
+        };
+        assert!(wait_for(&status) && wait_for(&graph));
+        // Cleared flags come back on the next tick.
+        assert!(wait_for(&status) && wait_for(&graph));
+
+        stopped.store(true, Ordering::Release);
+        worker.join().unwrap();
     }
 }
