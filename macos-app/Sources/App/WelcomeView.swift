@@ -30,10 +30,12 @@ struct WelcomeView: View {
                     onInstallCLT: { workspace.installCommandLineTools() },
                     onDownloadGit: { workspace.openGitDownloadPage() },
                     onCheckAgain: {
-                        if workspace.refreshGitAvailability() == .available,
-                           workspace.restoreTabs()
-                        {
-                            onOpened()
+                        Task {
+                            if await workspace.refreshGitAvailabilityAsync() == .available,
+                               workspace.hasOpenRepositories
+                            {
+                                onOpened()
+                            }
                         }
                     }
                 )

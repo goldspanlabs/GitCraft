@@ -24,12 +24,8 @@ impl GitCraftError {
 
 impl From<io::Error> for GitCraftError {
     fn from(err: io::Error) -> Self {
-        if err.kind() == io::ErrorKind::NotFound {
-            Self::GitNotFound
-        } else {
-            Self::Message {
-                msg: err.to_string(),
-            }
+        Self::Message {
+            msg: err.to_string(),
         }
     }
 }

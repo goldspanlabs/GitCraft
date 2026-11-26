@@ -95,7 +95,7 @@ impl RepoSession {
                     git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
                     Ok(())
                 }
-                Err(e) => Err(e.into()),
+                Err(e) => Err(e),
             },
             PullStrategy::Merge => {
                 git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;

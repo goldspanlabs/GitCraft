@@ -11,6 +11,8 @@ use std::{
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Mutations include network transfers and hooks, so they get much longer.
 const MUTATE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Availability probes (`git --version`) should never hang the UI.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Output of a completed git command, preserving its exit status for callers
 /// (such as `git merge-tree`) where non-zero exit codes carry structured meaning.
@@ -21,7 +23,7 @@ pub struct CommandOutput {
 }
 
 /// Runs a read-only git command and returns its exit status, stdout, and stderr.
-pub fn run_status(repo: &Path, args: &[&str]) -> io::Result<CommandOutput> {
+pub fn run_status(repo: &Path, args: &[&str]) -> Result<CommandOutput, crate::GitCraftError> {
     execute_raw(repo, args, READ_TIMEOUT, false)
 }
 
@@ -29,12 +31,12 @@ pub fn run_status(repo: &Path, args: &[&str]) -> io::Result<CommandOutput> {
 ///
 /// Sets `GIT_OPTIONAL_LOCKS=0` so queries like `git status` never rewrite the index,
 /// which would otherwise make our own file watcher see a change and refresh again.
-pub fn run(repo: &Path, args: &[&str]) -> io::Result<String> {
+pub fn run(repo: &Path, args: &[&str]) -> Result<String, crate::GitCraftError> {
     execute(repo, args, READ_TIMEOUT, false)
 }
 
 /// Runs a git command that changes the repository (or talks to a remote).
-pub fn mutate(repo: &Path, args: &[&str]) -> io::Result<()> {
+pub fn mutate(repo: &Path, args: &[&str]) -> Result<(), crate::GitCraftError> {
     execute(repo, args, MUTATE_TIMEOUT, true).map(|_| ())
 }
 
@@ -43,7 +45,7 @@ fn execute_raw(
     args: &[&str],
     timeout: Duration,
     mutating: bool,
-) -> io::Result<CommandOutput> {
+) -> Result<CommandOutput, crate::GitCraftError> {
     let mut command = Command::new("git");
     command
         // Report non-ASCII paths verbatim instead of as "\303\251" escapes.
@@ -79,7 +81,13 @@ fn execute_raw(
     if !mutating {
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }
-    let child = command.spawn()?;
+    let child = command.spawn().map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound && repo.exists() {
+            crate::GitCraftError::GitNotFound
+        } else {
+            crate::GitCraftError::from(err)
+        }
+    })?;
     let captured = wait_with_timeout(child, timeout, args.first().copied().unwrap_or("git"))?;
     Ok(CommandOutput {
         status: captured.status,
@@ -88,7 +96,12 @@ fn execute_raw(
     })
 }
 
-fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io::Result<String> {
+fn execute(
+    repo: &Path,
+    args: &[&str],
+    timeout: Duration,
+    mutating: bool,
+) -> Result<String, crate::GitCraftError> {
     let output = execute_raw(repo, args, timeout, mutating)?;
     if output.status.success() {
         Ok(output.stdout)
@@ -108,7 +121,7 @@ fn execute(repo: &Path, args: &[&str], timeout: Duration, mutating: bool) -> io:
                 output.status
             )
         };
-        Err(io::Error::other(message))
+        Err(crate::GitCraftError::message(message))
     }
 }
 
@@ -161,11 +174,14 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, name: &str) -> io::Res
 
 /// Checks whether the `git` CLI is installed and runnable using the augmented PATH.
 pub fn check_availability() -> crate::GitAvailability {
-    check_availability_in_path(&augmented_path())
+    check_availability_in_path(&augmented_path(), PROBE_TIMEOUT)
 }
 
-fn check_availability_in_path(path_env: &std::ffi::OsStr) -> crate::GitAvailability {
-    let output = Command::new("git")
+fn check_availability_in_path(
+    path_env: &std::ffi::OsStr,
+    timeout: Duration,
+) -> crate::GitAvailability {
+    let child = match Command::new("git")
         .arg("--version")
         .env("PATH", path_env)
         .env("LC_MESSAGES", "C")
@@ -173,12 +189,16 @@ fn check_availability_in_path(path_env: &std::ffi::OsStr) -> crate::GitAvailabil
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output();
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return crate::GitAvailability::Missing,
+    };
 
-    match output {
-        Ok(out) if out.status.success() => crate::GitAvailability::Available,
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    match wait_with_timeout(child, timeout, "--version") {
+        Ok(captured) if captured.status.success() => crate::GitAvailability::Available,
+        Ok(captured) => {
+            let stderr = String::from_utf8_lossy(&captured.stderr).to_ascii_lowercase();
             if stderr.contains("xcode-select") || stderr.contains("developer tools") {
                 crate::GitAvailability::NeedsCommandLineTools
             } else {
@@ -288,7 +308,7 @@ mod tests {
 
         let empty_dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            check_availability_in_path(empty_dir.path().as_os_str()),
+            check_availability_in_path(empty_dir.path().as_os_str(), PROBE_TIMEOUT),
             crate::GitAvailability::Missing
         );
 
@@ -304,17 +324,36 @@ mod tests {
         std::fs::set_permissions(&fake_git, perms).unwrap();
 
         assert_eq!(
-            check_availability_in_path(stub_dir.path().as_os_str()),
+            check_availability_in_path(stub_dir.path().as_os_str(), PROBE_TIMEOUT),
             crate::GitAvailability::NeedsCommandLineTools
         );
+
+        let slow_dir = tempfile::tempdir().unwrap();
+        let slow_git = slow_dir.path().join("git");
+        std::fs::write(&slow_git, "#!/bin/sh\nsleep 30\n").unwrap();
+        let mut slow_perms = std::fs::metadata(&slow_git).unwrap().permissions();
+        slow_perms.set_mode(0o755);
+        std::fs::set_permissions(&slow_git, slow_perms).unwrap();
+
+        let started = Instant::now();
+        assert_eq!(
+            check_availability_in_path(slow_dir.path().as_os_str(), Duration::from_millis(200)),
+            crate::GitAvailability::Missing
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
-    fn io_not_found_maps_to_git_not_found() {
-        let err = io::Error::new(io::ErrorKind::NotFound, "missing");
+    fn missing_repo_directory_preserves_io_error_instead_of_git_not_found() {
+        let missing_dir = tempfile::tempdir().unwrap();
+        let missing_path = missing_dir.path().join("does-not-exist");
+        let err = run(&missing_path, &["status"]).unwrap_err();
+        assert!(matches!(err, crate::GitCraftError::Message { .. }));
+
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "missing file");
         assert!(matches!(
-            crate::GitCraftError::from(err),
-            crate::GitCraftError::GitNotFound
+            crate::GitCraftError::from(io_err),
+            crate::GitCraftError::Message { .. }
         ));
     }
 }

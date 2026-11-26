@@ -8,7 +8,7 @@ use crate::{
 
 impl RepoSession {
     pub fn diff(&self) -> Result<Vec<DiffRow>, GitCraftError> {
-        Ok(diff::working_tree(&self.path)?)
+        diff::working_tree(&self.path)
     }
 
     pub fn stage(&self, path: String) -> Result<(), GitCraftError> {

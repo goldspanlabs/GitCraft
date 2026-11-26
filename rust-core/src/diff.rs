@@ -2,7 +2,7 @@ use std::{io, path::Path};
 
 use crate::{git_cli, highlight, DiffRow};
 
-pub fn working_tree(repo: &Path) -> io::Result<Vec<DiffRow>> {
+pub fn working_tree(repo: &Path) -> Result<Vec<DiffRow>, crate::GitCraftError> {
     working_tree_file(repo, None, false)
 }
 
@@ -10,7 +10,7 @@ pub fn working_tree_file(
     repo: &Path,
     path: Option<&str>,
     staged: bool,
-) -> io::Result<Vec<DiffRow>> {
+) -> Result<Vec<DiffRow>, crate::GitCraftError> {
     // Paths are literal filenames, not globs: `notes[1].txt` must not match `notes1.txt`.
     let mut args = vec![
         "--literal-pathspecs",
@@ -77,10 +77,14 @@ pub fn working_tree_file(
         }
     }
 
-    parse_with_ext(&raw, ext)
+    Ok(parse_with_ext(&raw, ext)?)
 }
 
-pub fn commit_diff(repo: &Path, oid_hex: &str, path: Option<&str>) -> io::Result<Vec<DiffRow>> {
+pub fn commit_diff(
+    repo: &Path,
+    oid_hex: &str,
+    path: Option<&str>,
+) -> Result<Vec<DiffRow>, crate::GitCraftError> {
     // Literal paths (as in `working_tree_file`), so `a*.txt` does not also match `ab.txt`. A
     // merge commit is shown against its first parent; plain `git show` prints nothing for a
     // clean merge.
@@ -100,7 +104,7 @@ pub fn commit_diff(repo: &Path, oid_hex: &str, path: Option<&str>) -> io::Result
     }
     let raw = git_cli::run(repo, &args)?;
     let ext = path.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
-    parse_with_ext(&raw, ext)
+    Ok(parse_with_ext(&raw, ext)?)
 }
 
 #[cfg(test)]
