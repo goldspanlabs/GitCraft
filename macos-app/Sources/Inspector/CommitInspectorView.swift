@@ -87,6 +87,7 @@ struct CommitInspectorView: View {
     let commit: CommitRow
     @State private var pane: CommitPaneTab = .changes
     @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
+    @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
     @FocusState private var fileListFocused: Bool
 
     private static let dateFormatter: DateFormatter = {
@@ -150,6 +151,14 @@ struct CommitInspectorView: View {
             }
         }
         .onChange(of: isMaximized) { updateKeyboardFocus() }
+        .onChange(of: isCollapsed) {
+            // A collapsed pane keeps the file list mounted but clipped, so the arrow keys would
+            // keep selecting files nobody can see. Hand them back to the commit list.
+            if isCollapsed {
+                fileListFocused = false
+                NotificationCenter.default.post(name: .focusCommitTable, object: nil)
+            }
+        }
         .onChange(of: pane) {
             if isMaximized && pane == .changes { fileListFocused = true }
         }
