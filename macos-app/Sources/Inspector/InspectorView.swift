@@ -63,6 +63,90 @@ private struct WorkingChangesInspectorView: View {
     // This view has no tab strip, so a collapsed panel would have no way to reopen.
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
 
+    private var optionToggles: some View {
+        HStack {
+            Toggle("Skip Hooks", isOn: $tab.skipHooks)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .fixedSize()
+            Toggle("Amend", isOn: Binding(
+                get: { tab.amendCommit },
+                set: { tab.setAmend($0) }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .fixedSize()
+        }
+    }
+
+    private var stashButton: some View {
+        Button("Stash…") {
+            tab.presentNewStash()
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .disabled(tab.totalChangesCount == 0 || tab.isBusy)
+    }
+
+    /// One combo control, always drawn with both halves. When committing isn't possible it turns
+    /// grey and both halves are inert. With `fillWidth` the Commit half stretches to the row.
+    @ViewBuilder
+    private func commitControl(fillWidth: Bool) -> some View {
+        let combo = HStack(spacing: 0) {
+            // Padding and the hit shape live inside the label, so the whole
+            // half is clickable, not just the text.
+            Button {
+                tab.commitChanges()
+            } label: {
+                Text("Commit")
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: fillWidth ? .infinity : nil, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!canCommit)
+            .accessibilityIdentifier("commit-button")
+
+            Rectangle()
+                .fill((canCommit ? Color.white : Color.secondary).opacity(0.35))
+                .frame(width: 1)
+                .padding(.vertical, 4)
+
+            Menu {
+                Button("Commit and Push") {
+                    tab.commitChanges(pushAfter: true)
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .fixedSize()
+            .disabled(!canCommit)
+            .help("More commit options")
+            .accessibilityIdentifier("commit-menu")
+        }
+            .foregroundStyle(canCommit ? Color.white : Color.secondary)
+            .frame(height: 23)
+            .background(
+                canCommit ? Color.accentColor : Color.secondary.opacity(0.15),
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+        if fillWidth {
+            combo
+        } else {
+            combo.fixedSize()
+        }
+    }
+
     var body: some View {
         HSplitView {
             // Left: Staged & Unstaged lists + Commit Composer
@@ -184,71 +268,22 @@ private struct WorkingChangesInspectorView: View {
                             .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
                     )
 
-                    HStack {
-                        Toggle("Skip Hooks", isOn: $tab.skipHooks)
-                            .toggleStyle(.checkbox)
-                            .font(.system(size: 12))
-                        Toggle("Amend", isOn: Binding(
-                            get: { tab.amendCommit },
-                            set: { tab.setAmend($0) }
-                        ))
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 12))
-                        Spacer()
-                        Button("Stash…") {
-                            tab.presentNewStash()
+                    // Wide: everything on one row. Narrow: options on top, actions below, so
+                    // labels never wrap and the Commit button keeps its size.
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            optionToggles
+                            Spacer()
+                            stashButton
+                            commitControl(fillWidth: false)
                         }
-                        .disabled(tab.totalChangesCount == 0 || tab.isBusy)
-
-                        // One combo control, always drawn with both halves. When committing isn't
-                        // possible it turns grey and both halves are inert.
-                        HStack(spacing: 0) {
-                            // Padding and the hit shape live inside the label, so the whole
-                            // half is clickable, not just the text.
-                            Button {
-                                tab.commitChanges()
-                            } label: {
-                                Text("Commit")
-                                    .padding(.horizontal, 14)
-                                    .frame(maxHeight: .infinity)
-                                    .contentShape(Rectangle())
+                        VStack(alignment: .leading, spacing: 8) {
+                            optionToggles
+                            HStack {
+                                stashButton
+                                commitControl(fillWidth: true)
                             }
-                            .buttonStyle(.plain)
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(!canCommit)
-                            .accessibilityIdentifier("commit-button")
-
-                            Rectangle()
-                                .fill((canCommit ? Color.white : Color.secondary).opacity(0.35))
-                                .frame(width: 1)
-                                .padding(.vertical, 4)
-
-                            Menu {
-                                Button("Commit and Push") {
-                                    tab.commitChanges(pushAfter: true)
-                                }
-                            } label: {
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .padding(.horizontal, 9)
-                                    .frame(maxHeight: .infinity)
-                                    .contentShape(Rectangle())
-                            }
-                            .menuStyle(.button)
-                            .menuIndicator(.hidden)
-                            .buttonStyle(.plain)
-                            .fixedSize()
-                            .disabled(!canCommit)
-                            .help("More commit options")
-                            .accessibilityIdentifier("commit-menu")
                         }
-                        .foregroundStyle(canCommit ? Color.white : Color.secondary)
-                        .frame(height: 23)
-                        .background(
-                            canCommit ? Color.accentColor : Color.secondary.opacity(0.15),
-                            in: RoundedRectangle(cornerRadius: 6)
-                        )
-                        .fixedSize()
                     }
                 }
                 .padding(10)
