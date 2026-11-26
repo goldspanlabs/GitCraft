@@ -58,7 +58,7 @@ final class WorktreeUITests: XCTestCase {
         XCTAssertTrue(element("worktree-row:main").waitForExistence(timeout: 60))
 
         rightClick(app.staticTexts["WORKTREES"])
-        let newWorktree = app.menuItems["New Worktree…"]
+        let newWorktree = openMenuItem("New Worktree…", in: app)
         XCTAssertTrue(newWorktree.waitForExistence(timeout: 10))
         newWorktree.click()
 
@@ -303,7 +303,7 @@ final class WorktreeUITests: XCTestCase {
         let mainCommit = try fixture.commitID("main")
         XCTAssertTrue(element("worktree-row:main").waitForExistence(timeout: 60))
         rightClick(app.staticTexts["WORKTREES"])
-        let newWorktree = app.menuItems["New Worktree…"]
+        let newWorktree = openMenuItem("New Worktree…", in: app)
         XCTAssertTrue(newWorktree.waitForExistence(timeout: 10))
         newWorktree.click()
 

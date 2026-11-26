@@ -105,7 +105,7 @@ final class BranchUITests: XCTestCase {
         let main = element("branch-row:main")
         XCTAssertTrue(main.waitForExistence(timeout: 60))
         rightClick(main)
-        let item = app.menuItems["New Branch…"]
+        let item = openMenuItem("New Branch…", in: app)
         XCTAssertTrue(item.waitForExistence(timeout: 10))
         item.click()
 
