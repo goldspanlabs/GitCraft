@@ -48,6 +48,8 @@ private struct WorkingChangesInspectorView: View {
     @ObservedObject var tab: RepoTab
     @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
     @State private var isExpandingDescription = false
+    /// Set by clicking a file, so the arrow keys move through the file lists.
+    @FocusState private var fileListFocused: Bool
 
     private var canCommit: Bool {
         tab.canCommit(autoStage: autoStageOnCommit)
@@ -146,63 +148,95 @@ private struct WorkingChangesInspectorView: View {
         }
     }
 
+    private func select(_ file: FileChange) {
+        fileListFocused = true
+        tab.selectWorkingFile(file)
+    }
+
+    /// A partly staged file is in both lists, so a row is identified by its list and path.
+    private static func rowID(path: String, staged: Bool) -> String {
+        "\(staged ? "staged" : "unstaged"):\(path)"
+    }
+
+    private func scrollToSelection(_ proxy: ScrollViewProxy) {
+        guard let path = tab.selectedFilePath else { return }
+        proxy.scrollTo(Self.rowID(path: path, staged: tab.selectedFileStaged))
+    }
+
     var body: some View {
         HSplitView {
             // Left: Staged & Unstaged lists + Commit Composer
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        WorkingFileSection(
-                            title: "STAGED CHANGES",
-                            files: tab.stagedFiles,
-                            actionTitle: "Unstage All",
-                            emptyMessage: "No staged changes",
-                            onAction: { tab.unstageAll() }
-                        ) { file in
-                            WorkingFileRow(
-                                file: file,
-                                isSelected: tab.selectedFilePath == file.path && tab.selectedFileStaged,
-                                isStaged: true,
-                                onSelect: { tab.selectWorkingFile(file) },
-                                onToggleStaged: { tab.unstageFile(file.path) }
-                            )
-                        }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            WorkingFileSection(
+                                title: "STAGED CHANGES",
+                                files: tab.stagedFiles,
+                                actionTitle: "Unstage All",
+                                emptyMessage: "No staged changes",
+                                onAction: { tab.unstageAll() }
+                            ) { file in
+                                WorkingFileRow(
+                                    file: file,
+                                    isSelected: tab.selectedFilePath == file.path && tab.selectedFileStaged,
+                                    isStaged: true,
+                                    onSelect: { select(file) },
+                                    onToggleStaged: { tab.unstageFile(file.path) }
+                                )
+                                .id(Self.rowID(path: file.path, staged: true))
+                            }
 
-                        Divider()
+                            Divider()
 
-                        WorkingFileSection(
-                            title: "UNSTAGED CHANGES",
-                            files: tab.unstagedFiles,
-                            actionTitle: "Stage All",
-                            emptyMessage: "Working tree clean",
-                            onAction: { tab.stageAll() }
-                        ) { file in
-                            WorkingFileRow(
-                                file: file,
-                                isSelected: tab.selectedFilePath == file.path && !tab.selectedFileStaged,
-                                isStaged: false,
-                                onSelect: { tab.selectWorkingFile(file) },
-                                onToggleStaged: { tab.stageFile(file.path) }
-                            )
-                            .contextMenu {
-                                Button("Stage File") { tab.stageFile(file.path) }
-                                if file.status == "?" {
-                                    Divider()
-                                    Button("Add to .gitignore") {
-                                        tab.ignorePath(file.path, localOnly: false)
+                            WorkingFileSection(
+                                title: "UNSTAGED CHANGES",
+                                files: tab.unstagedFiles,
+                                actionTitle: "Stage All",
+                                emptyMessage: "Working tree clean",
+                                onAction: { tab.stageAll() }
+                            ) { file in
+                                WorkingFileRow(
+                                    file: file,
+                                    isSelected: tab.selectedFilePath == file.path && !tab.selectedFileStaged,
+                                    isStaged: false,
+                                    onSelect: { select(file) },
+                                    onToggleStaged: { tab.stageFile(file.path) }
+                                )
+                                .id(Self.rowID(path: file.path, staged: false))
+                                .contextMenu {
+                                    Button("Stage File") { tab.stageFile(file.path) }
+                                    if file.status == "?" {
+                                        Divider()
+                                        Button("Add to .gitignore") {
+                                            tab.ignorePath(file.path, localOnly: false)
+                                        }
+                                        Button("Add to .git/info/exclude (local only)") {
+                                            tab.ignorePath(file.path, localOnly: true)
+                                        }
+                                        Divider()
                                     }
-                                    Button("Add to .git/info/exclude (local only)") {
-                                        tab.ignorePath(file.path, localOnly: true)
+                                    Button("Discard Changes…", role: .destructive) {
+                                        tab.pendingConfirmation = .discardFile(path: file.path)
                                     }
-                                    Divider()
-                                }
-                                Button("Discard Changes…", role: .destructive) {
-                                    tab.pendingConfirmation = .discardFile(path: file.path)
                                 }
                             }
                         }
+                        .padding(.vertical, 10)
                     }
-                    .padding(.vertical, 10)
+                    .focusable()
+                    .focused($fileListFocused)
+                    .focusEffectDisabled()
+                    .onKeyPress(.upArrow) {
+                        tab.moveWorkingFileSelection(by: -1)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        tab.moveWorkingFileSelection(by: 1)
+                        return .handled
+                    }
+                    .onChange(of: tab.selectedFilePath) { scrollToSelection(proxy) }
+                    .onChange(of: tab.selectedFileStaged) { scrollToSelection(proxy) }
                 }
 
                 Divider()
@@ -453,6 +487,7 @@ private struct DiffHeaderBar: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.head)
+                .accessibilityIdentifier("diff-path")
             Spacer()
             if let badgeText {
                 Text(badgeText)

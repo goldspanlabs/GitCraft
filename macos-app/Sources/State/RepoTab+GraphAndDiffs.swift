@@ -232,6 +232,23 @@ extension RepoTab {
         loadWorkingDiff(path: file.path, staged: file.staged)
     }
 
+    /// Moves the selected working file by `delta` rows through the staged list and then the
+    /// unstaged one, stopping at the first and last row.
+    func moveWorkingFileSelection(by delta: Int) {
+        let files = stagedFiles + unstagedFiles
+        guard !files.isEmpty else { return }
+        let current = files.firstIndex { $0.path == selectedFilePath && $0.staged == selectedFileStaged }
+        let next: Int
+        if let current {
+            next = min(max(current + delta, 0), files.count - 1)
+            // At either end another press changes nothing; skip the diff reload.
+            if next == current { return }
+        } else {
+            next = delta > 0 ? 0 : files.count - 1
+        }
+        selectWorkingFile(files[next])
+    }
+
     func selectCommitFile(_ path: String?) {
         guard let oid = selectedCommit?.oidHex else { return }
         selectedFilePath = path
@@ -247,6 +264,11 @@ extension RepoTab {
             }
             if !selectedFileStaged, unstagedFiles.contains(where: { $0.path == path }) {
                 loadWorkingDiff(path: path, staged: false)
+                return
+            }
+            // Staging or unstaging moved the file to the other list: follow it there.
+            if let moved = (stagedFiles + unstagedFiles).first(where: { $0.path == path }) {
+                selectWorkingFile(moved)
                 return
             }
         }
