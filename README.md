@@ -6,8 +6,7 @@
 
 **A fast, native Git client for macOS. Free and open source, with no subscription.**
 
-Everything you'd pay a yearly fee for in Tower or Fork (a clear commit graph,
-syntax-highlighted diffs, worktrees, stashes, rebase and cherry-pick) in a
+Everything you'd pay a yearly fee for in Tower or Fork now in a
 lightweight app you never have to pay for.
 
 [**Download for macOS**](https://github.com/goldspanlabs/gitcraft/releases/latest)
