@@ -461,7 +461,9 @@ struct DiffPaneContainer: View {
             DiffHeaderBar(
                 filePath: filePath,
                 badgeText: badgeText,
-                badgeColor: badgeColor
+                badgeColor: badgeColor,
+                // A multi-file diff heads each file with the same icon.
+                showsIcon: !diffRows.contains { $0.kind == "header" }
             )
             Divider()
             if diffRows.isEmpty {
@@ -477,12 +479,15 @@ private struct DiffHeaderBar: View {
     let filePath: String?
     let badgeText: String?
     let badgeColor: Color
+    let showsIcon: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "doc.text")
-                .foregroundStyle(.secondary)
-                .font(.caption)
+            if showsIcon {
+                Image(systemName: "doc.text")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
             Text(filePath ?? "No file selected")
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .lineLimit(1)
