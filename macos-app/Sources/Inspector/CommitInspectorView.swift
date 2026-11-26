@@ -7,11 +7,12 @@ private enum CommitPaneTab: String, CaseIterable, Identifiable {
 }
 
 /// Slim strip along the top of the bottom pane: the Commit / Changes tabs (when there are
-/// any) on the left and the show/hide toggle flush right. When the panel is collapsed this
-/// strip is all that remains visible.
+/// any) on the left and the maximize toggle flush right. The panel collapses by dragging its
+/// divider down; when collapsed this strip is all that remains visible.
 private struct BottomPaneBar: View {
     var selection: Binding<CommitPaneTab>?
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -40,20 +41,44 @@ private struct BottomPaneBar: View {
             }
             Spacer()
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    // From the collapsed strip this only reopens the panel at its last height;
+                    // a second click maximizes.
+                    if isCollapsed {
+                        isCollapsed = false
+                    } else {
+                        isMaximized.toggle()
+                    }
+                }
             } label: {
-                PhosphorIcon(glyph: .panelBottom, size: 16)
-                    .foregroundStyle(isCollapsed ? Color.secondary : Color.primary.opacity(0.8))
+                PhosphorIcon(glyph: .maximize, size: 16)
+                    .foregroundStyle(isMaximized ? Color.accentColor : Color.primary.opacity(0.8))
                     .padding(.horizontal, 6)
                     .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isMaximized ? Color.primary.opacity(0.12) : Color.clear)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isCollapsed ? "Show the bottom panel" : "Hide the bottom panel")
+            .help(
+                isCollapsed ? "Show the bottom panel"
+                    : isMaximized ? "Restore the bottom panel size" : "Maximize the bottom panel"
+            )
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
         .background(Color(nsColor: .controlBackgroundColor))
+        // Collapsing is a divider drag, which VoiceOver and keyboard users can't do, so expose
+        // the same toggle as a labeled action on the bar.
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: isCollapsed ? "Show Panel" : "Collapse Panel") {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if isMaximized { isMaximized = false }
+                isCollapsed.toggle()
+            }
+        }
     }
 }
 
@@ -61,6 +86,9 @@ struct CommitInspectorView: View {
     @ObservedObject var tab: RepoTab
     let commit: CommitRow
     @State private var pane: CommitPaneTab = .changes
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
+    @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @FocusState private var fileListFocused: Bool
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -68,6 +96,34 @@ struct CommitInspectorView: View {
         f.timeStyle = .short
         return f
     }()
+
+    /// Maximizing hands the arrow keys to the changed-files list; restoring hands them back to
+    /// the commit list, so the keys always drive whatever the person is looking at.
+    private func updateKeyboardFocus() {
+        if isMaximized {
+            if pane == .changes { fileListFocused = true }
+        } else {
+            fileListFocused = false
+            NotificationCenter.default.post(name: .focusCommitTable, object: nil)
+        }
+    }
+
+    /// Moves the selected changed file by `delta` rows, stopping at the first and last file.
+    private func moveFileSelection(by delta: Int) {
+        let files = tab.commitDetail?.files ?? []
+        guard !files.isEmpty else { return }
+        let current = files.firstIndex { $0.path == tab.selectedFilePath }
+        let next: Int
+        if let current {
+            next = min(max(current + delta, 0), files.count - 1)
+        } else {
+            // Nothing selected ("All"): down picks the first file, up the last.
+            next = delta > 0 ? 0 : files.count - 1
+        }
+        // At the first or last file, another press changes nothing; skip the diff reload.
+        guard files[next].path != tab.selectedFilePath else { return }
+        tab.selectCommitFile(files[next].path)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -86,6 +142,25 @@ struct CommitInspectorView: View {
             case .changes:
                 changesPane
             }
+        }
+        .onAppear {
+            // An inspector created while the panel is already maximized (a new selection, or
+            // a relaunch) never sees `isMaximized` change, so claim focus here too.
+            if isMaximized && pane == .changes {
+                DispatchQueue.main.async { fileListFocused = true }
+            }
+        }
+        .onChange(of: isMaximized) { updateKeyboardFocus() }
+        .onChange(of: isCollapsed) {
+            // A collapsed pane keeps the file list mounted but clipped, so the arrow keys would
+            // keep selecting files nobody can see. Hand them back to the commit list.
+            if isCollapsed {
+                fileListFocused = false
+                NotificationCenter.default.post(name: .focusCommitTable, object: nil)
+            }
+        }
+        .onChange(of: pane) {
+            if isMaximized && pane == .changes { fileListFocused = true }
         }
     }
 
@@ -150,8 +225,24 @@ struct CommitInspectorView: View {
 
                 Divider()
 
-                ScrollView {
-                    CommitFileList(tab: tab) { tab.selectCommitFile($0) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        CommitFileList(tab: tab) { tab.selectCommitFile($0) }
+                    }
+                    .focusable()
+                    .focused($fileListFocused)
+                    .focusEffectDisabled()
+                    .onKeyPress(.upArrow) {
+                        moveFileSelection(by: -1)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        moveFileSelection(by: 1)
+                        return .handled
+                    }
+                    .onChange(of: tab.selectedFilePath) {
+                        if let path = tab.selectedFilePath { proxy.scrollTo(path) }
+                    }
                 }
             }
             .frame(minWidth: 220, idealWidth: 260, maxWidth: 360)
@@ -252,6 +343,7 @@ private struct CommitFileList: View {
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(tab.commitDetail?.files ?? [], id: \.path) { file in
+                // The row's id is its path, which lets the list scroll to the selected file.
                 Button {
                     onSelect(file.path)
                 } label: {

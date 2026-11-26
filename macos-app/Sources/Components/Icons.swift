@@ -44,7 +44,7 @@ enum BrandSVGPaths {
 /// Phosphor glyphs used across the toolbar, sidebar, inspector, and graph chips.
 enum PhosphorGlyph {
     case fetch, pull, push, filter, filterFilled, chevronDown
-    case branch, tag, cloud, folder, archive, panelBottom
+    case branch, tag, cloud, folder, archive, panelBottom, maximize
 
     /// Optional faded shape drawn under the main path (duotone glyphs).
     fileprivate var shading: String? {
@@ -85,6 +85,9 @@ enum PhosphorGlyph {
         case .panelBottom:
             // Phosphor "square-half-bottom" (duotone): outline plus the shaded half, below.
             "M200,40H56A16,16,0,0,0,40,56V200a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,16v64H56V56Zm0,144H56V136H200v64Z"
+        case .maximize:
+            // phosphor regular/corners-out
+            "M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z"
         case .archive:
             // phosphor regular/archive
             "M224,48H32A16,16,0,0,0,16,64V88a16,16,0,0,0,16,16v88a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48ZM208,192H48V104H208ZM224,88H32V64H224V88ZM96,136a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,136Z"

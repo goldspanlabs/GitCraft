@@ -60,8 +60,10 @@ private struct WorkingChangesInspectorView: View {
         )
     }
 
-    // This view has no tab strip, so a collapsed panel would have no way to reopen.
+    // This view has no tab strip or maximize button, so a collapsed or maximized panel would
+    // have no way to reopen or restore.
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
 
     private var skipHooksToggle: some View {
         Toggle("Skip Hooks", isOn: $tab.skipHooks)
@@ -313,6 +315,7 @@ private struct WorkingChangesInspectorView: View {
         }
         .onAppear {
             if isCollapsed { isCollapsed = false }
+            if isMaximized { isMaximized = false }
         }
     }
 }
