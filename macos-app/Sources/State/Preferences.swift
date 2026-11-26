@@ -31,8 +31,14 @@ enum BottomPanelDefaults {
     static let storageKey = "bottomPanelHeight"
     /// Whether the bottom panel is collapsed to just its tab strip.
     static let collapsedKey = "bottomPanelCollapsed"
+    /// Whether the bottom panel is maximized to fill the whole split, hiding the graph.
+    static let maximizedKey = "bottomPanelMaximized"
     /// Height of the tab strip (30pt) plus its divider: what stays visible when collapsed.
     static let collapsedHeight: CGFloat = 31
+    /// How far past the minimum height the divider must be dragged down before the panel collapses.
+    static let collapseDragThreshold: CGFloat = 60
+    /// How far up from the collapsed strip the divider must be dragged before the panel reopens.
+    static let expandDragThreshold: CGFloat = 40
 }
 
 /// User-selectable appearance for the whole app. Persisted in `UserDefaults`

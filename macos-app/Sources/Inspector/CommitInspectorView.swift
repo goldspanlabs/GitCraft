@@ -7,11 +7,12 @@ private enum CommitPaneTab: String, CaseIterable, Identifiable {
 }
 
 /// Slim strip along the top of the bottom pane: the Commit / Changes tabs (when there are
-/// any) on the left and the show/hide toggle flush right. When the panel is collapsed this
-/// strip is all that remains visible.
+/// any) on the left and the maximize toggle flush right. The panel collapses by dragging its
+/// divider down; when collapsed this strip is all that remains visible.
 private struct BottomPaneBar: View {
     var selection: Binding<CommitPaneTab>?
     @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -40,16 +41,24 @@ private struct BottomPaneBar: View {
             }
             Spacer()
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { isCollapsed.toggle() }
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isMaximized.toggle()
+                    // Maximizing from the collapsed strip goes straight to full size.
+                    if isMaximized { isCollapsed = false }
+                }
             } label: {
-                PhosphorIcon(glyph: .panelBottom, size: 16)
-                    .foregroundStyle(isCollapsed ? Color.secondary : Color.primary.opacity(0.8))
+                PhosphorIcon(glyph: .maximize, size: 16)
+                    .foregroundStyle(isMaximized ? Color.accentColor : Color.primary.opacity(0.8))
                     .padding(.horizontal, 6)
                     .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isMaximized ? Color.primary.opacity(0.12) : Color.clear)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isCollapsed ? "Show the bottom panel" : "Hide the bottom panel")
+            .help(isMaximized ? "Restore the bottom panel size" : "Maximize the bottom panel")
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
