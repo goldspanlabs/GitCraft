@@ -186,6 +186,36 @@ jobs:
           path: build/ui-test-bundle.tar.gz
           retention-days: 1
 
+  # The Swift tests on the oldest macOS the app supports. Left out of pull requests to stay
+  # within the limit on macOS jobs running at once: next to build-app this makes two, and it
+  # is usually done before the three UI test shards start.
+  oldest-macos:
+    needs: changes
+    if: needs.changes.outputs.swift_tests == 'true' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: rust-core/target
+          key: macos-15-rust-${{ hashFiles('rust-core/Cargo.lock', 'rust-core/Cargo.toml', 'rust-core/src/**') }}
+          restore-keys: |
+            macos-15-rust-
+      - name: Cache Swift build
+        uses: actions/cache@v4
+        with:
+          path: macos-app/.build
+          key: macos-15-swift-${{ hashFiles('macos-app/Package.swift', 'macos-app/Sources/**') }}
+          restore-keys: |
+            macos-15-swift-
+      - name: Show tool versions
+        run: sw_vers && xcodebuild -version && git --version
+      - name: Run Swift tests
+        run: make test-swift
+
   ui-tests:
     needs: [changes, build-app]
     if: needs.changes.outputs.ui_matrix != '[]'
