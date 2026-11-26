@@ -7,6 +7,15 @@ extension XCTestCase {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
     }
 
+    /// A menu item titled `title` that is currently on screen. The menu bar's Repository menu
+    /// carries the same titles (New Branch…, New Worktree…) and stays in the tree while closed,
+    /// so a plain `app.menuItems[title]` matches two elements and can't be clicked.
+    func openMenuItem(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        app.menuItems
+            .matching(NSPredicate(format: "label == %@ AND isHittable == true", title))
+            .firstMatch
+    }
+
     /// Polls `element` against `predicate` at a short interval until it holds or `timeout` passes.
     /// Avoids `XCTNSPredicateExpectation`'s ~1s polling cadence.
     func wait(
