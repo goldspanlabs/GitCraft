@@ -102,7 +102,7 @@ extension RepoTab {
         guard on, commitSummary.isEmpty, commitBody.isEmpty else { return }
         let session = self.session
         Task {
-            guard let message = try? await Task.detached { try session.headCommitMessage() }.value,
+            guard let message = try? await Task.detached(operation: { try session.headCommitMessage() }).value,
                   // A read from a checkout the tab has since left must not fill the new composer.
                   self.session === session,
                   self.amendCommit, self.commitSummary.isEmpty, self.commitBody.isEmpty else { return }
