@@ -181,3 +181,27 @@ fn paged_graph_matches_one_big_fetch_and_follows_ref_changes() {
         .iter()
         .any(|r| r.refs.iter().any(|b| b.name == "marker")));
 }
+
+#[test]
+fn graph_cache_notices_a_shallow_clone_being_deepened() {
+    let source = init_repo_with_commit();
+    for i in 0..5 {
+        commit_file(source.path(), "n.txt", &format!("{i}\n"), &format!("c{i}"));
+    }
+    let clone = tempfile::tempdir().unwrap();
+    run_git(
+        clone.path(),
+        &[
+            "clone",
+            "--depth",
+            "1",
+            &format!("file://{}", source.path().display()),
+            ".",
+        ],
+    );
+    let session = open(clone.path());
+    assert_eq!(session.get_commit_graph(0, 100, None).unwrap().len(), 1);
+
+    run_git(clone.path(), &["fetch", "--unshallow"]);
+    assert_eq!(session.get_commit_graph(0, 100, None).unwrap().len(), 6);
+}

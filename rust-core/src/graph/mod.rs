@@ -159,11 +159,25 @@ fn graph_walk(
     let mut lanes = LaneState::default();
     let mut results: Vec<CommitRow> = Vec::new();
 
+    // Set when the walk fails after the requested range is already filled. The extra rows
+    // were only a lookahead for the cache, so the page is still returned, but the partial
+    // walk is not cached.
+    let mut lookahead_failed = false;
+
     for entry in ids {
-        let oid = entry?;
-        let commit = repo
-            .find_commit(oid)
-            .map_err(|e| GitCraftError::message(e.to_string()))?;
+        let step = entry.and_then(|oid| {
+            repo.find_commit(oid)
+                .map(|commit| (oid, commit))
+                .map_err(|e| GitCraftError::message(e.to_string()))
+        });
+        let (oid, commit) = match step {
+            Ok(found) => found,
+            Err(_) if results.len() >= target_count => {
+                lookahead_failed = true;
+                break;
+            }
+            Err(e) => return Err(e),
+        };
 
         let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
 
@@ -209,6 +223,9 @@ fn graph_walk(
 
     let exhausted = results.len() < walk_count;
     let out = page(&results, offset, limit);
+    if lookahead_failed {
+        return Ok(out);
+    }
     if let Ok(mut guard) = cache.lock() {
         if results.len() <= MAX_CACHED_ROWS {
             *guard = GraphCache {
@@ -252,6 +269,10 @@ fn cache_key(
     // HEAD can sit on a commit that no ref names.
     let mut local: Vec<String> = local_tips.iter().map(|oid| oid.to_string()).collect();
     local.sort();
+    // Deepening or unshallowing a clone adds history without touching any ref.
+    let shallow = std::fs::metadata(repo.common_dir().join("shallow"))
+        .ok()
+        .map(|m| (m.len(), m.modified().ok()));
     let head = repo.head().ok();
     let head_state = head.as_ref().map(|h| {
         let name = h
@@ -267,7 +288,7 @@ fn cache_key(
         CommitSort::ByDate => 0,
         CommitSort::Topological => 1,
     };
-    format!("{refs:?}|{tips:?}|{local:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
+    format!("{refs:?}|{tips:?}|{local:?}|{shallow:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
 }
 
 /// Upper bound on how many unpushed commits we mark, so a never-pushed branch with a huge
