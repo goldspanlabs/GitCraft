@@ -110,6 +110,9 @@ struct RepoCommands: Commands {
             Divider()
             ShowTagsMenuItem(tab: workspace.activeTab)
         }
+        CommandMenu("Repository") {
+            RepositoryMenuItems(tab: workspace.activeTab)
+        }
     }
 
     private func recentMenuLabel(for path: String, among paths: [String]) -> String {
@@ -141,6 +144,119 @@ private struct ActiveTabShowTagsToggle: View {
 
     var body: some View {
         Toggle("Show Tags", isOn: $tab.showTags)
+    }
+}
+
+private struct RepositoryMenuItems: View {
+    let tab: RepoTab?
+
+    var body: some View {
+        if let tab {
+            ActiveTabRepositoryMenuItems(tab: tab)
+        } else {
+            Button("Commit") {}
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(true)
+            Divider()
+            Button("Fetch") {}
+                .disabled(true)
+            Button("Pull") {}
+                .disabled(true)
+            Button("Push") {}
+                .disabled(true)
+            Divider()
+            Button("Save Stash…") {}
+                .disabled(true)
+            Menu("Checkout Branch") {
+                Text("No Open Repository")
+            }
+            .disabled(true)
+            Divider()
+            Button("New Branch…") {}
+                .keyboardShortcut("b", modifiers: .command)
+                .disabled(true)
+            Button("New Tag…") {}
+                .disabled(true)
+            Button("New Worktree…") {}
+                .disabled(true)
+        }
+    }
+}
+
+private struct ActiveTabRepositoryMenuItems: View {
+    @ObservedObject var tab: RepoTab
+    @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
+
+    private var canCommit: Bool {
+        GitPreferences.canCommit(
+            summary: tab.commitSummary,
+            stagedCount: tab.stagedFiles.count,
+            changedCount: tab.totalChangesCount,
+            autoStage: autoStageOnCommit,
+            isBusy: tab.isBusy,
+            amend: tab.amendCommit
+        )
+    }
+
+    private var localBranches: [BranchInfo] {
+        tab.branches.filter { !$0.isRemote }
+    }
+
+    var body: some View {
+        Button("Commit") { tab.commitChanges() }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!canCommit)
+
+        Divider()
+
+        Button("Fetch") { tab.runRemote(.fetch) }
+            .disabled(tab.isBusy)
+        Button("Pull") { tab.runRemote(.pull) }
+            .disabled(tab.isBusy)
+        Button("Push") { tab.runRemote(.push) }
+            .disabled(tab.isBusy)
+
+        Divider()
+
+        Button("Save Stash…") { tab.presentNewStash() }
+            .disabled(tab.totalChangesCount == 0 || tab.isBusy)
+        Menu("Checkout Branch") {
+            if localBranches.isEmpty {
+                Text("No Local Branches")
+            } else {
+                ForEach(localBranches, id: \.fullRef) { branch in
+                    let otherWorktree = tab.worktrees.first {
+                        $0.branch == branch.name && $0.path != tab.activeCheckoutPath
+                    }
+                    let label: String = if branch.isHead {
+                        "✓ \(branch.name)"
+                    } else if otherWorktree != nil {
+                        "\(branch.name) (Worktree)"
+                    } else {
+                        branch.name
+                    }
+                    Button(label) {
+                        if let wt = otherWorktree {
+                            tab.switchCheckout(to: wt.path)
+                        } else {
+                            tab.checkoutBranch(branch.name)
+                        }
+                    }
+                    .disabled(branch.isHead || tab.isBusy || (otherWorktree?.isPrunable == true))
+                }
+            }
+        }
+        .disabled(tab.isBusy)
+
+        Divider()
+
+        Button("New Branch…") { tab.activeSheet = .newBranch(startPoint: nil) }
+            .keyboardShortcut("b", modifiers: .command)
+            .disabled(tab.isBusy)
+        Button("New Tag…") { tab.activeSheet = .newTag(target: nil) }
+            .disabled(tab.isBusy)
+        Button("New Worktree…") { tab.activeSheet = .newWorktree(source: .head) }
+            .disabled(tab.isBusy)
     }
 }
 
