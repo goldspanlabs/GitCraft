@@ -1,7 +1,7 @@
 use crate::{
     git_cli,
     validation::{resolve_default_remote, trim_optional_text, validate_ref_arg},
-    GitCraftError, RepoSession, StashInfo,
+    GitCraftError, RefMove, RepoSession, StashInfo,
 };
 
 impl RepoSession {
@@ -11,7 +11,7 @@ impl RepoSession {
         target: Option<String>,
         message: Option<String>,
         push_to_remote: bool,
-    ) -> Result<(), GitCraftError> {
+    ) -> Result<Option<RefMove>, GitCraftError> {
         let trimmed_name = validate_ref_arg(&tag_name)?;
         let target = target.as_deref().map(validate_ref_arg).transpose()?;
         let trimmed_msg = trim_optional_text(message.as_deref());
@@ -32,19 +32,37 @@ impl RepoSession {
             git_cli::mutate(&self.path, &args)?;
             if push_to_remote {
                 self.push_refspec(&format!("refs/tags/{trimmed_name}"))?;
+                return Ok(None);
             }
-            Ok(())
+            let full_ref = format!("refs/tags/{trimmed_name}");
+            let after_oid = self.ref_oid(full_ref.clone());
+            Ok(after_oid.map(|oid| RefMove {
+                full_ref,
+                before_oid: None,
+                after_oid: Some(oid),
+            }))
         })
     }
 
-    pub fn delete_tag(&self, tag_name: String, delete_remote: bool) -> Result<(), GitCraftError> {
+    pub fn delete_tag(
+        &self,
+        tag_name: String,
+        delete_remote: bool,
+    ) -> Result<Option<RefMove>, GitCraftError> {
         let tag_name = validate_ref_arg(&tag_name)?;
         self.with_mutation_lock(|| {
+            let full_ref = format!("refs/tags/{tag_name}");
+            let before_oid = self.ref_oid(full_ref.clone());
             git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
             if delete_remote {
                 self.push_refspec(&format!(":refs/tags/{tag_name}"))?;
+                return Ok(None);
             }
-            Ok(())
+            Ok(before_oid.map(|oid| RefMove {
+                full_ref,
+                before_oid: Some(oid),
+                after_oid: None,
+            }))
         })
     }
 

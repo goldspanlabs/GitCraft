@@ -3,7 +3,7 @@ use std::io;
 use crate::{
     diff, git_cli,
     validation::{has_head, ignore_rule, is_tracked},
-    DiffRow, GitCraftError, RepoSession,
+    DiffRow, GitCraftError, HeadMove, RepoSession,
 };
 
 impl RepoSession {
@@ -112,7 +112,7 @@ impl RepoSession {
         })
     }
 
-    pub fn commit(&self, message: String) -> Result<(), GitCraftError> {
+    pub fn commit(&self, message: String) -> Result<Option<HeadMove>, GitCraftError> {
         self.commit_with_options(message, false, false)
     }
 
@@ -122,7 +122,7 @@ impl RepoSession {
         message: String,
         skip_hooks: bool,
         amend: bool,
-    ) -> Result<(), GitCraftError> {
+    ) -> Result<Option<HeadMove>, GitCraftError> {
         let mut args = vec!["commit", "-m", &message];
         if skip_hooks {
             args.push("--no-verify");
@@ -130,7 +130,7 @@ impl RepoSession {
         if amend {
             args.push("--amend");
         }
-        self.mutate(&args)
+        self.mutate_tracking_head(&args)
     }
 
     /// True when HEAD is contained in a remote-tracking branch. Amending such a commit

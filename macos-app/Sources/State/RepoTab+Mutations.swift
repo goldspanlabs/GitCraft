@@ -138,22 +138,31 @@ extension RepoTab {
         )
         let skip = skipHooks
         let amend = amendCommit
+        let moved = SendableBox<HeadMove?>(nil)
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
             if autoStage {
                 try session.stageAll()
             }
-            try session.commitWithOptions(message: fullMessage, skipHooks: skip, amend: amend)
+            moved.value = try session.commitWithOptions(message: fullMessage, skipHooks: skip, amend: amend)
         } onSuccess: { [weak self] in
-            self?.commitSummary = ""
-            self?.commitBody = ""
-            self?.amendCommit = false
-            self?.skipHooks = false
+            guard let self else { return }
+            self.commitSummary = ""
+            self.commitBody = ""
+            self.amendCommit = false
+            self.skipHooks = false
+            if let move = moved.value {
+                self.recordUndo(
+                    actionName: amend ? "Amend" : "Commit",
+                    step: .moveHead(move, mode: .soft),
+                    message: amend ? "Amended \"\(summary)\"." : "Committed \"\(summary)\"."
+                )
+            }
             if pushAfter {
                 // Hop to the next run-loop turn so this mutation finishes (and clears
                 // `isBusy`) before the push starts its own. After amending a pushed commit,
                 // the push asks before forcing.
-                DispatchQueue.main.async { self?.runRemote(.push) }
+                DispatchQueue.main.async { self.runRemote(.push) }
             }
         }
     }
@@ -163,6 +172,15 @@ extension RepoTab {
     /// Detached checkout of `oid`, handling local changes the same way creating a branch does.
     func checkoutCommit(_ oid: String, localChanges: LocalChangesHandling = .doNotChange) {
         let hasLocalChanges = totalChangesCount > 0
+        if localChanges == .doNotChange {
+            performUndoableCheckout(
+                actionName: "Checkout",
+                message: "Checked out \(oid.shortOid)."
+            ) {
+                try $0.checkoutBranch(branchName: oid)
+            }
+            return
+        }
         performMutation { session in
             try RepoTab.withLocalChanges(
                 localChanges,
@@ -170,13 +188,18 @@ extension RepoTab {
                 stashMessage: "Auto-stash before checking out \(oid.shortOid)",
                 session: session
             ) {
-                try session.checkoutBranch(branchName: oid)
+                _ = try session.checkoutBranch(branchName: oid)
             }
         }
     }
 
     func checkoutBranch(_ branchName: String) {
-        performMutation { try $0.checkoutBranch(branchName: branchName) }
+        performUndoableCheckout(
+            actionName: "Checkout",
+            message: "Switched to \"\(branchName)\"."
+        ) {
+            try $0.checkoutBranch(branchName: branchName)
+        }
     }
 
     func createBranch(
@@ -187,7 +210,16 @@ extension RepoTab {
     ) {
         let trimmed = name.trimmed
         guard !trimmed.isEmpty else { return }
-        let hasLocalChanges = checkout && totalChangesCount > 0
+        if !checkout {
+            performUndoableRefMove(
+                actionName: "Create Branch",
+                message: "Created branch \"\(trimmed)\"."
+            ) {
+                try $0.createBranch(branchName: trimmed, startPoint: startPoint, checkout: false)
+            }
+            return
+        }
+        let hasLocalChanges = totalChangesCount > 0
         performMutation { session in
             try RepoTab.withLocalChanges(
                 localChanges,
@@ -195,20 +227,24 @@ extension RepoTab {
                 stashMessage: "Auto-stash before creating \(trimmed)",
                 session: session
             ) {
-                try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: checkout)
+                _ = try session.createBranch(branchName: trimmed, startPoint: startPoint, checkout: checkout)
             }
         }
     }
 
     func deleteBranch(_ branchName: String, force: Bool) {
-        performMutation({ session in
-            try session.deleteBranch(branchName: branchName, force: force)
-        }, onFailure: { [weak self] error in
-            // A safe delete refused because the branch has unmerged commits: ask before forcing.
-            guard !force, error.displayMessage.contains("is not fully merged") else { return false }
-            self?.pendingConfirmation = .forceDeleteBranch(name: branchName)
-            return true
-        })
+        performUndoableRefMove(
+            actionName: "Delete Branch",
+            message: "Deleted branch \"\(branchName)\".",
+            onFailure: { [weak self] error in
+                // A safe delete refused because the branch has unmerged commits: ask before forcing.
+                guard !force, error.displayMessage.contains("is not fully merged") else { return false }
+                self?.pendingConfirmation = .forceDeleteBranch(name: branchName)
+                return true
+            }
+        ) {
+            try $0.deleteBranch(branchName: branchName, force: force)
+        }
     }
 
     func deleteRemoteBranch(_ branchName: String) {
@@ -216,16 +252,33 @@ extension RepoTab {
     }
 
     func fastForwardBranch(_ branchName: String) {
-        performMutation { try $0.fastForwardBranch(branchName: branchName) }
+        performUndoableRefMove(
+            actionName: "Fast-Forward",
+            message: "Fast-forwarded \"\(branchName)\"."
+        ) {
+            try $0.fastForwardBranch(branchName: branchName)
+        }
     }
 
     func mergeBranch(_ branchName: String) {
-        performMutation { try $0.mergeBranch(branchName: branchName) }
+        performUndoableHeadMove(
+            actionName: "Merge",
+            message: "Merged \"\(branchName)\".",
+            undoMode: .keep
+        ) {
+            try $0.mergeBranch(branchName: branchName)
+        }
     }
 
     /// Merges `oid` into the checked-out branch, joined as `mergeType` says.
     func mergeCommit(_ oid: String, mergeType: MergeType) {
-        performMutation { try $0.mergeCommit(commit: oid, mergeType: mergeType) }
+        performUndoableHeadMove(
+            actionName: "Merge",
+            message: "Merged \(oid.shortOid).",
+            undoMode: .keep
+        ) {
+            try $0.mergeCommit(commit: oid, mergeType: mergeType)
+        }
     }
 
     /// Whether merging `oid` would conflict, or nil if git couldn't say.
@@ -240,7 +293,13 @@ extension RepoTab {
     }
 
     func rebaseOnto(_ oid: String) {
-        performMutation { try $0.rebaseOnto(commit: oid) }
+        performUndoableHeadMove(
+            actionName: "Rebase",
+            message: "Rebased \"\(currentBranchLabel)\" onto \(oid.shortOid).",
+            undoMode: .keep
+        ) {
+            try $0.rebaseOnto(commit: oid)
+        }
     }
 
     /// Hard resets go through the confirmation dialog; soft and mixed resets run directly and
@@ -358,7 +417,10 @@ extension RepoTab {
         let trimmed = name.trimmed
         guard !trimmed.isEmpty else { return }
         // The core trims the message and treats a blank one as none.
-        performMutation {
+        performUndoableRefMove(
+            actionName: "Create Tag",
+            message: "Created tag \"\(trimmed)\"."
+        ) {
             try $0.createTag(
                 tagName: trimmed,
                 target: target,
@@ -369,7 +431,12 @@ extension RepoTab {
     }
 
     func deleteTag(_ tagName: String, deleteRemote: Bool) {
-        performMutation { try $0.deleteTag(tagName: tagName, deleteRemote: deleteRemote) }
+        performUndoableRefMove(
+            actionName: "Delete Tag",
+            message: "Deleted tag \"\(tagName)\"."
+        ) {
+            try $0.deleteTag(tagName: tagName, deleteRemote: deleteRemote)
+        }
     }
 
     func pushTag(_ tagName: String) {

@@ -325,6 +325,14 @@ pub struct HeadMove {
     pub after: HeadPosition,
 }
 
+/// How an action created, deleted, or moved a ref (branch or tag), so it can be undone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefMove {
+    pub full_ref: String,
+    pub before_oid: Option<String>,
+    pub after_oid: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct StashInfo {
     pub index: u32,

@@ -195,6 +195,12 @@ dictionary HeadMove {
   HeadPosition after;
 };
 
+dictionary RefMove {
+  string full_ref;
+  string? before_oid;
+  string? after_oid;
+};
+
 dictionary SquashCommit {
   string oid_hex;
   string short_oid;
@@ -287,10 +293,10 @@ interface RepoSession {
   sequence<TagInfo> list_tags();
 
   [Throws=GitCraftError]
-  void create_tag(string tag_name, string? target, string? message, boolean push_to_remote);
+  RefMove? create_tag(string tag_name, string? target, string? message, boolean push_to_remote);
 
   [Throws=GitCraftError]
-  void delete_tag(string tag_name, boolean delete_remote);
+  RefMove? delete_tag(string tag_name, boolean delete_remote);
 
   [Throws=GitCraftError]
   void push_tag(string tag_name);
@@ -335,34 +341,34 @@ interface RepoSession {
   void stash_drop(u32 index);
 
   [Throws=GitCraftError]
-  void checkout_branch(string branch_name);
+  HeadMove? checkout_branch(string branch_name);
 
   [Throws=GitCraftError]
-  void create_branch(string branch_name, string? start_point, boolean checkout);
+  RefMove? create_branch(string branch_name, string? start_point, boolean checkout);
 
   [Throws=GitCraftError]
-  void delete_branch(string branch_name, boolean force);
+  RefMove? delete_branch(string branch_name, boolean force);
 
   [Throws=GitCraftError]
   void delete_remote_branch(string branch_name);
 
   [Throws=GitCraftError]
-  void fast_forward_branch(string branch_name);
+  RefMove? fast_forward_branch(string branch_name);
 
   [Throws=GitCraftError]
-  void merge_branch(string branch_name);
+  HeadMove? merge_branch(string branch_name);
 
   [Throws=GitCraftError]
   void abort_merge();
 
   [Throws=GitCraftError]
-  void merge_commit(string commit, MergeType merge_type);
+  HeadMove? merge_commit(string commit, MergeType merge_type);
 
   [Throws=GitCraftError]
   boolean merge_has_conflicts(string commit);
 
   [Throws=GitCraftError]
-  void rebase_onto(string commit);
+  HeadMove? rebase_onto(string commit);
 
   [Throws=GitCraftError]
   HeadMove? reset_to(string commit, ResetMode mode);
@@ -371,6 +377,14 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void undo_head_move(HeadPosition expected, string target, ResetMode mode);
+
+  [Throws=GitCraftError]
+  void undo_checkout(HeadPosition expected, HeadPosition target);
+
+  string? ref_oid(string full_ref);
+
+  [Throws=GitCraftError]
+  void undo_ref_move(string? expected_oid, string full_ref, string? target_oid);
 
   [Throws=GitCraftError]
   HeadMove? cherry_pick(string commit);
@@ -429,10 +443,10 @@ interface RepoSession {
   void ignore_path(string path, boolean local_only);
 
   [Throws=GitCraftError]
-  void commit(string message);
+  HeadMove? commit(string message);
 
   [Throws=GitCraftError]
-  void commit_with_options(string message, boolean skip_hooks, boolean amend);
+  HeadMove? commit_with_options(string message, boolean skip_hooks, boolean amend);
 
   [Throws=GitCraftError]
   string head_commit_message();

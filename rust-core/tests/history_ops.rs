@@ -540,3 +540,69 @@ fn checking_out_a_remote_branch_switches_to_the_existing_local_one_without_movin
     assert_eq!(current_branch(dir.path()), "main");
     assert_eq!(head(dir.path()), local_tip);
 }
+
+#[test]
+fn undo_checkout_switches_back_and_refuses_when_head_moved() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap().unwrap();
+    assert_eq!(current_branch(dir.path()), "feature");
+
+    session
+        .undo_checkout(moved.after.clone(), moved.before.clone())
+        .unwrap();
+    assert_eq!(current_branch(dir.path()), "main");
+
+    // Once HEAD moved again, the stale undo must refuse.
+    assert!(session.undo_checkout(moved.after, moved.before).is_err());
+}
+
+#[test]
+fn undo_ref_move_restores_deleted_branch_and_annotated_tag() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let tip = head(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+
+    let deleted_branch = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+    assert!(session.ref_oid("refs/heads/feature".into()).is_none());
+    session
+        .undo_ref_move(
+            deleted_branch.after_oid,
+            deleted_branch.full_ref.clone(),
+            deleted_branch.before_oid.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+
+    let created_tag = session
+        .create_tag("v1.0".into(), None, Some("Release 1.0".into()), false)
+        .unwrap()
+        .unwrap();
+    let tag_oid = created_tag.after_oid.clone().unwrap();
+    let deleted_tag = session.delete_tag("v1.0".into(), false).unwrap().unwrap();
+    assert_eq!(deleted_tag.before_oid.as_deref(), Some(tag_oid.as_str()));
+    assert!(session.ref_oid("refs/tags/v1.0".into()).is_none());
+
+    session
+        .undo_ref_move(
+            deleted_tag.after_oid,
+            deleted_tag.full_ref,
+            deleted_tag.before_oid,
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/tags/v1.0".into()).as_deref(),
+        Some(tag_oid.as_str())
+    );
+    let tag_msg = run_git(dir.path(), &["tag", "-l", "-n1", "v1.0"]);
+    assert!(tag_msg.contains("Release 1.0"));
+}
