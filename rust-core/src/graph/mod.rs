@@ -469,7 +469,7 @@ fn commit_matches_query(commit: &gix::Commit<'_>, oid: gix::ObjectId, query_lowe
 }
 
 fn bytes_contain_ignore_case(haystack: &[u8], needle_lower: &str) -> bool {
-    if needle_lower.is_ascii() {
+    if needle_lower.is_ascii() && haystack.is_ascii() {
         let needle = needle_lower.as_bytes();
         if needle.is_empty() {
             return true;
@@ -695,5 +695,16 @@ mod tests {
         let tags = list_tags(&sync_repo).unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].name, "v0.1.0");
+    }
+
+    #[test]
+    fn unicode_haystack_matches_ascii_query_case_insensitively() {
+        assert!(bytes_contain_ignore_case(
+            "Kelvin scale".as_bytes(),
+            "kelvin"
+        ));
+        assert!(bytes_contain_ignore_case("İpek".as_bytes(), "i"));
+        assert!(bytes_contain_ignore_case(b"Add UI Feature", "ui feature"));
+        assert!(!bytes_contain_ignore_case("İpek".as_bytes(), "xyz"));
     }
 }
