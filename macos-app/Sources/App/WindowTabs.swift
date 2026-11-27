@@ -140,8 +140,9 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     private static let titleTextMinimumWidth: CGFloat = 60
     /// Everything in the title block besides the text: edge insets, spacing and the spinner slot.
     private static let titleChromeWidth: CGFloat = 48
-    /// Space the toolbar keeps between the title block and the action buttons.
-    private static let titleActionsGap: CGFloat = 8
+    /// Space the toolbar keeps between the title block and the action buttons. macOS 26 needs
+    /// 16; with less it pushes the buttons off centre.
+    private static let titleActionsGap: CGFloat = 16
     /// Below this width of top bar (the window, less a showing sidebar) the filter is just a button.
     private static let searchCollapseWidth: CGFloat = 1100
     /// A search field held this narrow makes `NSSearchToolbarItem` show its button instead.
@@ -315,6 +316,13 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         if constraint.isActive != collapsed { constraint.isActive = collapsed }
     }
 
+    /// Lifts the collapsed width ahead of a search: macOS 26 won't put the cursor in a field
+    /// still held to the size of its button.
+    private func expandSearchField() {
+        searchCollapseConstraint?.isActive = false
+        window?.layoutIfNeeded()
+    }
+
     /// Scales the title block with the window, so it is the same for every name at a given width,
     /// and keeps it short of the centred action buttons.
     private func updateTitleWidth() {
@@ -416,7 +424,8 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             actionsView = hosting
             return item
         case .repoSearch:
-            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            let item = CommitFilterToolbarItem(itemIdentifier: identifier)
+            item.willBeginSearch = { [weak self] in self?.expandSearchField() }
             item.searchField.placeholderString = "Filter commits"
             item.searchField.stringValue = tab.searchQuery
             item.searchField.delegate = self
@@ -434,6 +443,16 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSSearchField, field === searchField else { return }
         tab.updateSearchDebounced(field.stringValue)
+    }
+}
+
+/// The commit filter, which says when a search is about to begin, from its button or a command.
+private final class CommitFilterToolbarItem: NSSearchToolbarItem {
+    var willBeginSearch: (() -> Void)?
+
+    override func beginSearchInteraction() {
+        willBeginSearch?()
+        super.beginSearchInteraction()
     }
 }
 
