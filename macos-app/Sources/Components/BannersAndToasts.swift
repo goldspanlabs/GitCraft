@@ -90,6 +90,9 @@ private struct ErrorSummaryRow: View {
     let spacerMinLength: CGFloat
     let closeStyle: HierarchicalShapeStyle
     let showDetailsTooltip: Bool
+    var actionTitle: String?
+    var onAction: (() -> Void)?
+    var actionDisabled = false
     let onDismiss: () -> Void
     @State private var showingDetails = false
 
@@ -108,6 +111,15 @@ private struct ErrorSummaryRow: View {
                 .fixedSize(horizontal: false, vertical: lineLimit > 1)
                 .help(showDetailsTooltip && parts.hasDetails ? "Click Show Details for the full output" : "")
             Spacer(minLength: spacerMinLength)
+            if let actionTitle, let onAction {
+                Button(actionTitle) {
+                    onAction()
+                    onDismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(actionDisabled)
+            }
             if parts.hasDetails {
                 Button("Show Details…") { showingDetails = true }
                     .buttonStyle(.bordered)
@@ -135,6 +147,10 @@ struct ToastView: View {
     var icon = "exclamationmark.triangle.fill"
     /// Clears the toast by itself after this many seconds; nil keeps it until closed.
     var autoDismissAfter: Double?
+    /// A button such as Undo; using it also closes the toast.
+    var actionTitle: String?
+    var onAction: (() -> Void)?
+    var actionDisabled = false
     let onDismiss: () -> Void
 
     var body: some View {
@@ -146,6 +162,9 @@ struct ToastView: View {
             spacerMinLength: 4,
             closeStyle: .secondary,
             showDetailsTooltip: false,
+            actionTitle: actionTitle,
+            onAction: onAction,
+            actionDisabled: actionDisabled,
             onDismiss: onDismiss
         )
         .padding(.horizontal, 12)

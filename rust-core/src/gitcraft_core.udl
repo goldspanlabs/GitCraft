@@ -38,7 +38,8 @@ enum PullStrategy {
 enum ResetMode {
   "Soft",
   "Mixed",
-  "Hard"
+  "Hard",
+  "Keep"
 };
 
 enum MergeType {
@@ -151,6 +152,11 @@ dictionary RemoteInfo {
   string name;
   string fetch_url;
   string push_url;
+};
+
+dictionary HeadPosition {
+  string oid;
+  string? branch;
 };
 
 dictionary StashInfo {
@@ -284,6 +290,11 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   void reset_to(string commit, ResetMode mode);
+
+  HeadPosition? head_position();
+
+  [Throws=GitCraftError]
+  void undo_head_move(HeadPosition expected, string target, ResetMode mode);
 
   [Throws=GitCraftError]
   void cherry_pick(string commit);

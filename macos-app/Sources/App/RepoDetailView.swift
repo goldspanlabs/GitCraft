@@ -147,7 +147,11 @@ struct RepoDetailView: View {
                             message: toast.message,
                             tint: toast.isSuccess ? .green : .yellow,
                             icon: toast.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-                            autoDismissAfter: 4
+                            // Longer when there's a button, so there's time to reach it.
+                            autoDismissAfter: toast.action == nil ? 4 : 10,
+                            actionTitle: toast.action?.title,
+                            onAction: toast.action.map { action in { action.perform() } },
+                            actionDisabled: tab.isBusy
                         ) {
                             tab.dismissToast(toast.id)
                         }

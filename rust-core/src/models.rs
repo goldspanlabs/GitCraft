@@ -106,6 +106,9 @@ pub enum ResetMode {
     Mixed,
     /// Move the branch and discard all uncommitted changes.
     Hard,
+    /// Move the branch and update the files that differ between the two commits, keeping
+    /// other local changes. Refuses when a local change is in one of those files.
+    Keep,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +228,15 @@ pub struct RemoteInfo {
     pub name: String,
     pub fetch_url: String,
     pub push_url: String,
+}
+
+/// Where HEAD points: its commit and the checked-out branch, if any. An undo checks that
+/// HEAD is still here before moving it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadPosition {
+    pub oid: String,
+    /// The branch's full ref, such as `refs/heads/main`; nil when HEAD is detached.
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Debug)]

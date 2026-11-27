@@ -13,6 +13,13 @@ final class RepoTab: ObservableObject, Identifiable {
         let message: String
         /// A finished action rather than a no-op or warning: drawn with a checkmark.
         var isSuccess = false
+        /// A button on the note, such as Undo. Using it also closes the note.
+        var action: ToastAction?
+    }
+
+    struct ToastAction {
+        let title: String
+        let perform: @MainActor () -> Void
     }
 
     enum LocalChangesHandling: String, CaseIterable, Identifiable {
@@ -227,9 +234,9 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Adds a note below any already showing. The same text again moves that note to the
     /// bottom and restarts its timer, rather than showing it twice.
-    func showToast(_ message: String, isSuccess: Bool = false) {
+    func showToast(_ message: String, isSuccess: Bool = false, action: ToastAction? = nil) {
         toasts.removeAll { $0.message == message }
-        toasts.append(Toast(message: message, isSuccess: isSuccess))
+        toasts.append(Toast(message: message, isSuccess: isSuccess, action: action))
         if toasts.count > Self.maxToasts {
             toasts.removeFirst(toasts.count - Self.maxToasts)
         }

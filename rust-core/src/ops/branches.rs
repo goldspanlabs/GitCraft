@@ -3,7 +3,7 @@ use crate::{
     validation::{
         format_ref_display, ref_exists, resolve_commit, validate_ref_arg, validate_remote_arg,
     },
-    worktree, GitCraftError, MergeType, RepoSession, ResetMode,
+    worktree, GitCraftError, HeadPosition, MergeType, RepoSession, ResetMode,
 };
 
 impl RepoSession {
@@ -244,12 +244,40 @@ impl RepoSession {
     /// Moves the checked-out branch to `commit`, as `git reset --<mode>`.
     pub fn reset_to(&self, commit: String, mode: ResetMode) -> Result<(), GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
-        let flag = match mode {
-            ResetMode::Soft => "--soft",
-            ResetMode::Mixed => "--mixed",
-            ResetMode::Hard => "--hard",
-        };
-        self.mutate(&["reset", flag, &commit])
+        self.mutate(&["reset", reset_flag(mode), &commit])
+    }
+
+    /// HEAD's commit and branch, or nil before the first commit.
+    pub fn head_position(&self) -> Option<HeadPosition> {
+        let oid = git_cli::run(&self.path, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
+        let branch = git_cli::run(&self.path, &["symbolic-ref", "-q", "HEAD"])
+            .ok()
+            .map(|b| b.trim().to_owned())
+            .filter(|b| !b.is_empty());
+        Some(HeadPosition {
+            oid: oid.trim().to_owned(),
+            branch,
+        })
+    }
+
+    /// Undoes a reset, cherry-pick or revert by resetting back to `target`, but only while HEAD
+    /// is still where that action left it. Anything since (a commit, a checkout, another
+    /// reset) makes this refuse and change nothing.
+    pub fn undo_head_move(
+        &self,
+        expected: HeadPosition,
+        target: String,
+        mode: ResetMode,
+    ) -> Result<(), GitCraftError> {
+        let target = validate_ref_arg(&target)?;
+        self.with_mutation_lock(|| {
+            if self.head_position().as_ref() != Some(&expected) {
+                return Err(GitCraftError::message(
+                    "The branch has changed since then, so there's nothing to undo.",
+                ));
+            }
+            git_cli::mutate(&self.path, &["reset", reset_flag(mode), &target])
+        })
     }
 
     /// Applies `commit`'s changes on top of the checked-out branch.
@@ -296,5 +324,14 @@ impl RepoSession {
     /// disabled, as there is no terminal, so git keeps the message it would have offered.
     fn continue_op(&self, op: &str) -> Result<(), GitCraftError> {
         self.mutate(&["-c", "core.editor=true", op, "--continue"])
+    }
+}
+
+fn reset_flag(mode: ResetMode) -> &'static str {
+    match mode {
+        ResetMode::Soft => "--soft",
+        ResetMode::Mixed => "--mixed",
+        ResetMode::Hard => "--hard",
+        ResetMode::Keep => "--keep",
     }
 }

@@ -112,6 +112,116 @@ fn reset_to_a_bad_target_changes_nothing() {
     assert_eq!(read(dir.path(), "b.txt"), "unstaged\n");
 }
 
+// ------------------------------------------------------------------- undo ---
+
+#[test]
+fn head_position_names_the_commit_and_branch() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    let position = session.head_position().unwrap();
+    assert_eq!(position.oid, head(dir.path()));
+    assert_eq!(position.branch.as_deref(), Some("refs/heads/main"));
+
+    run_git(dir.path(), &["checkout", "--detach", "-q"]);
+    assert_eq!(session.head_position().unwrap().branch, None);
+}
+
+#[test]
+fn head_position_is_none_before_the_first_commit() {
+    let dir = common::init_repo();
+    assert!(open(dir.path()).head_position().is_none());
+}
+
+#[test]
+fn undoing_a_soft_reset_restores_the_branch_and_the_staged_changes() {
+    let (dir, first) = reset_fixture();
+    let session = open(dir.path());
+    let before = session.head_position().unwrap();
+    let status_before = porcelain(dir.path());
+
+    session.reset_to(first, ResetMode::Soft).unwrap();
+    let after = session.head_position().unwrap();
+    session
+        .undo_head_move(after, before.oid.clone(), ResetMode::Soft)
+        .unwrap();
+
+    assert_eq!(head(dir.path()), before.oid);
+    assert_eq!(porcelain(dir.path()), status_before);
+}
+
+#[test]
+fn undoing_a_mixed_reset_restores_the_branch_and_keeps_the_files() {
+    let (dir, first) = reset_fixture();
+    let session = open(dir.path());
+    let before = session.head_position().unwrap();
+
+    session.reset_to(first, ResetMode::Mixed).unwrap();
+    let after = session.head_position().unwrap();
+    session
+        .undo_head_move(after, before.oid.clone(), ResetMode::Mixed)
+        .unwrap();
+
+    assert_eq!(head(dir.path()), before.oid);
+    // Back on the second commit, so only the edits made on top of it are left (unstaged).
+    assert_eq!(
+        porcelain(dir.path()),
+        [" M b.txt", "?? staged.txt", "?? untracked.txt"]
+    );
+    assert_eq!(read(dir.path(), "a.txt"), "second\n");
+}
+
+#[test]
+fn undoing_a_cherry_pick_keeps_unrelated_local_changes() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["checkout", "-q", "-b", "other"]);
+    let picked = commit_file(dir.path(), "c.txt", "charlie\n", "add c");
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+    write(dir.path(), "b.txt", "local edit\n");
+
+    let session = open(dir.path());
+    let before = session.head_position().unwrap();
+    session.cherry_pick(picked).unwrap();
+    let after = session.head_position().unwrap();
+    assert_ne!(after.oid, before.oid);
+
+    session
+        .undo_head_move(after, before.oid.clone(), ResetMode::Keep)
+        .unwrap();
+
+    assert_eq!(head(dir.path()), before.oid);
+    assert!(
+        !dir.path().join("c.txt").exists(),
+        "the picked file is gone again"
+    );
+    assert_eq!(read(dir.path(), "b.txt"), "local edit\n");
+    assert_eq!(porcelain(dir.path()), [" M b.txt"]);
+}
+
+#[test]
+fn undo_refuses_once_the_branch_has_moved_on() {
+    let dir = init_repo_with_commit();
+    let first = head(dir.path());
+    let session = open(dir.path());
+    commit_file(dir.path(), "a.txt", "second\n", "second");
+    let after = session.head_position().unwrap();
+
+    // A commit made after the action.
+    let later = commit_file(dir.path(), "a.txt", "third\n", "third");
+    assert!(session
+        .undo_head_move(after.clone(), first.clone(), ResetMode::Keep)
+        .is_err());
+    assert_eq!(head(dir.path()), later);
+
+    // The same commit, but checked out on another branch.
+    run_git(dir.path(), &["reset", "-q", "--hard", &after.oid]);
+    run_git(dir.path(), &["checkout", "-q", "-b", "elsewhere"]);
+    assert!(session
+        .undo_head_move(after.clone(), first, ResetMode::Keep)
+        .is_err());
+    assert_eq!(rev(dir.path(), "elsewhere"), after.oid);
+}
+
 // ----------------------------------------------------------------- rebase ---
 
 /// `main` and `feature` each add a commit after the initial one; HEAD is left on `feature`.
