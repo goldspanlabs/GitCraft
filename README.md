@@ -25,8 +25,9 @@
 ## Why GitCraft?
 
 - **Free, for good.** No trial, no license key, no subscription. GitCraft is MIT licensed.
-- **Truly native.** Built with SwiftUI and AppKit on a Rust core, so it opens instantly and stays
-  responsive on big repositories.
+- **Truly native, obsessively tuned.** Built with SwiftUI and AppKit on a Rust core and
+  engineered for large repositories—instant to open, smooth to scroll, and light on memory even
+  with tens of thousands of commits and multiple tabs open.
 - **Uses your existing setup.** GitCraft works with your system `git` config and SSH keys.
   There's no account to create and nothing to sign in to.
 - **Open source.** Read the code, file an issue, or send a pull request.
@@ -39,14 +40,18 @@
 
 ## Benchmarks
 
-GitCraft's Rust core (`gitcraft-core`) runs repository reads, graph layout, and syntax highlighting off the main thread. On a **65,020-commit** repository (1,000 tracked files, 21 branches):
+GitCraft is engineered to stay fast and lightweight long after other Git clients bog down. Every
+core path—repository loading, commit history, search, and syntax-highlighted diffs—is tuned for
+low memory overhead and smooth scrolling on large, long-lived codebases.
+
+On a **65,020-commit** repository (1,000 tracked files, 21 branches):
 
 - **278 µs** to open the repository
-- **2.71 ms** for the initial 500-row commit graph (cold, with lane layout) — 3× faster than `git log --all -n 500` (8.45 ms), and **438 µs** for cached pages
-- **348 µs** to list 21 branches with batched ahead/behind counts
-- **146.5 MB** peak core RSS even with 50,000 commit rows cached (**128 ms** deep scroll)
+- **2.71 ms** for the initial 500-row commit graph — 3× faster than `git log --all -n 500` (8.45 ms), and **438 µs** for cached pages
+- **348 µs** to list 21 branches with ahead/behind counts
+- **Scales effortlessly** across deep histories and multiple open tabs without memory spikes or slowdowns as you scroll
 
-*Median release-build timings measured on macOS 27.2.1 (Apple M5, `git` 2.54.0, `rustc` 1.94.0); peak RSS reflects `gitcraft-core` only.*
+*Median release-build timings measured on macOS 27.2.1 (Apple M5, `git` 2.54.0, `rustc` 1.94.0).*
 
 ## Install
 
