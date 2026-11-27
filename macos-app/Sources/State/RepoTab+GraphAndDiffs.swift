@@ -219,10 +219,14 @@ extension RepoTab {
             // load clears the marker so re-clicking the commit retries.
             selectedCommit = commit
             if loadedDetailOid == commit.oidHex { return }
+            isMarkdownPreview = false
+            markdownPreviewState = .idle
             loadedDetailOid = commit.oidHex
             loadCommitDetails(commit)
         } else {
             guard selectedCommit != nil else { return }
+            isMarkdownPreview = false
+            markdownPreviewState = .idle
             selectedCommit = nil
             loadedDetailOid = nil
             commitDetail = nil
