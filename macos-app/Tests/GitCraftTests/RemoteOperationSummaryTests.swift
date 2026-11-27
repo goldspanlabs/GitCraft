@@ -53,8 +53,18 @@ final class RemoteOperationSummaryTests: XCTestCase {
         XCTAssertEqual(message(.pull, before: before, after: before), "\"main\" is already up to date.")
     }
 
-    private func push(_ branch: String, to destination: String, commits: UInt32, published: Bool) -> String {
-        RemoteOperation.pushMessage(PushResult(branch: branch, destination: destination, commits: commits, published: published))
+    private func push(
+        _ branch: String,
+        to destination: String,
+        commits: UInt32,
+        published: Bool = false,
+        upToDate: Bool = false,
+        forced: Bool = false
+    ) -> String {
+        RemoteOperation.pushMessage(PushResult(
+            branch: branch, destination: destination, commits: commits,
+            published: published, upToDate: upToDate, forced: forced
+        ))
     }
 
     func testPushCountsTheCommitsSentToTheRealDestination() {
@@ -64,7 +74,7 @@ final class RemoteOperationSummaryTests: XCTestCase {
 
     func testPushWithNothingToSend() {
         XCTAssertEqual(
-            push("main", to: "origin/main", commits: 0, published: false),
+            push("main", to: "origin/main", commits: 0, upToDate: true),
             "Nothing to push. origin/main already has \"main\"."
         )
     }
@@ -74,5 +84,16 @@ final class RemoteOperationSummaryTests: XCTestCase {
             push("feature", to: "origin/feature", commits: 0, published: true),
             "Published \"feature\" to origin/feature."
         )
+    }
+
+    func testAForcedRewindIsAnUpdateNotANoOp() {
+        XCTAssertEqual(
+            push("main", to: "origin/main", commits: 0, forced: true),
+            "Force-pushed \"main\" to origin/main."
+        )
+    }
+
+    func testAPushGitDidntCountStillSaysItPushed() {
+        XCTAssertEqual(push("main", to: "origin/main", commits: 0), "Pushed \"main\" to origin/main.")
     }
 }

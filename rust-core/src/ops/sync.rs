@@ -144,17 +144,18 @@ impl RepoSession {
                 .and_then(|s| s.to.strip_prefix("refs/heads/"))
                 .unwrap_or(&branch)
                 .to_owned();
-            let (commits, published) = match &status {
-                Some(s) if s.flag == '*' => (0, true),
-                Some(s) if s.flag == '=' => (0, false),
-                Some(s) => (self.count_range(&s.summary), false),
-                None => (0, false),
+            let flag = status.as_ref().map(|s| s.flag);
+            let commits = match &status {
+                Some(s) if matches!(s.flag, ' ' | '+') => self.count_range(&s.summary),
+                _ => 0,
             };
             Ok(PushResult {
                 branch,
                 destination: format!("{remote}/{destination_branch}"),
                 commits,
-                published,
+                published: flag == Some('*'),
+                up_to_date: flag == Some('='),
+                forced: flag == Some('+'),
             })
         })
     }
@@ -195,25 +196,29 @@ impl RepoSession {
 struct PorcelainRef {
     /// `*` created, `=` already up to date, ` ` fast-forward, `+` forced, `!` rejected.
     flag: char,
+    from: String,
     to: String,
     summary: String,
 }
 
 impl PorcelainRef {
-    /// The line for `branch`, or the first ref line when none names it.
+    /// The line pushing `branch`, matched on its source: with remapped refspecs (say
+    /// `main:deploy`) the destination can be any name. None when no line pushes it.
     fn find(output: &str, branch: &str) -> Option<Self> {
-        let refs: Vec<Self> = output.lines().filter_map(Self::parse).collect();
         let wanted = format!("refs/heads/{branch}");
-        let index = refs.iter().position(|r| r.to == wanted).unwrap_or(0);
-        refs.into_iter().nth(index)
+        output
+            .lines()
+            .filter_map(Self::parse)
+            .find(|r| r.from == wanted)
     }
 
     fn parse(line: &str) -> Option<Self> {
         let mut fields = line.splitn(3, '\t');
         let flag = fields.next()?.chars().next()?;
-        let (_, to) = fields.next()?.split_once(':')?;
+        let (from, to) = fields.next()?.split_once(':')?;
         Some(Self {
             flag,
+            from: from.to_owned(),
             to: to.to_owned(),
             summary: fields.next().unwrap_or("").to_owned(),
         })

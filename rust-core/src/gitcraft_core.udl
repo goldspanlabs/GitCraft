@@ -164,6 +164,8 @@ dictionary PushResult {
   string destination;
   u32 commits;
   boolean published;
+  boolean up_to_date;
+  boolean forced;
 };
 
 dictionary HeadMove {

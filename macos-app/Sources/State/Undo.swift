@@ -110,6 +110,9 @@ extension RepoTab {
             if let move = moved.value {
                 self.recordUndo(actionName: actionName, step: .moveHead(move, mode: undoMode), message: message)
             } else {
+                // HEAD stayed put, but a reset still changed the index or files, so what was
+                // undone before can't be redone on top of it.
+                self.redoStack.removeAll()
                 self.showToast(message, isSuccess: true)
             }
         })

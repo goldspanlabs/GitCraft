@@ -1017,6 +1017,66 @@ fn push_reports_what_it_sent_and_where() {
 
     let nothing = session.push().unwrap();
     assert_eq!((nothing.commits, nothing.published), (0, false));
+    assert!(nothing.up_to_date);
+    assert!(!second.up_to_date);
+}
+
+#[test]
+fn a_forced_rewind_is_reported_as_forced_not_up_to_date() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    write(dir.path(), "a.txt", "extra\n");
+    run_git(dir.path(), &["commit", "-qam", "extra"]);
+    session.push().unwrap();
+
+    // Rewind main by one and force it over the remote, as `push.default` allows here.
+    run_git(dir.path(), &["reset", "-q", "--hard", "HEAD~1"]);
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "+refs/heads/main:refs/heads/main",
+        ],
+    );
+    let result = session.push().unwrap();
+
+    assert!(result.forced, "{result:?}");
+    assert!(!result.up_to_date);
+}
+
+#[test]
+fn push_reads_the_line_for_the_checked_out_branch_under_remapped_refspecs() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    run_git(dir.path(), &["branch", "-q", "other"]);
+    // main goes to `deploy` and `other` to `main`.
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/main:refs/heads/deploy",
+        ],
+    );
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "--add",
+            "remote.origin.push",
+            "refs/heads/other:refs/heads/main",
+        ],
+    );
+
+    let result = session.push().unwrap();
+    assert_eq!(result.destination, "origin/deploy", "{result:?}");
+    assert!(result.published, "deploy is new on the server");
+    assert!(!run_git(origin.path(), &["branch", "--list", "deploy"])
+        .trim()
+        .is_empty());
 }
 
 #[test]

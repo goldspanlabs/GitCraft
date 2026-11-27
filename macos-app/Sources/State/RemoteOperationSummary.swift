@@ -48,10 +48,17 @@ extension RemoteOperation {
         if result.published {
             return "Published \"\(result.branch)\" to \(result.destination)."
         }
-        if result.commits == 0 {
+        if result.upToDate {
             return "Nothing to push. \(result.destination) already has \"\(result.branch)\"."
         }
-        return "Pushed \(commits(result.commits)) to \(result.destination)."
+        if result.forced {
+            return "Force-pushed \"\(result.branch)\" to \(result.destination)."
+        }
+        if result.commits > 0 {
+            return "Pushed \(commits(result.commits)) to \(result.destination)."
+        }
+        // Git didn't say, or the range couldn't be counted here; it still pushed.
+        return "Pushed \"\(result.branch)\" to \(result.destination)."
     }
 
     private static func commits(_ count: UInt32) -> String {

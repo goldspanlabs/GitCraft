@@ -276,7 +276,10 @@ extension RepoTab {
     /// because `resetTo` would re-arm the dialog. It isn't undoable: the uncommitted changes
     /// it discards can't be brought back.
     private func performReset(_ oid: String, mode: ResetMode) {
-        performMutation { _ = try $0.resetTo(commit: oid, mode: mode) }
+        performMutation({ _ = try $0.resetTo(commit: oid, mode: mode) }, onSuccess: { [weak self] in
+            // It may not move HEAD, but it changed files, so nothing undone can be redone.
+            self?.redoStack.removeAll()
+        })
     }
 
     func cherryPick(_ oid: String) {

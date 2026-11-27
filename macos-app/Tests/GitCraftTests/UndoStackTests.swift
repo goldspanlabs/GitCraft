@@ -490,6 +490,35 @@ final class UndoStackTests: XCTestCase {
     }
 
     @MainActor
+    func testAResetThatDoesntMoveHeadStillClearsRedo() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        try await cherryPickOther(tab)
+        tab.undo()
+        try await waitFor("the undo") { tab.latestRedo != nil && !tab.isBusy }
+
+        // A mixed reset to where HEAD already is moves nothing, but still unstages.
+        tab.resetTo(try rev("main"), mode: .mixed)
+        try await waitFor("the reset") { tab.redoStack.isEmpty && !tab.isBusy }
+        XCTAssertFalse(tab.canRedo)
+    }
+
+    @MainActor
+    func testAHardResetClearsRedo() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        try await cherryPickOther(tab)
+        tab.undo()
+        try await waitFor("the undo") { tab.latestRedo != nil && !tab.isBusy }
+
+        tab.resetTo(try rev("main"), mode: .hard)
+        tab.executeConfirmed(try XCTUnwrap(tab.pendingConfirmation))
+        try await waitFor("the hard reset") { tab.redoStack.isEmpty && !tab.isBusy }
+    }
+
+    @MainActor
     func testAStaleRedoIsRefusedAndDropped() async throws {
         let tab = try RepoTab(url: repo)
         tab.refresh()

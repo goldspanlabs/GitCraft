@@ -250,6 +250,11 @@ pub struct PushResult {
     pub commits: u32,
     /// True when the destination branch didn't exist yet, so the push created it.
     pub published: bool,
+    /// True when the destination already had everything: nothing was sent.
+    pub up_to_date: bool,
+    /// True when the destination's history was replaced rather than added to, as in a forced
+    /// push that rewinds it. `commits` may then be zero.
+    pub forced: bool,
 }
 
 /// How an action moved HEAD, so it can be undone by moving HEAD back.
