@@ -16,27 +16,28 @@ final class FileListKeyboardUITests: XCTestCase {
 
     func testArrowKeysMoveThroughWorkingFilesAfterClickingOne() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true, unstagedFiles: ["README.md", "main.txt"]))
-        let readme = app.element("unstaged-file:README.md")
-        XCTAssertTrue(readme.waitForExistence(timeout: 60))
+        let main = app.element("unstaged-file:main.txt")
+        XCTAssertTrue(main.waitForExistence(timeout: 60))
+        // The list ignores case, so main.txt comes before README.md.
         // Start with the commit list focused, as after browsing history.
         app.staticTexts["main work"].firstMatch.click()
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(readme.waitForExistence(timeout: 20))
+        XCTAssertTrue(main.waitForExistence(timeout: 20))
 
-        readme.staticTexts["README.md"].click()
+        main.staticTexts["main.txt"].click()
         app.typeKey(.downArrow, modifierFlags: [])
 
-        assertDiffHeader("main.txt")
-        XCTAssertTrue(app.element("unstaged-file:main.txt").exists, "the working changes stay on screen")
-        app.typeKey(.upArrow, modifierFlags: [])
         assertDiffHeader("README.md")
+        XCTAssertTrue(app.element("unstaged-file:README.md").exists, "the working changes stay on screen")
+        app.typeKey(.upArrow, modifierFlags: [])
+        assertDiffHeader("main.txt")
 
         // Staging the selected file keeps it selected, and the arrows keep working.
-        app.element("unstaged-file:README.md").checkBoxes.firstMatch.click()
-        XCTAssertTrue(app.element("staged-file:README.md").waitForExistence(timeout: 20))
-        app.element("staged-file:README.md").staticTexts["README.md"].click()
+        app.element("unstaged-file:main.txt").checkBoxes.firstMatch.click()
+        XCTAssertTrue(app.element("staged-file:main.txt").waitForExistence(timeout: 20))
+        app.element("staged-file:main.txt").staticTexts["main.txt"].click()
         app.typeKey(.downArrow, modifierFlags: [])
-        assertDiffHeader("main.txt")
+        assertDiffHeader("README.md")
     }
 
     func testArrowKeysMoveThroughACommitsFilesAfterClickingOne() throws {

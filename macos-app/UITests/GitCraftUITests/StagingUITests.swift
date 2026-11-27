@@ -18,21 +18,22 @@ final class StagingUITests: XCTestCase {
 
     func testStagingAndUnstagingOneFileMovesOnlyThatFile() throws {
         try launchWithMixedChanges()
-        let unstagedReadme = element("unstaged-file:README.md")
-        XCTAssertTrue(unstagedReadme.waitForExistence(timeout: 60))
+        // main.txt is the first row, so it's on screen above the commit box.
+        let unstagedMain = element("unstaged-file:main.txt")
+        XCTAssertTrue(unstagedMain.waitForExistence(timeout: 60))
 
-        unstagedReadme.checkBoxes.firstMatch.click()
+        unstagedMain.checkBoxes.firstMatch.click()
 
-        XCTAssertTrue(element("staged-file:README.md").waitForExistence(timeout: 20), "README.md moves to the staged list")
-        XCTAssertTrue(waitUntil(timeout: 20) { (try? self.fixture.stagedFiles()) == ["README.md"] }, "only README.md is staged")
-        XCTAssertTrue(element("unstaged-file:main.txt").exists, "the other edit stays unstaged")
+        XCTAssertTrue(element("staged-file:main.txt").waitForExistence(timeout: 20), "main.txt moves to the staged list")
+        XCTAssertTrue(waitUntil(timeout: 20) { (try? self.fixture.stagedFiles()) == ["main.txt"] }, "only main.txt is staged")
+        XCTAssertTrue(element("unstaged-file:README.md").exists, "the other edit stays unstaged")
         XCTAssertTrue(element("unstaged-file:\(FixtureRepository.untrackedFileName)").exists)
 
-        element("staged-file:README.md").checkBoxes.firstMatch.click()
+        element("staged-file:main.txt").checkBoxes.firstMatch.click()
 
-        XCTAssertTrue(element("unstaged-file:README.md").waitForExistence(timeout: 20), "README.md moves back")
+        XCTAssertTrue(element("unstaged-file:main.txt").waitForExistence(timeout: 20), "main.txt moves back")
         XCTAssertTrue(waitUntil(timeout: 20) { (try? self.fixture.stagedFiles()) == [] }, "nothing is staged")
-        XCTAssertTrue(try fixture.isModified("README.md"), "unstaging keeps the edit")
+        XCTAssertTrue(try fixture.isModified("main.txt"), "unstaging keeps the edit")
     }
 
     func testStageAllIncludesUntrackedFilesAndUnstageAllPutsThemBack() throws {
