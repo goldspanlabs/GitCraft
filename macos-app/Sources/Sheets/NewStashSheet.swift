@@ -35,6 +35,7 @@ struct NewStashSheet: View {
                             .font(.system(size: 13))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .help(branchDisplay)
                         if tab.totalChangesCount > 0 {
                             Text("· \(changesSummary)")
                                 .font(.system(size: 12))

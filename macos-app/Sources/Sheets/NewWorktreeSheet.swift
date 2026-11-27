@@ -165,6 +165,7 @@ struct NewWorktreeSheet: View {
                                     .font(.system(size: 13))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
+                                    .help(startPointDisplay)
                             }
                         }
                     }
@@ -185,6 +186,7 @@ struct NewWorktreeSheet: View {
                                     .font(.system(size: 13))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
+                                    .help(name)
                             }
                         } else {
                             Picker("", selection: $existingBranch) {

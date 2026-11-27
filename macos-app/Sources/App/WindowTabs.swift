@@ -233,6 +233,9 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         window?.subtitle = tab.currentBranch
         titleLabel.stringValue = tab.checkoutName
         subtitleLabel.stringValue = tab.currentBranch
+        // Middle truncation hides part of the name, so the tooltip carries the full text.
+        titleLabel.toolTip = tab.checkoutName
+        subtitleLabel.toolTip = tab.currentBranch
         if tab.isBusy {
             spinner.startAnimation(nil)
             let label = tab.busyLabel ?? "Working…"

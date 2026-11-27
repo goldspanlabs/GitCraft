@@ -273,6 +273,7 @@ private struct TagRowView: View {
             Text(tag.name)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .help(tag.name)
             Spacer()
         }
         .contentShape(Rectangle())
@@ -355,6 +356,7 @@ private struct BranchFolderRowView: View {
             Text(name)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .help(name)
 
             Spacer()
         }
@@ -573,6 +575,8 @@ private struct BranchRowContainer<Trailing: View>: View {
             Text(displayName)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                // `displayName` can be just the last path segment, so show the full branch name.
+                .help(branch.name)
 
             Spacer()
 

@@ -50,6 +50,7 @@ struct NewTagSheet: View {
                                 .font(.system(size: 13))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                                .help(headDisplay)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }

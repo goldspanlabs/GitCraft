@@ -48,6 +48,7 @@ struct NewBranchSheet: View {
                             .font(.system(size: 13))
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .help(startPointDisplay)
                     }
                 }
 
