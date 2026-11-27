@@ -293,9 +293,7 @@ private struct CommitMessageFields: View {
                 .onChange(of: draft.summary) { _, newValue in
                     // Pasted text can carry line breaks; a summary is one line.
                     if newValue.contains(where: \.isNewline) {
-                        tab.commitSummary = newValue.replacingOccurrences(
-                            of: "\r\n|\n|\r", with: " ", options: .regularExpression
-                        )
+                        tab.commitSummary = newValue.joinedOntoOneLine
                     }
                 }
                 .font(.system(size: 12))
@@ -558,7 +556,7 @@ private struct CommitBodyTextEditor: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.drawsBackground = false
 
-        let textView = NSTextView()
+        let textView = LineJoiningTextView()
         textView.delegate = context.coordinator
         textView.font = .systemFont(ofSize: 12)
         textView.drawsBackground = false
@@ -597,5 +595,25 @@ private struct CommitBodyTextEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
         }
+    }
+}
+
+/// The description's text view. Pasted text goes in on one line, as in the summary; Return
+/// still starts a new line, for descriptions of several paragraphs.
+private final class LineJoiningTextView: NSTextView {
+    override func paste(_ sender: Any?) {
+        if !pasteJoined() { super.paste(sender) }
+    }
+
+    override func pasteAsPlainText(_ sender: Any?) {
+        if !pasteJoined() { super.pasteAsPlainText(sender) }
+    }
+
+    /// Inserts the pasteboard's text on one line, through the usual editing path so it can be
+    /// undone. False when there is no text to paste, so the caller falls back.
+    private func pasteJoined() -> Bool {
+        guard let pasted = NSPasteboard.general.string(forType: .string) else { return false }
+        insertText(pasted.joinedOntoOneLine, replacementRange: selectedRange())
+        return true
     }
 }
