@@ -88,7 +88,7 @@ private struct ActiveTabBottomPanelItems: View {
         let hasCommit = tab.selectedCommit != nil
 
         Button(isMaximized ? "Restore Bottom Panel Size" : "Maximize Bottom Panel") {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(BottomPanelDefaults.animation) {
                 // Same steps as the pane header's button: a collapsed pane reopens first.
                 if isCollapsed {
                     isCollapsed = false
@@ -101,7 +101,7 @@ private struct ActiveTabBottomPanelItems: View {
         .disabled(!hasCommit)
 
         Button(isCollapsed ? "Show Bottom Panel" : "Hide Bottom Panel") {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(BottomPanelDefaults.animation) {
                 if isMaximized { isMaximized = false }
                 isCollapsed.toggle()
             }

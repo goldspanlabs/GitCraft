@@ -39,6 +39,8 @@ enum BottomPanelDefaults {
     static let collapseDragThreshold: CGFloat = 60
     /// How far up from the collapsed strip the divider must be dragged before the panel reopens.
     static let expandDragThreshold: CGFloat = 40
+    /// How the panel animates when it collapses, reopens or is maximized.
+    static let animation = Animation.easeInOut(duration: 0.18)
 }
 
 /// User-selectable appearance for the whole app. Persisted in `UserDefaults`

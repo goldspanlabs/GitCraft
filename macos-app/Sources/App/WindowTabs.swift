@@ -105,12 +105,34 @@ enum WindowTabs {
     }
 }
 
+/// A window that macOS groups with the app's other windows as tabs. The tab bar's "+" opens
+/// a new Repository Manager tab.
+@MainActor
+class WorkspaceWindowController: NSWindowController {
+    unowned let workspace: WorkspaceState
+
+    init(window: NSWindow, workspace: WorkspaceState) {
+        self.workspace = workspace
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not used") }
+
+    func showInTabs() { WindowTabs.show(window!) }
+    func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
+
+    /// The tab bar's "+" button asks the responder chain for this.
+    @objc override func newWindowForTab(_: Any?) {
+        workspace.openWelcome()
+    }
+}
+
 /// One repository: an AppKit window (sidebar + detail in an `NSSplitViewController`, an
 /// `NSToolbar`) that macOS groups with the other repository windows as native tabs.
 @MainActor
-final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
+final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
-    private unowned let workspace: WorkspaceState
     /// Longest the repository / branch text may grow before it is truncated.
     private static let titleTextMaxWidth: CGFloat = 240
     private let dot = TabStatusDot()
@@ -142,7 +164,6 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     init(tab: RepoTab, workspace: WorkspaceState) {
         self.tab = tab
-        self.workspace = workspace
 
         let sidebar = NSHostingController(rootView: AppearanceScoped { SidebarView(tab: tab) })
         sidebar.sizingOptions = []
@@ -167,7 +188,7 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window.title = tab.checkoutName
         window.subtitle = tab.currentBranch
 
-        super.init(window: window)
+        super.init(window: window, workspace: workspace)
         window.delegate = self
         tab.onCheckoutChanged = { [weak self] in self?.workspace.saveOpenTabs() }
         window.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
@@ -187,8 +208,6 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not used") }
 
-    func showInTabs() { WindowTabs.show(window!) }
-    func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
     func reveal() { WindowTabs.reveal(window!) }
 
     /// Puts the cursor in the toolbar's commit filter, expanding it if the toolbar collapsed it.
@@ -212,11 +231,6 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window?.tab.toolTip = tab.totalChangesCount > 0
             ? "\(tab.checkoutName): \(tab.totalChangesCount) uncommitted changes"
             : "\(tab.checkoutName): clean"
-    }
-
-    /// The tab bar's "+" button asks the responder chain for this.
-    @objc override func newWindowForTab(_: Any?) {
-        workspace.openWelcome()
     }
 
     func windowWillClose(_: Notification) {
@@ -321,13 +335,10 @@ final class RepoWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
 /// The "Repository Manager" tab: open a repository or pick a recent one.
 @MainActor
-final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
-    private unowned let workspace: WorkspaceState
-
+final class WelcomeWindowController: WorkspaceWindowController, NSWindowDelegate {
     init(workspace: WorkspaceState) {
-        self.workspace = workspace
         let window = NSWindow(contentViewController: NSViewController())
-        super.init(window: window)
+        super.init(window: window, workspace: workspace)
 
         let root = AppearanceScoped { [weak self] in
             WelcomeWindowContent(workspace: workspace) { self?.window?.close() }
@@ -345,15 +356,8 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not used") }
 
-    func showInTabs() { WindowTabs.show(window!) }
-    func showInNewWindow() { WindowTabs.show(window!, inNewWindow: true) }
-
     func windowWillClose(_: Notification) {
         workspace.welcomeClosed(self)
-    }
-
-    @objc override func newWindowForTab(_: Any?) {
-        workspace.openWelcome()
     }
 }
 

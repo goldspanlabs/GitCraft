@@ -36,6 +36,25 @@ extension RepoTab {
         }
     }
 
+    /// Installs a fresh first page as the whole commit list. Fewer rows than `requested` means
+    /// the history ended. Bumps the generation, so pages fetched for the old list are dropped.
+    func replaceCommits(with rows: [CommitRow], requested: UInt32) {
+        graphGeneration += 1
+        commits = rows
+        graphRevision = UUID()
+        hasMoreCommits = rows.count >= Int(requested)
+        historyState = .loaded
+    }
+
+    /// Adds the next page to the commit list. Fewer rows than `requested` means the history ended.
+    func appendCommits(_ page: [CommitRow], requested: UInt32) {
+        if page.count < Int(requested) {
+            hasMoreCommits = false
+        }
+        commits.append(contentsOf: page)
+        graphRevision = UUID()
+    }
+
     func loadMoreCommits() {
         guard !isLoadingMore, hasMoreCommits else { return }
         isLoadingMore = true
@@ -50,11 +69,7 @@ extension RepoTab {
         }, apply: { [self] nextPage in
             // The list was replaced while we fetched; this page belongs to the old one.
             guard generation == graphGeneration else { return }
-            if nextPage.count < Int(limit) {
-                hasMoreCommits = false
-            }
-            commits.append(contentsOf: nextPage)
-            graphRevision = UUID()
+            appendCommits(nextPage, requested: limit)
         }, always: { [self] in
             isLoadingMore = false
         })
@@ -96,11 +111,7 @@ extension RepoTab {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: q)
                 }.value
                 guard isCurrent() else { return }
-                graphGeneration += 1
-                commits = graphRows
-                graphRevision = UUID()
-                hasMoreCommits = graphRows.count >= Int(limit)
-                historyState = .loaded
+                replaceCommits(with: graphRows, requested: limit)
             } catch {
                 guard isCurrent() else { return }
                 showError(error)
@@ -161,9 +172,7 @@ extension RepoTab {
                 if Task.isCancelled || self.session !== session { return }
                 // Stale page (list replaced mid-fetch): drop it and look again.
                 if generation != graphGeneration { continue }
-                if nextPage.count < Int(limit) { hasMoreCommits = false }
-                commits.append(contentsOf: nextPage)
-                graphRevision = UUID()
+                appendCommits(nextPage, requested: limit)
                 limit = min(limit * 2, 64_000)
             } catch {
                 guard self.session === session else { return }

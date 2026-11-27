@@ -110,16 +110,4 @@ final class FileMenuAndWorkspaceTests: XCTestCase {
         try git(["commit", "-m", "Initial commit"], in: url)
         return url
     }
-
-    private func git(_ args: [String], in directory: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        process.currentDirectoryURL = directory
-        try process.run()
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            throw NSError(domain: "git", code: Int(process.terminationStatus))
-        }
-    }
 }

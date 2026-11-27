@@ -125,9 +125,7 @@ struct CommitTableView: NSViewRepresentable {
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowBefore = table.selectedRow
-        let selectedOidBefore: String? = (selectedRowBefore > 0 && selectedRowBefore - 1 < coordinator.rows.count)
-            ? coordinator.rows[selectedRowBefore - 1].oidHex
-            : nil
+        let selectedOidBefore = coordinator.commitOid(atRow: selectedRowBefore)
 
         if revisionChanged {
             coordinator.lastGraphRevision = graphRevision
@@ -257,22 +255,24 @@ struct CommitTableView: NSViewRepresentable {
         }
 
         /// The SHA of the commit shown in `row`; `nil` for Working Changes (row 0) or no row.
-        func commitOid(atRow row: Int) -> String? {
+        /// The commit shown in table row `row`. Row 0 is Working Changes, so it has none.
+        func commit(atRow row: Int) -> CommitRow? {
             guard row > 0, row - 1 < rows.count else { return nil }
-            return rows[row - 1].oidHex
+            return rows[row - 1]
+        }
+
+        func commitOid(atRow row: Int) -> String? {
+            commit(atRow: row)?.oidHex
         }
 
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.removeAllItems()
             guard let tableView else { return }
-            let clickedRow = tableView.clickedRow
-            guard clickedRow > 0, (clickedRow - 1) < rows.count else { return }
-            let commit = rows[clickedRow - 1]
+            guard let commit = commit(atRow: tableView.clickedRow) else { return }
             let oid = commit.oidHex
             let branch = currentBranch
             // Detached HEAD has no branch to merge into, rebase or reset.
-            // The Rust core reports a detached HEAD as "HEAD (detached)" (see `clean_branch_header`).
-            let isDetached = branch.isEmpty || branch == "HEAD" || branch.hasPrefix("HEAD (") || branch.hasPrefix("(")
+            let isDetached = RepoTab.isDetachedHead(branch: branch)
 
             var entries: [MenuEntry] = []
 
@@ -304,13 +304,13 @@ struct CommitTableView: NSViewRepresentable {
             // Conditionally offer worktree removal when a linked worktree sits at this commit.
             let linkedHere = worktrees.filter { !$0.isMain && $0.headOidHex == oid }
             if linkedHere.count == 1, let worktree = linkedHere.first {
-                let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
+                let folder = worktree.path.folderName
                 entries.append(.item("Remove Worktree '\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
                     self?.onRemoveWorktree(worktree)
                 })
             } else if linkedHere.count > 1 {
                 entries.append(.submenu("Remove Worktree…", linkedHere.map { worktree in
-                    let folder = URL(fileURLWithPath: worktree.path).lastPathComponent
+                    let folder = worktree.path.folderName
                     return .item("'\(folder)'…", enabled: !isBusy && canRemoveWorktree(worktree)) { [weak self] in
                         self?.onRemoveWorktree(worktree)
                     }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{git_cli, GitCraftError};
 
@@ -18,6 +18,11 @@ pub(crate) fn resolve_default_remote(repo: &Path) -> String {
         }
     }
     "origin".to_owned()
+}
+
+/// `path` with symlinks and `..` resolved, or `path` itself when that fails (it may not exist).
+pub(crate) fn canonical_or_given(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// Builds a root-anchored gitignore pattern for a literal path.

@@ -56,8 +56,7 @@ struct WelcomeView: View {
             if !workspace.recentPaths.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("RECENT REPOSITORIES")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .sectionTitleStyle()
                         .padding(.horizontal, 4)
 
                     VStack(spacing: 2) {

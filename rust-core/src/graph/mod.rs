@@ -5,8 +5,6 @@ mod refs;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use gix::bstr::ByteSlice;
-
 use crate::{CommitRow, CommitSort, GitCraftError, RefBadge, RefKind};
 
 pub use detail::get_commit_detail;
@@ -135,7 +133,6 @@ fn graph_walk(
     let has_local_refs = !local_reachable.is_empty();
     let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
 
-    let graph_err = |e: &dyn std::fmt::Display| GitCraftError::message(e.to_string());
     let ids: Box<dyn Iterator<Item = Result<gix::ObjectId, GitCraftError>>> = match sort {
         CommitSort::ByDate => {
             let walk = repo
@@ -145,8 +142,12 @@ fn graph_walk(
                     gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
                 ))
                 .all()
-                .map_err(|e| graph_err(&e))?;
-            Box::new(walk.map(|entry| entry.map(|info| info.id).map_err(|e| graph_err(&e))))
+                .map_err(GitCraftError::from_display)?;
+            Box::new(walk.map(|entry| {
+                entry
+                    .map(|info| info.id)
+                    .map_err(GitCraftError::from_display)
+            }))
         }
         CommitSort::Topological => {
             // Like `git log --topo-order`: a parent never appears before its children and
@@ -156,8 +157,12 @@ fn graph_walk(
                     .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
                     .parents(gix::traverse::commit::Parents::All)
                     .build()
-                    .map_err(|e| graph_err(&e))?;
-            Box::new(topo.map(|entry| entry.map(|info| info.id).map_err(|e| graph_err(&e))))
+                    .map_err(GitCraftError::from_display)?;
+            Box::new(topo.map(|entry| {
+                entry
+                    .map(|info| info.id)
+                    .map_err(GitCraftError::from_display)
+            }))
         }
     };
 
@@ -287,11 +292,7 @@ fn cache_key(
             .is_some_and(|b| upstream_is_gone(repo, b));
         (name, h.id().map(|id| id.detach()), gone)
     });
-    let sort_id = match sort {
-        CommitSort::ByDate => 0,
-        CommitSort::Topological => 1,
-    };
-    format!("{refs:?}|{tips:?}|{local:?}|{shallow:?}|{head_state:?}|{query:?}|{scoped}|{sort_id}")
+    format!("{refs:?}|{tips:?}|{local:?}|{shallow:?}|{head_state:?}|{query:?}|{scoped}|{sort:?}")
 }
 
 /// Upper bound on how many unpushed commits we mark, so a never-pushed branch with a huge
@@ -316,12 +317,11 @@ fn unpushed_head_commits(
     let Ok(head) = repo.head() else {
         return HashSet::new();
     };
-    let Some(head_ref) = head.referent_name() else {
+    let Some(branch) = refs::head_ref_name(&head) else {
         return HashSet::new();
     };
     // A deleted upstream usually means the branch was merged (and perhaps squashed, so its
     // commits never reach a remote branch). Marking them unpushed would be misleading.
-    let branch = head_ref.as_bstr().to_str_lossy();
     if let Some(name) = branch.strip_prefix("refs/heads/") {
         if upstream_is_gone(repo, name) {
             return HashSet::new();

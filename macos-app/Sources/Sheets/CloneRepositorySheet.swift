@@ -129,13 +129,7 @@ struct CloneRepositorySheet: View {
     }
 
     private func chooseParentFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = pickFolder() else { return }
         parentFolderPath = url.path
         errorMessage = nil
     }
@@ -148,20 +142,18 @@ struct CloneRepositorySheet: View {
         isCloning = true
         errorMessage = nil
         Task {
-            do {
-                try await Task.detached(priority: .userInitiated) {
-                    try cloneRepository(url: url, destination: dest)
-                }.value
-                isCloning = false
-                guard !isDismissed else { return }
-                if workspace.openRepository(at: URL(fileURLWithPath: dest)) {
-                    onDismiss()
-                } else {
-                    errorMessage = workspace.openError ?? "Repository cloned, but failed to open."
-                }
-            } catch {
-                isCloning = false
-                errorMessage = error.displayMessage
+            let outcome = await workspace.makeAndOpenRepository(
+                at: dest,
+                openFailure: "Repository cloned, but failed to open.",
+                isCancelled: { isDismissed }
+            ) {
+                try cloneRepository(url: url, destination: dest)
+            }
+            isCloning = false
+            switch outcome {
+            case .opened: onDismiss()
+            case .cancelled: break
+            case let .failed(message): errorMessage = message
             }
         }
     }

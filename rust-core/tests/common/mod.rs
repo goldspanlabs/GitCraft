@@ -66,8 +66,13 @@ pub fn open(dir: &Path) -> RepoSession {
     RepoSession::new(dir.to_string_lossy().into_owned()).unwrap()
 }
 
+/// The commit `name` (a branch, tag or other revision) points to.
+pub fn rev(dir: &Path, name: &str) -> String {
+    run_git(dir, &["rev-parse", name]).trim().to_owned()
+}
+
 pub fn head(dir: &Path) -> String {
-    run_git(dir, &["rev-parse", "HEAD"]).trim().to_owned()
+    rev(dir, "HEAD")
 }
 
 pub fn commit_file(dir: &Path, name: &str, contents: &str, msg: &str) -> String {

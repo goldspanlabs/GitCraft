@@ -24,7 +24,7 @@ struct NewTagSheet: View {
     }
 
     private var headDisplay: String {
-        tab.currentBranch.isEmpty ? "HEAD" : tab.currentBranch
+        tab.currentBranchLabel
     }
 
     var body: some View {

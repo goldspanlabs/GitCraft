@@ -10,6 +10,16 @@ pub(crate) struct RawCommit {
     pub timestamp: i64,
 }
 
+/// An edge drawn from `from` to `to` in the row, in lane `color`.
+fn edge(from: usize, to: usize, is_merge: bool, color: u8) -> GraphEdge {
+    GraphEdge {
+        from_lane: from as u32,
+        to_lane: to as u32,
+        is_merge,
+        color_idx: color,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LaneSlot {
     oid: gix::ObjectId,
@@ -69,12 +79,7 @@ impl LaneState {
             for &dup in &matching_slots[1..] {
                 let dup_color = self.slots[dup].expect("matched dup slot is Some").color;
                 self.slots[dup] = None;
-                edges.push(GraphEdge {
-                    from_lane: dup as u32,
-                    to_lane: first_slot as u32,
-                    is_merge: true,
-                    color_idx: dup_color,
-                });
+                edges.push(edge(dup, first_slot, true, dup_color));
             }
             (first_slot, color)
         } else {
@@ -87,12 +92,7 @@ impl LaneState {
         for (idx, slot) in self.slots.iter().enumerate() {
             if idx != commit_lane {
                 if let Some(s) = slot {
-                    edges.push(GraphEdge {
-                        from_lane: idx as u32,
-                        to_lane: idx as u32,
-                        is_merge: false,
-                        color_idx: s.color,
-                    });
+                    edges.push(edge(idx, idx, false, s.color));
                 }
             }
         }
@@ -103,12 +103,7 @@ impl LaneState {
                 oid: first_parent,
                 color: commit_color,
             });
-            edges.push(GraphEdge {
-                from_lane: commit_lane as u32,
-                to_lane: commit_lane as u32,
-                is_merge: false,
-                color_idx: commit_color,
-            });
+            edges.push(edge(commit_lane, commit_lane, false, commit_color));
         } else {
             self.slots[commit_lane] = None;
         }
@@ -127,12 +122,7 @@ impl LaneState {
                 self.place_in_free_slot(parent_oid, free)
             };
 
-            edges.push(GraphEdge {
-                from_lane: commit_lane as u32,
-                to_lane: target_lane as u32,
-                is_merge: true,
-                color_idx: edge_color,
-            });
+            edges.push(edge(commit_lane, target_lane, true, edge_color));
         }
 
         // Compute max_lanes across active lanes and emitted edges before trimming.

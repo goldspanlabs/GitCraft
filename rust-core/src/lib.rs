@@ -34,17 +34,12 @@ use std::{
     },
 };
 
-/// `path` with symlinks and `..` resolved, or `path` itself when that fails.
-fn canonical_or_given(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or(path)
-}
-
 /// One mutation lock per repository (keyed by its canonical common dir), shared by every
 /// session that opens it. A session per checkout or window would otherwise each hold its own
 /// lock and race on refs and `.git/index.lock`.
 fn mutation_lock_for(common_dir: PathBuf) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let key = canonical_or_given(common_dir);
+    let key = validation::canonical_or_given(&common_dir);
     let mut locks = LOCKS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -80,7 +75,7 @@ impl RepoSession {
     /// repository reports the same value, so it identifies the repository itself and stays
     /// valid after a linked worktree is deleted or pruned.
     pub fn common_dir(&self) -> String {
-        canonical_or_given(self.sync_repo.to_thread_local().common_dir().to_owned())
+        validation::canonical_or_given(self.sync_repo.to_thread_local().common_dir())
             .to_string_lossy()
             .into_owned()
     }
@@ -174,18 +169,11 @@ impl RepoSession {
 
     /// Chooses the order used by the graph queries. Takes effect on the next query.
     pub fn set_commit_sort(&self, sort: CommitSort) {
-        let value = match sort {
-            CommitSort::ByDate => 0,
-            CommitSort::Topological => 1,
-        };
-        self.commit_sort.store(value, Ordering::Release);
+        self.commit_sort.store(sort.to_u8(), Ordering::Release);
     }
 
     fn commit_sort(&self) -> CommitSort {
-        match self.commit_sort.load(Ordering::Acquire) {
-            1 => CommitSort::Topological,
-            _ => CommitSort::ByDate,
-        }
+        CommitSort::from_u8(self.commit_sort.load(Ordering::Acquire))
     }
 
     pub fn get_commit_graph(

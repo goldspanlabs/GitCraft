@@ -55,6 +55,23 @@ pub enum CommitSort {
     Topological,
 }
 
+impl CommitSort {
+    /// The value kept in an atomic, as read back by [`CommitSort::from_u8`].
+    pub(crate) fn to_u8(self) -> u8 {
+        match self {
+            CommitSort::ByDate => 0,
+            CommitSort::Topological => 1,
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> Self {
+        match value {
+            1 => CommitSort::Topological,
+            _ => CommitSort::ByDate,
+        }
+    }
+}
+
 /// How `pull` reconciles diverged branches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PullStrategy {
