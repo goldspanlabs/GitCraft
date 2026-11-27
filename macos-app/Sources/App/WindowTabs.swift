@@ -329,9 +329,12 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
             // Fixed width (not a maximum) so the action buttons don't shift with the name length.
             // Low compression resistance lets long names truncate in the middle, like the sidebar.
+            // The width is a high-priority (not required) target so it gives way when the
+            // window is narrow; the action buttons are never squeezed.
             titleWidthConstraints = [titleLabel, subtitleLabel].map { label in
                 label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
                 let constraint = label.widthAnchor.constraint(equalToConstant: Self.titleTextWidthRange.lowerBound)
+                constraint.priority = .defaultHigh
                 constraint.isActive = true
                 return constraint
             }
@@ -341,6 +344,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             item.view = row
             item.isBordered = false
             item.label = "Repository"
+            item.visibilityPriority = .standard
             return item
         case .repoActions:
             let item = NSToolbarItem(itemIdentifier: identifier)
@@ -351,9 +355,12 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             item.view = hosting
             item.isBordered = false
             item.label = "Actions"
+            // Keep the actions visible as long as possible; the title and filter give way first.
+            item.visibilityPriority = .high
             return item
         case .repoSearch:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            item.visibilityPriority = .low
             item.searchField.placeholderString = "Filter commits"
             item.searchField.stringValue = tab.searchQuery
             item.searchField.delegate = self
