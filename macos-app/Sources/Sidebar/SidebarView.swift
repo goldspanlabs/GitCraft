@@ -9,7 +9,9 @@ struct SidebarView: View {
     @AppStorage("sidebar.remotesExpanded") private var isRemotesExpanded = false
     @AppStorage("sidebar.tagsExpanded") private var isTagsExpanded = false
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
-    @State private var collapsedFolderIDs: Set<String> = []
+    /// Folders the user flipped away from their default state (local folders start expanded,
+    /// remote folders start collapsed). Folder IDs are scope-prefixed, so one set serves both.
+    @State private var toggledFolderIDs: Set<String> = []
 
     /// The default branch is pinned above the rest of Local Branches, so it's kept out of the tree.
     private var localBranches: [BranchInfo] {
@@ -28,7 +30,7 @@ struct SidebarView: View {
         BranchTreeNode.buildFlattenedRows(
             from: localBranches,
             scope: "local",
-            collapsedFolderIDs: collapsedFolderIDs
+            toggledFolderIDs: toggledFolderIDs
         )
     }
 
@@ -41,16 +43,17 @@ struct SidebarView: View {
         BranchTreeNode.buildFlattenedRows(
             from: remoteBranches,
             scope: "remote",
-            collapsedFolderIDs: collapsedFolderIDs
+            foldersStartCollapsed: true,
+            toggledFolderIDs: toggledFolderIDs
         )
     }
 
     private func toggleFolder(_ folderID: String) {
         withAnimation(.easeInOut(duration: 0.14)) {
-            if collapsedFolderIDs.contains(folderID) {
-                collapsedFolderIDs.remove(folderID)
+            if toggledFolderIDs.contains(folderID) {
+                toggledFolderIDs.remove(folderID)
             } else {
-                collapsedFolderIDs.insert(folderID)
+                toggledFolderIDs.insert(folderID)
             }
         }
     }
