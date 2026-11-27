@@ -563,6 +563,9 @@ private struct CommitBodyTextEditor: NSViewRepresentable {
         textView.font = .systemFont(ofSize: 12)
         textView.drawsBackground = false
         textView.isRichText = false
+        // Off by default for a text view made in code, which left ⌘Z doing nothing here.
+        textView.allowsUndo = true
+        textView.setAccessibilityIdentifier("commit-description")
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -577,6 +580,9 @@ private struct CommitBodyTextEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         if textView.string != text {
             textView.string = text
+            // A replacement from outside (cleared after a commit, filled for amend) isn't an
+            // edit to undo, and the typing recorded before it no longer matches the text.
+            textView.undoManager?.removeAllActions()
         }
     }
 

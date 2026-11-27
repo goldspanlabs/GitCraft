@@ -233,6 +233,44 @@ final class ShortcutUITests: XCTestCase {
         XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Escape closes the details")
     }
 
+    // MARK: Undo in text
+
+    func testCommandZUndoesTypingInTheCommitDescription() throws {
+        try launch(fixture: FixtureRepository.make(stagedChange: true))
+        let description = app.textViews["commit-description"]
+        XCTAssertTrue(description.waitForExistence(timeout: 20))
+        description.click()
+        description.typeText("Some details")
+        XCTAssertTrue(wait(for: description, toSatisfy: "value == 'Some details'", timeout: 10))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(
+            wait(for: description, toSatisfy: "value == ''", timeout: 10),
+            "⌘Z undoes the typing: \(String(describing: description.value))"
+        )
+
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(
+            wait(for: description, toSatisfy: "value == 'Some details'", timeout: 10),
+            "⇧⌘Z redoes it"
+        )
+    }
+
+    func testCommandZUndoesTypingInTheCommitSummary() throws {
+        try launch(fixture: FixtureRepository.make(stagedChange: true))
+        let summary = app.textFields["commit-summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 20))
+        summary.click()
+        summary.typeText("Fix it")
+        XCTAssertTrue(wait(for: summary, toSatisfy: "value == 'Fix it'", timeout: 10))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(
+            wait(for: summary, toSatisfy: "value != 'Fix it'", timeout: 10),
+            "⌘Z undoes the typing: \(String(describing: summary.value))"
+        )
+    }
+
     // MARK: Helpers
 
     private func launch(fixture: FixtureRepository) throws {
