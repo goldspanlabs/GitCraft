@@ -28,8 +28,13 @@ struct CommitTableView: NSViewRepresentable {
     let isBusy: Bool
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
-    let onSelectCommit: (CommitRow?) -> Void
+    /// The selected commits in list order: none for Working Changes or no selection.
+    let onSelectCommits: ([CommitRow]) -> Void
     let onCopyOid: (String) -> Void
+    let onCopyOids: ([String]) -> Void
+    /// Whether the multi-selection can be squashed.
+    let squashCheck: SquashCheck
+    let onSquash: (SquashPreview) -> Void
     let onCreateBranchAtCommit: (String) -> Void
     let onCreateTagAtCommit: (String) -> Void
     let onCreateWorktreeAtCommit: (String) -> Void
@@ -45,7 +50,7 @@ struct CommitTableView: NSViewRepresentable {
             rows: rows,
             workingChangesCount: workingChangesCount,
             onLoadMore: onLoadMore,
-            onSelectCommit: onSelectCommit,
+            onSelectCommits: onSelectCommits,
             onCopyOid: onCopyOid,
             onCreateBranchAtCommit: onCreateBranchAtCommit,
             onCreateTagAtCommit: onCreateTagAtCommit,
@@ -70,14 +75,15 @@ struct CommitTableView: NSViewRepresentable {
         table.rowHeight = 26
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.selectionHighlightStyle = .regular
+        table.allowsMultipleSelection = true
         table.backgroundColor = .textBackgroundColor
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
-        table.oidForCopy = { [weak table, weak coordinator = context.coordinator] in
-            guard let table, let coordinator else { return nil }
-            return coordinator.commitOid(atRow: table.selectedRow)
+        table.oidsForCopy = { [weak table, weak coordinator = context.coordinator] in
+            guard let table, let coordinator else { return [] }
+            return table.selectedRowIndexes.compactMap { coordinator.commitOid(atRow: $0) }
         }
-        table.onCopy = { [weak coordinator = context.coordinator] in coordinator?.onCopyOid($0) }
+        table.onCopy = { [weak coordinator = context.coordinator] in coordinator?.onCopyOids($0) }
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit"))
         column.resizingMask = .autoresizingMask
@@ -124,8 +130,8 @@ struct CommitTableView: NSViewRepresentable {
             && table.numberOfRows == 1 + oldRowCount
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
-        let selectedRowBefore = table.selectedRow
-        let selectedOidBefore = coordinator.commitOid(atRow: selectedRowBefore)
+        let selectedRowsBefore = table.selectedRowIndexes
+        let selectedOidsBefore = Set(selectedRowsBefore.compactMap { coordinator.commitOid(atRow: $0) })
 
         if revisionChanged {
             coordinator.lastGraphRevision = graphRevision
@@ -140,8 +146,11 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.showAvatars = showAvatars
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
-        coordinator.onSelectCommit = onSelectCommit
+        coordinator.onSelectCommits = onSelectCommits
         coordinator.onCopyOid = onCopyOid
+        coordinator.onCopyOids = onCopyOids
+        coordinator.squashCheck = squashCheck
+        coordinator.onSquash = onSquash
         coordinator.onCreateBranchAtCommit = onCreateBranchAtCommit
         coordinator.onCreateTagAtCommit = onCreateTagAtCommit
         coordinator.onCreateWorktreeAtCommit = onCreateWorktreeAtCommit
@@ -161,15 +170,14 @@ struct CommitTableView: NSViewRepresentable {
             // it would cancel a pending branch reveal or deselect the current commit.
             coordinator.isRestoringSelection = true
             table.reloadData()
-            let restoreRow: Int? = if selectedRowBefore == 0 {
-                0
-            } else if let oid = selectedOidBefore {
-                rows.firstIndex(where: { $0.oidHex == oid }).map { $0 + 1 }
-            } else {
-                nil
+            // The model drops commits that vanished from a multi-selection (`reconcileSelection`),
+            // so this only has to put the survivors back.
+            var restored = selectedRowsBefore.contains(0) ? IndexSet(integer: 0) : IndexSet()
+            for (index, row) in rows.enumerated() where selectedOidsBefore.contains(row.oidHex) {
+                restored.insert(index + 1)
             }
-            if let restoreRow, restoreRow < coordinator.numberOfRows(in: table) {
-                table.selectRowIndexes(IndexSet(integer: restoreRow), byExtendingSelection: false)
+            if !restored.isEmpty {
+                table.selectRowIndexes(restored, byExtendingSelection: false)
             }
             coordinator.isRestoringSelection = false
         }
@@ -210,8 +218,11 @@ struct CommitTableView: NSViewRepresentable {
         var lastGraphRevision: UUID?
         var lastGraphGeneration: Int?
         var onLoadMore: () -> Void
-        var onSelectCommit: (CommitRow?) -> Void
+        var onSelectCommits: ([CommitRow]) -> Void
         var onCopyOid: (String) -> Void
+        var onCopyOids: ([String]) -> Void = { _ in }
+        var squashCheck = SquashCheck.checking
+        var onSquash: (SquashPreview) -> Void = { _ in }
         var onCreateBranchAtCommit: (String) -> Void
         var onCreateTagAtCommit: (String) -> Void
         var onCreateWorktreeAtCommit: (String) -> Void
@@ -232,7 +243,7 @@ struct CommitTableView: NSViewRepresentable {
             rows: [CommitRow],
             workingChangesCount: Int,
             onLoadMore: @escaping () -> Void,
-            onSelectCommit: @escaping (CommitRow?) -> Void,
+            onSelectCommits: @escaping ([CommitRow]) -> Void,
             onCopyOid: @escaping (String) -> Void,
             onCreateBranchAtCommit: @escaping (String) -> Void,
             onCreateTagAtCommit: @escaping (String) -> Void,
@@ -244,7 +255,7 @@ struct CommitTableView: NSViewRepresentable {
             self.rows = rows
             self.workingChangesCount = workingChangesCount
             self.onLoadMore = onLoadMore
-            self.onSelectCommit = onSelectCommit
+            self.onSelectCommits = onSelectCommits
             self.onCopyOid = onCopyOid
             self.onCreateBranchAtCommit = onCreateBranchAtCommit
             self.onCreateTagAtCommit = onCreateTagAtCommit
@@ -269,6 +280,11 @@ struct CommitTableView: NSViewRepresentable {
             menu.removeAllItems()
             guard let tableView else { return }
             guard let commit = commit(atRow: tableView.clickedRow) else { return }
+            let selected = tableView.selectedRowIndexes
+            if selected.count > 1, selected.contains(tableView.clickedRow) {
+                menu.populate(with: multiSelectionEntries(selected.compactMap { commitOid(atRow: $0) }))
+                return
+            }
             let oid = commit.oidHex
             let branch = currentBranch
             // Detached HEAD has no branch to merge into, rebase or reset.
@@ -322,6 +338,20 @@ struct CommitTableView: NSViewRepresentable {
             entries.append(.item("Copy Commit SHA (\(commit.shortOid))") { [weak self] in self?.onCopyOid(oid) })
 
             menu.populate(with: entries)
+        }
+
+        /// The menu for a right-click inside a multi-selection: only what acts on all of it.
+        private func multiSelectionEntries(_ oids: [String]) -> [MenuEntry] {
+            var preview: SquashPreview?
+            if case let .allowed(allowed) = squashCheck { preview = allowed }
+            let title = RepoTab.squashMenuTitle(check: squashCheck)
+            return [
+                .item(title, enabled: !isBusy && preview != nil) { [weak self] in
+                    if let preview { self?.onSquash(preview) }
+                },
+                .separator,
+                .item("Copy \(oids.count) Commit SHAs") { [weak self] in self?.onCopyOids(oids) },
+            ]
         }
 
         deinit {
@@ -395,15 +425,19 @@ struct CommitTableView: NSViewRepresentable {
 
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !isRestoringSelection, let table = notification.object as? NSTableView else { return }
-            let selected = table.selectedRow
-            if selected <= 0 {
-                onSelectCommit(nil)
-            } else {
-                let idx = selected - 1
-                if idx < rows.count {
-                    onSelectCommit(rows[idx])
-                }
-            }
+            onSelectCommits(table.selectedRowIndexes.compactMap { commit(atRow: $0) })
+        }
+
+        func tableView(_: NSTableView, selectionIndexesForProposedSelection proposed: IndexSet) -> IndexSet {
+            Self.allowedSelection(proposed)
+        }
+
+        /// Working Changes (row 0) can only be selected on its own.
+        static func allowedSelection(_ proposed: IndexSet) -> IndexSet {
+            guard proposed.count > 1 else { return proposed }
+            var commits = proposed
+            commits.remove(0)
+            return commits
         }
 
         private func hasIncomingLane(at commitIndex: Int) -> Bool {

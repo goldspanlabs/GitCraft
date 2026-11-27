@@ -78,6 +78,13 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var stashes: [StashInfo] = []
     @Published var remotes: [RemoteInfo] = []
     @Published var selectedCommit: CommitRow?
+    /// The commits of a multi-selection, in list order; empty unless two or more are selected,
+    /// and then `selectedCommit` is nil. Change it through `selectCommitsFromTable`.
+    @Published var selectedCommits: [CommitRow] = []
+    /// Whether `selectedCommits` can be squashed.
+    @Published var squashCheck = SquashCheck.checking
+    /// A commit to select once the history lists it, such as one a squash just made.
+    var pendingSelectionOid: String?
     @Published var commitDetail: CommitDetail?
     @Published var diffRows: [DiffRow] = []
     @Published var selectedFilePath: String?
@@ -616,6 +623,8 @@ final class RepoTab: ObservableObject, Identifiable {
         stagedFiles = []
         unstagedFiles = []
         selectedCommit = nil
+        selectedCommits = []
+        pendingSelectionOid = nil
         commitDetail = nil
         loadedDetailOid = nil
         diffRows = []

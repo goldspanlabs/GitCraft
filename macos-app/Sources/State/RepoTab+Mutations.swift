@@ -136,16 +136,8 @@ extension RepoTab {
         )
         let skip = skipHooks
         let amend = amendCommit
-        // Amending a commit that is already on the remote would make the push a non-fast-forward,
-        // so it is left for the person to push by hand. Asking walks history, so it happens in
-        // the background work (before the amend moves HEAD), not on the main thread.
-        let headWasPushed = SendableBox(false)
-
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
-            if amend {
-                headWasPushed.value = (try? session.headIsPushed()) ?? false
-            }
             if autoStage {
                 try session.stageAll()
             }
@@ -156,15 +148,10 @@ extension RepoTab {
             self?.amendCommit = false
             self?.skipHooks = false
             if pushAfter {
-                if headWasPushed.value {
-                    self?.showToast(
-                        "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
-                    )
-                } else {
-                    // Hop to the next run-loop turn so this mutation finishes (and clears
-                    // `isBusy`) before the push starts its own.
-                    DispatchQueue.main.async { self?.runRemote(.push) }
-                }
+                // Hop to the next run-loop turn so this mutation finishes (and clears
+                // `isBusy`) before the push starts its own. After amending a pushed commit,
+                // the push asks before forcing.
+                DispatchQueue.main.async { self?.runRemote(.push) }
             }
         }
     }
@@ -408,8 +395,14 @@ extension RepoTab {
         let pullStrategy = PullStrategyPreference.current.core
         let includeTags = GitPreferences.fetchIncludesTags
         let message = SendableBox<String?>(nil)
+        let rewrite = SendableBox<ForcePushPlan?>(nil)
         performMutation(busyLabel: operation.busyLabel, { session in
             if operation == .push {
+                // Rewritten commits that are already on the remote need a confirmed force push.
+                if let plan = try session.forcePushPlan() {
+                    rewrite.value = plan
+                    return
+                }
                 message.value = RemoteOperation.pushMessage(try session.push())
                 return
             }
@@ -423,6 +416,9 @@ extension RepoTab {
             let after = (try? session.listBranches()) ?? []
             message.value = RemoteOperation.successMessage(for: operation, before: before, after: after)
         }, onSuccess: { [weak self] in
+            if let plan = rewrite.value {
+                self?.activeSheet = .forcePush(plan)
+            }
             guard let text = message.value else { return }
             self?.showToast(text, isSuccess: true)
         })

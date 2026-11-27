@@ -8,6 +8,8 @@ struct ActionSheetLayout<Content: View>: View {
     let subtitle: String
     let confirmLabel: String
     var confirmDisabled = false
+    /// For actions that can't be taken back: Return cancels, and confirming takes a click.
+    var cancelIsDefault = false
     let onCancel: () -> Void
     let onConfirm: () -> Void
     @ViewBuilder var content: () -> Content
@@ -28,21 +30,40 @@ struct ActionSheetLayout<Content: View>: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    Button("Cancel", action: onCancel)
-                        .keyboardShortcut(.cancelAction)
-                        .controlSize(.large)
+                    if cancelIsDefault {
+                        Button("Cancel", action: onCancel)
+                            .keyboardShortcut(.defaultAction)
+                            .controlSize(.large)
 
-                    Button(confirmLabel, action: onConfirm)
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .controlSize(.large)
-                        .disabled(confirmDisabled)
+                        Button(confirmLabel, role: .destructive, action: onConfirm)
+                            .controlSize(.large)
+                            .disabled(confirmDisabled)
+                    } else {
+                        Button("Cancel", action: onCancel)
+                            .keyboardShortcut(.cancelAction)
+                            .controlSize(.large)
+
+                        Button(confirmLabel, action: onConfirm)
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .controlSize(.large)
+                            .disabled(confirmDisabled)
+                    }
                 }
                 .padding(.top, 6)
             }
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 20)
+        .background {
+            // A button takes one shortcut, so Escape needs its own when Cancel has Return.
+            if cancelIsDefault {
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 

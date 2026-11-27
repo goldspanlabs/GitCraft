@@ -24,6 +24,8 @@ extension RepoTab {
         case checkoutCommit(oid: String)
         case mergeCommit(oid: String)
         case newTag(target: String?)
+        case squash(SquashPreview)
+        case forcePush(ForcePushPlan)
         case newStash
         case addRemote
         case editRemote(RemoteInfo)
@@ -35,6 +37,10 @@ extension RepoTab {
             case let .checkoutCommit(oid): return "checkout-commit-\(oid)"
             case let .mergeCommit(oid): return "merge-commit-\(oid)"
             case let .newTag(target): return "new-tag-\(target ?? "head")"
+            case let .squash(preview):
+                return "squash-\(preview.head.oid)-\(preview.commits.map(\.oidHex).joined(separator: "-"))"
+            case let .forcePush(plan):
+                return "force-push-\(plan.destination)-\(plan.expectedRemoteOid)-\(plan.head.oid)"
             case .newStash: return "new-stash"
             case .addRemote: return "add-remote"
             case let .editRemote(remote): return "edit-remote-\(remote.name)"

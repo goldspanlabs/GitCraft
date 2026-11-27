@@ -105,6 +105,40 @@ final class RemoteUITests: XCTestCase {
         )
     }
 
+    // MARK: Force push
+
+    func testForcePushSheetCancelAndReturn() throws {
+        let fixture = try FixtureRepository.make(bareRemote: true)
+        try fixture.git(["commit", "--amend", "-m", "rewritten"])
+        try launch(fixture: fixture)
+        let published = fixture.remoteCommitID("refs/heads/main")
+
+        // Return takes the default button, Cancel, and so does Escape.
+        for key in [XCUIKeyboardKey.return, .escape] {
+            let sheet = openForcePushSheet()
+            app.typeKey(key, modifierFlags: [])
+            XCTAssertTrue(wait(for: sheet, toSatisfy: "exists == false", timeout: 10), "the sheet closes")
+            XCTAssertEqual(fixture.remoteCommitID("refs/heads/main"), published, "nothing is pushed")
+        }
+
+        _ = openForcePushSheet()
+        app.sheets.buttons["Force Push"].click()
+
+        let local = try fixture.commitID("main")
+        XCTAssertTrue(waitUntil(timeout: 30) { fixture.remoteCommitID("refs/heads/main") == local })
+    }
+
+    /// Pushes with ⇧⌘U and waits for the force push sheet. The toolbar's Push button carries
+    /// an ahead count here, which becomes part of its label.
+    private func openForcePushSheet() -> XCUIElement {
+        XCTAssertTrue(app.staticTexts["rewritten"].firstMatch.waitForExistence(timeout: 60))
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(wait(for: sheet, toSatisfy: "exists == false", timeout: 10))
+        app.typeKey("u", modifierFlags: [.command, .shift])
+        XCTAssertTrue(sheet.buttons["Force Push"].waitForExistence(timeout: 20), "the sheet asks first")
+        return sheet
+    }
+
     // MARK: Unpushed marker
 
     func testCommitsAheadOfTheirUpstreamAreMarkedUnpushed() throws {
