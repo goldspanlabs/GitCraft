@@ -1047,6 +1047,26 @@ fn a_forced_rewind_is_reported_as_forced_not_up_to_date() {
 }
 
 #[test]
+fn push_says_when_its_settings_left_the_branch_out() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    run_git(dir.path(), &["branch", "-q", "other"]);
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/other:refs/heads/other",
+        ],
+    );
+
+    let result = session.push().unwrap();
+    assert!(!result.included_branch, "{result:?}");
+    assert!(!result.published && !result.up_to_date && !result.forced);
+}
+
+#[test]
 fn push_reads_the_line_for_the_checked_out_branch_under_remapped_refspecs() {
     let (dir, origin) = repo_with_bare_origin();
     let session = open(dir.path());
@@ -1072,6 +1092,7 @@ fn push_reads_the_line_for_the_checked_out_branch_under_remapped_refspecs() {
     );
 
     let result = session.push().unwrap();
+    assert!(result.included_branch);
     assert_eq!(result.destination, "origin/deploy", "{result:?}");
     assert!(result.published, "deploy is new on the server");
     assert!(!run_git(origin.path(), &["branch", "--list", "deploy"])

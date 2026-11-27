@@ -156,6 +156,7 @@ impl RepoSession {
                 published: flag == Some('*'),
                 up_to_date: flag == Some('='),
                 forced: flag == Some('+'),
+                included_branch: status.is_some(),
             })
         })
     }

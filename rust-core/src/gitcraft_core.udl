@@ -166,6 +166,7 @@ dictionary PushResult {
   boolean published;
   boolean up_to_date;
   boolean forced;
+  boolean included_branch;
 };
 
 dictionary HeadMove {

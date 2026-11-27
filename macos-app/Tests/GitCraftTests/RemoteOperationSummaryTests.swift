@@ -59,11 +59,12 @@ final class RemoteOperationSummaryTests: XCTestCase {
         commits: UInt32,
         published: Bool = false,
         upToDate: Bool = false,
-        forced: Bool = false
+        forced: Bool = false,
+        includedBranch: Bool = true
     ) -> String {
         RemoteOperation.pushMessage(PushResult(
             branch: branch, destination: destination, commits: commits,
-            published: published, upToDate: upToDate, forced: forced
+            published: published, upToDate: upToDate, forced: forced, includedBranch: includedBranch
         ))
     }
 
@@ -90,6 +91,13 @@ final class RemoteOperationSummaryTests: XCTestCase {
         XCTAssertEqual(
             push("main", to: "origin/main", commits: 0, forced: true),
             "Force-pushed \"main\" to origin/main."
+        )
+    }
+
+    func testAPushThatSkippedTheBranchDoesntClaimIt() {
+        XCTAssertEqual(
+            push("main", to: "origin/main", commits: 0, includedBranch: false),
+            "Pushed, but not \"main\": your push settings send other branches only."
         )
     }
 

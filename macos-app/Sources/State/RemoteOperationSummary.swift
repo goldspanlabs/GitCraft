@@ -45,6 +45,9 @@ extension RemoteOperation {
 
     /// The note for a finished push, from what the core measured against the real destination.
     static func pushMessage(_ result: PushResult) -> String {
+        guard result.includedBranch else {
+            return "Pushed, but not \"\(result.branch)\": your push settings send other branches only."
+        }
         if result.published {
             return "Published \"\(result.branch)\" to \(result.destination)."
         }

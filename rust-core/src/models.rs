@@ -255,6 +255,10 @@ pub struct PushResult {
     /// True when the destination's history was replaced rather than added to, as in a forced
     /// push that rewinds it. `commits` may then be zero.
     pub forced: bool,
+    /// False when the push succeeded but git reported nothing for `branch`, because the push
+    /// settings (say `remote.<name>.push`) send other branches only. `destination` and the
+    /// other fields then describe nothing.
+    pub included_branch: bool,
 }
 
 /// How an action moved HEAD, so it can be undone by moving HEAD back.
