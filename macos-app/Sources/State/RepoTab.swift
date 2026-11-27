@@ -19,6 +19,9 @@ final class RepoTab: ObservableObject, Identifiable {
 
     struct ToastAction {
         let title: String
+        /// The undo step this button takes back, if it is an Undo button. It works only while
+        /// that step is the latest, and the note goes once the step leaves the stack.
+        var undoEntryID: UUID?
         let perform: @MainActor () -> Void
     }
 
@@ -83,6 +86,10 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// The most notes on screen at once; a new one past this pushes out the oldest.
     static let maxToasts = 3
+
+    /// Actions that can be taken back, oldest first. Change it through `recordUndo` and
+    /// `undo` (see Undo.swift).
+    @Published var undoStack: [UndoEntry] = []
 
     @Published var pendingConfirmation: DestructiveAction?
     @Published var activeSheet: ActiveSheet?
@@ -244,6 +251,18 @@ final class RepoTab: ObservableObject, Identifiable {
 
     func dismissToast(_ id: UUID) {
         toasts.removeAll { $0.id == id }
+    }
+
+    /// Closes the note whose Undo button takes back `undoEntryID`.
+    func dismissToasts(forUndo undoEntryID: UUID) {
+        toasts.removeAll { $0.action?.undoEntryID == undoEntryID }
+    }
+
+    /// Whether `toast`'s button can be used now.
+    func toastActionEnabled(_ toast: Toast) -> Bool {
+        guard !isBusy, let action = toast.action else { return false }
+        guard let undoID = action.undoEntryID else { return true }
+        return undoID == latestUndo?.id
     }
 
     /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
@@ -747,6 +766,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
+                pruneUndoStack()
             } catch {
                 guard self.session === session else { return }
                 // A failure after the history arrived leaves it showing as loaded.

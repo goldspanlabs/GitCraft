@@ -151,7 +151,7 @@ struct RepoDetailView: View {
                             autoDismissAfter: toast.action == nil ? 4 : 10,
                             actionTitle: toast.action?.title,
                             onAction: toast.action.map { action in { action.perform() } },
-                            actionDisabled: tab.isBusy
+                            actionDisabled: !tab.toastActionEnabled(toast)
                         ) {
                             tab.dismissToast(toast.id)
                         }

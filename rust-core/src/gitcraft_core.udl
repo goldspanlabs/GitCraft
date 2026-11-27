@@ -159,6 +159,11 @@ dictionary HeadPosition {
   string? branch;
 };
 
+dictionary HeadMove {
+  HeadPosition before;
+  HeadPosition after;
+};
+
 dictionary StashInfo {
   u32 index;
   string name;
@@ -289,7 +294,7 @@ interface RepoSession {
   void rebase_onto(string commit);
 
   [Throws=GitCraftError]
-  void reset_to(string commit, ResetMode mode);
+  HeadMove? reset_to(string commit, ResetMode mode);
 
   HeadPosition? head_position();
 
@@ -297,10 +302,10 @@ interface RepoSession {
   void undo_head_move(HeadPosition expected, string target, ResetMode mode);
 
   [Throws=GitCraftError]
-  void cherry_pick(string commit);
+  HeadMove? cherry_pick(string commit);
 
   [Throws=GitCraftError]
-  void revert_commit(string commit);
+  HeadMove? revert_commit(string commit);
 
   [Throws=GitCraftError]
   sequence<DiffRow> diff();

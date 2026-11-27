@@ -137,16 +137,14 @@ fn head_position_is_none_before_the_first_commit() {
 fn undoing_a_soft_reset_restores_the_branch_and_the_staged_changes() {
     let (dir, first) = reset_fixture();
     let session = open(dir.path());
-    let before = session.head_position().unwrap();
     let status_before = porcelain(dir.path());
 
-    session.reset_to(first, ResetMode::Soft).unwrap();
-    let after = session.head_position().unwrap();
+    let moved = session.reset_to(first, ResetMode::Soft).unwrap().unwrap();
     session
-        .undo_head_move(after, before.oid.clone(), ResetMode::Soft)
+        .undo_head_move(moved.after, moved.before.oid.clone(), ResetMode::Soft)
         .unwrap();
 
-    assert_eq!(head(dir.path()), before.oid);
+    assert_eq!(head(dir.path()), moved.before.oid);
     assert_eq!(porcelain(dir.path()), status_before);
 }
 
@@ -154,15 +152,13 @@ fn undoing_a_soft_reset_restores_the_branch_and_the_staged_changes() {
 fn undoing_a_mixed_reset_restores_the_branch_and_keeps_the_files() {
     let (dir, first) = reset_fixture();
     let session = open(dir.path());
-    let before = session.head_position().unwrap();
 
-    session.reset_to(first, ResetMode::Mixed).unwrap();
-    let after = session.head_position().unwrap();
+    let moved = session.reset_to(first, ResetMode::Mixed).unwrap().unwrap();
     session
-        .undo_head_move(after, before.oid.clone(), ResetMode::Mixed)
+        .undo_head_move(moved.after, moved.before.oid.clone(), ResetMode::Mixed)
         .unwrap();
 
-    assert_eq!(head(dir.path()), before.oid);
+    assert_eq!(head(dir.path()), moved.before.oid);
     // Back on the second commit, so only the edits made on top of it are left (unstaged).
     assert_eq!(
         porcelain(dir.path()),
@@ -181,12 +177,12 @@ fn undoing_a_cherry_pick_keeps_unrelated_local_changes() {
 
     let session = open(dir.path());
     let before = session.head_position().unwrap();
-    session.cherry_pick(picked).unwrap();
-    let after = session.head_position().unwrap();
-    assert_ne!(after.oid, before.oid);
+    let moved = session.cherry_pick(picked).unwrap().unwrap();
+    assert_eq!(moved.before, before);
+    assert_eq!(moved.after, session.head_position().unwrap());
 
     session
-        .undo_head_move(after, before.oid.clone(), ResetMode::Keep)
+        .undo_head_move(moved.after, before.oid.clone(), ResetMode::Keep)
         .unwrap();
 
     assert_eq!(head(dir.path()), before.oid);
@@ -196,6 +192,40 @@ fn undoing_a_cherry_pick_keeps_unrelated_local_changes() {
     );
     assert_eq!(read(dir.path(), "b.txt"), "local edit\n");
     assert_eq!(porcelain(dir.path()), [" M b.txt"]);
+}
+
+#[test]
+fn undoing_a_revert_brings_the_change_back() {
+    let dir = init_repo_with_commit();
+    let change = commit_file(dir.path(), "a.txt", "changed\n", "change a");
+    let session = open(dir.path());
+
+    let moved = session.revert_commit(change.clone()).unwrap().unwrap();
+    assert_eq!(read(dir.path(), "a.txt"), "alpha\n");
+    session
+        .undo_head_move(moved.after, moved.before.oid, ResetMode::Keep)
+        .unwrap();
+
+    assert_eq!(head(dir.path()), change);
+    assert_eq!(read(dir.path(), "a.txt"), "changed\n");
+}
+
+#[test]
+fn a_reset_that_goes_nowhere_reports_no_move() {
+    let dir = init_repo_with_commit();
+    let here = head(dir.path());
+    assert!(open(dir.path())
+        .reset_to(here, ResetMode::Soft)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn a_failed_cherry_pick_reports_an_error_not_a_move() {
+    let dir = init_repo_with_commit();
+    assert!(open(dir.path())
+        .cherry_pick("no-such-commit".into())
+        .is_err());
 }
 
 #[test]

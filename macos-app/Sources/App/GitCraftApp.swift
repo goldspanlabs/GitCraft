@@ -117,6 +117,9 @@ struct RepoCommands: Commands {
             Button("Close Tab") { workspace.closeActiveTab() }
                 .keyboardShortcut("w", modifiers: .command)
         }
+        CommandGroup(after: .undoRedo) {
+            RepositoryUndoMenuItem(tab: workspace.activeTab)
+        }
         CommandGroup(after: .pasteboard) {
             Divider()
             Button("Filter Commits") { workspace.focusCommitFilter() }

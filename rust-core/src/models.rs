@@ -239,6 +239,13 @@ pub struct HeadPosition {
     pub branch: Option<String>,
 }
 
+/// How an action moved HEAD, so it can be undone by moving HEAD back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadMove {
+    pub before: HeadPosition,
+    pub after: HeadPosition,
+}
+
 #[derive(Clone, Debug)]
 pub struct StashInfo {
     pub index: u32,

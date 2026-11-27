@@ -255,76 +255,45 @@ extension RepoTab {
     }
 
     /// Hard resets go through the confirmation dialog; soft and mixed resets run directly and
-    /// can be undone from the note that follows.
+    /// can be undone.
     func resetTo(_ oid: String, mode: ResetMode) {
         switch mode {
         case .hard:
             pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
-        case .soft:
-            performUndoable("Reset \"\(currentBranchLabel)\" to \(oid.shortOid). Its changes are staged.", undoMode: .soft) {
-                try $0.resetTo(commit: oid, mode: .soft)
-            }
-        case .mixed:
-            performUndoable("Reset \"\(currentBranchLabel)\" to \(oid.shortOid). Its changes are unstaged.", undoMode: .mixed) {
-                try $0.resetTo(commit: oid, mode: .mixed)
-            }
+        case .soft, .mixed:
+            let kept = mode == .soft ? "staged" : "unstaged"
+            performUndoableHeadMove(
+                actionName: "Reset",
+                message: "Reset \"\(currentBranchLabel)\" to \(oid.shortOid). Its changes are \(kept).",
+                undoMode: mode
+            ) { try $0.resetTo(commit: oid, mode: mode) }
         case .keep:
             performReset(oid, mode: .keep)
         }
     }
 
     /// Runs the reset without asking again. The confirmed hard reset calls this directly,
-    /// because `resetTo` would re-arm the dialog.
+    /// because `resetTo` would re-arm the dialog. It isn't undoable: the uncommitted changes
+    /// it discards can't be brought back.
     private func performReset(_ oid: String, mode: ResetMode) {
-        performMutation { try $0.resetTo(commit: oid, mode: mode) }
+        performMutation { _ = try $0.resetTo(commit: oid, mode: mode) }
     }
 
     func cherryPick(_ oid: String) {
         // Keep mode on undo: the picked changes go, other local changes stay.
-        performUndoable("Cherry-picked \(oid.shortOid) onto \"\(currentBranchLabel)\".", undoMode: .keep) {
-            try $0.cherryPick(commit: oid)
-        }
+        performUndoableHeadMove(
+            actionName: "Cherry Pick",
+            message: "Cherry-picked \(oid.shortOid) onto \"\(currentBranchLabel)\".",
+            undoMode: .keep
+        ) { try $0.cherryPick(commit: oid) }
     }
 
     func revertCommit(_ oid: String) {
-        performUndoable("Reverted \(oid.shortOid) on \"\(currentBranchLabel)\".", undoMode: .keep) {
-            try $0.revertCommit(commit: oid)
-        }
-    }
-
-    /// Runs `work`, which moves HEAD, then shows `message` with an Undo button that resets back
-    /// with `undoMode`. A failure, or one that stops on conflicts, offers no undo: the banner's
-    /// Abort covers that.
-    private func performUndoable(
-        _ message: String,
-        undoMode: ResetMode,
-        _ work: @escaping @Sendable (RepoSession) throws -> Void
-    ) {
-        let moved = SendableBox<(before: HeadPosition, after: HeadPosition)?>(nil)
-        performMutation({ session in
-            let before = session.headPosition()
-            try work(session)
-            if let before, let after = session.headPosition(),
-               after.oid != before.oid || after.branch != before.branch
-            {
-                moved.value = (before, after)
-            }
-        }, onSuccess: { [weak self] in
-            guard let self, let moved = moved.value else { return }
-            self.showToast(message, isSuccess: true, action: ToastAction(title: "Undo") { [weak self] in
-                self?.undoHeadMove(from: moved.after, to: moved.before.oid, mode: undoMode)
-            })
-        })
-    }
-
-    /// Puts HEAD back at `target`, unless it has moved since `expected`.
-    func undoHeadMove(from expected: HeadPosition, to target: String, mode: ResetMode) {
-        performMutation(busyLabel: "Undoing…", { session in
-            try session.undoHeadMove(expected: expected, target: target, mode: mode)
-        }, onSuccess: { [weak self] in
-            guard let self else { return }
-            self.showToast("Undone. \"\(self.currentBranchLabel)\" is back at \(target.shortOid).", isSuccess: true)
-        })
+        performUndoableHeadMove(
+            actionName: "Revert",
+            message: "Reverted \(oid.shortOid) on \"\(currentBranchLabel)\".",
+            undoMode: .keep
+        ) { try $0.revertCommit(commit: oid) }
     }
 
     func abortRebase() {
@@ -552,16 +521,5 @@ extension RepoTab {
 
     func copyOid(_ oid: String) {
         Clipboard.copy(oid)
-    }
-}
-
-/// Carries a value from a mutation's background work back to the main actor. It is written
-/// before the work finishes and read only after `performMutation` has awaited that work, so the
-/// unchecked `Sendable` is safe.
-private final class SendableBox<Value>: @unchecked Sendable {
-    var value: Value
-
-    init(_ value: Value) {
-        self.value = value
     }
 }
