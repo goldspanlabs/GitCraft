@@ -192,8 +192,10 @@ final class RemoteUITests: XCTestCase {
         XCTAssertTrue(remotesHeader.waitForExistence(timeout: 10))
         rightClick(remotesHeader)
 
-        let addItem = app.menuItems["Add Remote…"]
-        XCTAssertTrue(addItem.waitForExistence(timeout: 10))
+        // The menu bar's Repository ▸ Add Remote… has the same title, so take the one in the
+        // open context menu.
+        let addItem = openMenuItem("Add Remote…", in: app)
+        XCTAssertTrue(addItem.exists)
         XCTAssertFalse(app.menuItems["Manage Remotes…"].exists)
         addItem.click()
 
