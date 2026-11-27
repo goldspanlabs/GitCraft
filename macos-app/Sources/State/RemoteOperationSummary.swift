@@ -24,7 +24,9 @@ extension RemoteOperation {
         case .fetch:
             guard let head = headAfter else { return "Fetched." }
             if head.behind > 0 {
-                return "Fetched. \"\(head.name)\" is \(commits(head.behind)) behind its upstream."
+                // Measured against its upstream or, with none set, the same-named branch on
+                // origin, so this doesn't claim an upstream exists.
+                return "Fetched. \"\(head.name)\" is \(commits(head.behind)) behind the remote."
             }
             return "Fetched. \"\(head.name)\" is up to date."
 

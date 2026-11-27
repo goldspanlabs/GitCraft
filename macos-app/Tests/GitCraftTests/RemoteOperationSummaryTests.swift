@@ -35,10 +35,10 @@ final class RemoteOperationSummaryTests: XCTestCase {
 
     func testFetchReportsHowFarBehindTheBranchIs() {
         let after = [branch("main", head: true, behind: 3), branch("origin/main", remote: true)]
-        XCTAssertEqual(message(.fetch, before: [], after: after), "Fetched. \"main\" is 3 commits behind its upstream.")
+        XCTAssertEqual(message(.fetch, before: [], after: after), "Fetched. \"main\" is 3 commits behind the remote.")
 
         let one = [branch("main", head: true, behind: 1)]
-        XCTAssertEqual(message(.fetch, before: [], after: one), "Fetched. \"main\" is 1 commit behind its upstream.")
+        XCTAssertEqual(message(.fetch, before: [], after: one), "Fetched. \"main\" is 1 commit behind the remote.")
     }
 
     func testFetchWithNothingNewOrDetachedHead() {

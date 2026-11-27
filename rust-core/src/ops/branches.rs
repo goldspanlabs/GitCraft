@@ -295,6 +295,15 @@ impl RepoSession {
                     "The branch has changed since then, so there's nothing to undo.",
                 ));
             }
+            // `reset --keep` resets the index even for files the move doesn't touch, which
+            // would quietly unstage them.
+            if mode == ResetMode::Keep
+                && git_cli::run(&self.path, &["diff", "--cached", "--quiet"]).is_err()
+            {
+                return Err(GitCraftError::message(
+                    "Commit or unstage your staged changes first: this would unstage them.",
+                ));
+            }
             git_cli::mutate(&self.path, &["reset", reset_flag(mode), &target])
         })
     }

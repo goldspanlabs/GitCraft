@@ -99,6 +99,9 @@ extension RepoTab {
         undoMode: ResetMode,
         _ work: @escaping @Sendable (RepoSession) throws -> HeadMove?
     ) {
+        // One history change at a time: a second one finishing first would clear `isBusy`
+        // under the first and let pruning drop the step it is about to record.
+        guard !isBusy else { return }
         let moved = SendableBox<HeadMove?>(nil)
         performMutation({ session in
             moved.value = try work(session)

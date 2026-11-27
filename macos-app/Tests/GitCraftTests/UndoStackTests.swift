@@ -344,6 +344,44 @@ final class UndoStackTests: XCTestCase {
     }
 
     @MainActor
+    func testUndoWaitsWhileOtherChangesAreStaged() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let before = try rev("main")
+
+        try await cherryPickOther(tab)
+        try write("README.md", "staged edit\n")
+        try git(["add", "README.md"], in: repo)
+        tab.undo()
+        try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        XCTAssertTrue(tab.errorMessage?.contains("staged") == true, tab.errorMessage ?? "")
+        XCTAssertEqual(try porcelain(), ["M  README.md"], "the staging is untouched")
+        XCTAssertEqual(tab.undoStack.count, 1, "the step waits for the staging to go")
+
+        try git(["reset", "-q", "README.md"], in: repo)
+        tab.errorMessage = nil
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == before && !tab.isBusy }
+    }
+
+    @MainActor
+    func testASecondHistoryChangeWaitsForTheFirst() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let main = try rev("main")
+
+        tab.isBusy = true
+        tab.cherryPick(try rev("other"))
+        tab.isBusy = false
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        XCTAssertEqual(try rev("main"), main, "nothing ran while busy")
+        XCTAssertTrue(tab.undoStack.isEmpty)
+    }
+
+    @MainActor
     func testSwitchingCheckoutClearsUndoHistory() async throws {
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-q", "-b", "linked", linked.path], in: repo)

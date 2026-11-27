@@ -278,19 +278,20 @@ struct CommitTableView: NSViewRepresentable {
 
             // Acting on the checked-out branch.
             if !isDetached {
-                entries.append(.item("Merge into '\(branch)'…") { [weak self] in self?.onCommitAction(.merge, oid) })
-                entries.append(.item("Rebase '\(branch)' to Here…") { [weak self] in self?.onCommitAction(.rebase, oid) })
+                // Off while another action runs, so two history changes can't overlap.
+                entries.append(.item("Merge into '\(branch)'…", enabled: !isBusy) { [weak self] in self?.onCommitAction(.merge, oid) })
+                entries.append(.item("Rebase '\(branch)' to Here…", enabled: !isBusy) { [weak self] in self?.onCommitAction(.rebase, oid) })
                 entries.append(.submenu("Reset '\(branch)' to Here…", [
-                    .item("Soft — keep changes staged") { [weak self] in self?.onCommitAction(.reset(.soft), oid) },
-                    .item("Mixed — keep changes unstaged") { [weak self] in self?.onCommitAction(.reset(.mixed), oid) },
-                    .item("Hard — discard uncommitted changes…") { [weak self] in self?.onCommitAction(.reset(.hard), oid) },
+                    .item("Soft — keep changes staged", enabled: !isBusy) { [weak self] in self?.onCommitAction(.reset(.soft), oid) },
+                    .item("Mixed — keep changes unstaged", enabled: !isBusy) { [weak self] in self?.onCommitAction(.reset(.mixed), oid) },
+                    .item("Hard — discard uncommitted changes…", enabled: !isBusy) { [weak self] in self?.onCommitAction(.reset(.hard), oid) },
                 ]))
                 entries.append(.separator)
             }
 
             // Working with the commit itself.
-            entries.append(.item("Cherry Pick Commit") { [weak self] in self?.onCommitAction(.cherryPick, oid) })
-            entries.append(.item("Revert Commit") { [weak self] in self?.onCommitAction(.revert, oid) })
+            entries.append(.item("Cherry Pick Commit", enabled: !isBusy) { [weak self] in self?.onCommitAction(.cherryPick, oid) })
+            entries.append(.item("Revert Commit", enabled: !isBusy) { [weak self] in self?.onCommitAction(.revert, oid) })
             entries.append(.separator)
 
             // Creating references or checkouts that point at the commit.

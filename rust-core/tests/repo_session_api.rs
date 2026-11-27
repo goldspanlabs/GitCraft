@@ -1047,6 +1047,56 @@ fn push_measures_against_a_separate_push_remote() {
 }
 
 #[test]
+fn push_republishes_a_branch_deleted_on_the_remote() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    // Deleted on the server; the local origin/main is now stale (no fetch since).
+    run_git(origin.path(), &["branch", "-D", "main"]);
+    run_git(
+        origin.path(),
+        &["symbolic-ref", "HEAD", "refs/heads/elsewhere"],
+    );
+
+    let result = session.push().unwrap();
+    assert!(
+        result.published,
+        "the push recreated it, whatever the stale ref says"
+    );
+}
+
+#[test]
+fn push_of_a_branch_the_server_has_but_this_clone_doesnt_track_isnt_a_publish() {
+    let (dir, origin) = repo_with_bare_origin();
+    // The server already has `main` at this commit, but this clone has no origin/main.
+    run_git(
+        dir.path(),
+        &["push", "-q", origin.path().to_str().unwrap(), "main"],
+    );
+    let result = open(dir.path()).push().unwrap();
+    assert!(!result.published);
+    assert_eq!(result.commits, 0);
+    assert_eq!(result.destination, "origin/main");
+}
+
+#[test]
+fn first_push_reports_the_remote_it_used() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let fork = tempfile::tempdir().unwrap();
+    run_git(fork.path(), &["init", "-q", "--bare", "-b", "main"]);
+    run_git(
+        dir.path(),
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    run_git(dir.path(), &["config", "branch.main.pushRemote", "fork"]);
+
+    // With no upstream yet, the first push publishes to the default remote.
+    let result = open(dir.path()).push().unwrap();
+    assert!(result.published);
+    assert_eq!(result.destination, "origin/main");
+}
+
+#[test]
 fn pull_of_diverged_branches_falls_back_to_a_merge() {
     let (dir, origin) = repo_with_bare_origin();
     let session = open(dir.path());

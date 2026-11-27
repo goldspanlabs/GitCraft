@@ -158,7 +158,8 @@ final class ConflictUITests: XCTestCase {
     func testAConflictedFileIsListedAndMarkedAsConflicted() throws {
         let row = element("unstaged-file:README.md")
         XCTAssertTrue(row.waitForExistence(timeout: 60), "the conflicted file is listed")
-        XCTAssertTrue(row.staticTexts["U"].exists, "its badge marks it unmerged, not as an ordinary edit")
+        // The badge shows "U" and is announced by its meaning.
+        XCTAssertTrue(row.staticTexts["Conflicted"].exists, "its badge marks it unmerged, not as an ordinary edit")
         XCTAssertTrue(text(containing: "with conflicts").exists, "the banner says there are conflicts")
     }
 

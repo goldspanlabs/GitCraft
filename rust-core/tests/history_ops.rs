@@ -248,6 +248,42 @@ fn undoing_a_cherry_pick_refuses_when_a_local_edit_touches_the_picked_file() {
 }
 
 #[test]
+fn undoing_a_cherry_pick_refuses_while_other_changes_are_staged() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["checkout", "-q", "-b", "other"]);
+    let picked = commit_file(dir.path(), "c.txt", "charlie\n", "add c");
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+    let session = open(dir.path());
+    let moved = session.cherry_pick(picked).unwrap().unwrap();
+
+    // Staged, and unrelated to the pick: `reset --keep` would unstage it.
+    write(dir.path(), "b.txt", "staged edit\n");
+    run_git(dir.path(), &["add", "b.txt"]);
+
+    let error = session
+        .undo_head_move(
+            moved.after.clone(),
+            moved.before.oid.clone(),
+            ResetMode::Keep,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("staged"), "{error}");
+    assert_eq!(head(dir.path()), moved.after.oid);
+    assert_eq!(
+        porcelain(dir.path()),
+        ["M  b.txt"],
+        "the staging is untouched"
+    );
+
+    // Once it's unstaged, the undo works.
+    run_git(dir.path(), &["reset", "-q", "b.txt"]);
+    session
+        .undo_head_move(moved.after, moved.before.oid.clone(), ResetMode::Keep)
+        .unwrap();
+    assert_eq!(head(dir.path()), moved.before.oid);
+}
+
+#[test]
 fn undo_head_move_rejects_a_bad_target() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());
