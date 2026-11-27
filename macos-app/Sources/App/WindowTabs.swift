@@ -133,8 +133,10 @@ class WorkspaceWindowController: NSWindowController {
 @MainActor
 final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
-    /// Longest the repository / branch text may grow before it is truncated.
-    private static let titleTextMaxWidth: CGFloat = 240
+    /// Width of the repository / branch text: a fraction of the window width, clamped to this range.
+    private static let titleTextWidthRange: ClosedRange<CGFloat> = 200...360
+    private static let titleTextWidthFraction: CGFloat = 0.2
+    private var titleWidthConstraints: [NSLayoutConstraint] = []
     private let dot = TabStatusDot()
     private let spinner: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
@@ -149,14 +151,14 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .labelColor
-        label.lineBreakMode = .byTruncatingTail
+        label.lineBreakMode = .byTruncatingMiddle
         return label
     }()
     private let subtitleLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
+        label.lineBreakMode = .byTruncatingMiddle
         return label
     }()
     private var changes: AnyCancellable?
@@ -231,6 +233,9 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         window?.subtitle = tab.currentBranch
         titleLabel.stringValue = tab.checkoutName
         subtitleLabel.stringValue = tab.currentBranch
+        // Middle truncation hides part of the name, so the tooltip carries the full text.
+        titleLabel.toolTip = tab.checkoutName
+        subtitleLabel.toolTip = tab.currentBranch
         if tab.isBusy {
             spinner.startAnimation(nil)
             let label = tab.busyLabel ?? "Working…"
@@ -265,7 +270,16 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         return size.width >= 1040 && size.height >= 680 ? size : fallback
     }
 
+    /// Scales the title block with the window, so it is the same for every name at a given width.
+    private func updateTitleWidth() {
+        let windowWidth = window?.frame.width ?? 0
+        let width = min(max(windowWidth * Self.titleTextWidthFraction, Self.titleTextWidthRange.lowerBound),
+                        Self.titleTextWidthRange.upperBound)
+        for constraint in titleWidthConstraints { constraint.constant = width }
+    }
+
     func windowDidResize(_ notification: Notification) {
+        updateTitleWidth()
         guard let window = notification.object as? NSWindow,
               !window.styleMask.contains(.fullScreen)
         else { return }
@@ -313,8 +327,15 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             row.alignment = .centerY
             row.spacing = 16
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
-            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
-            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
+            // Fixed width (not a maximum) so the action buttons don't shift with the name length.
+            // Low compression resistance lets long names truncate in the middle, like the sidebar.
+            titleWidthConstraints = [titleLabel, subtitleLabel].map { label in
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                let constraint = label.widthAnchor.constraint(equalToConstant: Self.titleTextWidthRange.lowerBound)
+                constraint.isActive = true
+                return constraint
+            }
+            updateTitleWidth()
 
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = row

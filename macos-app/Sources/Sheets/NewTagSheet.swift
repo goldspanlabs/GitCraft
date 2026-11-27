@@ -46,10 +46,8 @@ struct NewTagSheet: View {
                         HStack(spacing: 5) {
                             PhosphorIcon(glyph: .branch)
                                 .foregroundStyle(.secondary)
-                            Text(headDisplay)
+                            MiddleTruncatedText(headDisplay)
                                 .font(.system(size: 13))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }

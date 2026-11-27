@@ -46,6 +46,7 @@ final class RefPillView: NSView {
         layer?.borderWidth = 1
 
         label.stringValue = badge.name
+        toolTip = badge.name
         label.font = .systemFont(ofSize: 11.5, weight: badge.isCurrent ? .bold : .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 

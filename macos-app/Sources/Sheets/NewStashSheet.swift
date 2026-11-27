@@ -31,10 +31,8 @@ struct NewStashSheet: View {
                     HStack(spacing: 5) {
                         PhosphorIcon(glyph: .branch)
                             .foregroundStyle(.secondary)
-                        Text(branchDisplay)
+                        MiddleTruncatedText(branchDisplay)
                             .font(.system(size: 13))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
                         if tab.totalChangesCount > 0 {
                             Text("· \(changesSummary)")
                                 .font(.system(size: 12))

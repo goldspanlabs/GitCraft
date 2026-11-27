@@ -41,7 +41,7 @@ struct MergeCommitSheet: View {
                         .font(.system(size: 13))
                         .lineLimit(1)
                         .fixedSize()
-                    Text(tab.currentBranch)
+                    MiddleTruncatedText(tab.currentBranch)
                         .font(.system(size: 13, weight: .medium))
                         .frame(width: 330, alignment: .leading)
                 }
