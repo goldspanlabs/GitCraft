@@ -60,19 +60,22 @@ struct MarkdownPreviewView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            guard navigationAction.targetFrame?.isMainFrame == true,
-                  let url = navigationAction.request.url else {
+            guard let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
                 return
             }
 
             if navigationAction.navigationType == .linkActivated {
-                if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                if navigationAction.sourceFrame.isMainFrame,
+                   let scheme = url.scheme?.lowercased(),
+                   scheme == "http" || scheme == "https" {
                     NSWorkspace.shared.open(url)
                     decisionHandler(.cancel)
                     return
                 }
-                if url.scheme == RepoAssetSchemeHandler.scheme, url.fragment != nil {
+                if navigationAction.targetFrame?.isMainFrame == true,
+                   url.scheme == RepoAssetSchemeHandler.scheme,
+                   url.fragment != nil {
                     decisionHandler(.allow)
                     return
                 }
@@ -80,8 +83,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 return
             }
 
-            // Allow only the initial loadHTMLString document (baseURL or about:blank).
-            if navigationAction.navigationType == .other,
+            // Allow only the initial loadHTMLString document (baseURL or about:blank) in the main frame.
+            if navigationAction.targetFrame?.isMainFrame == true,
+               navigationAction.navigationType == .other,
                url.scheme == RepoAssetSchemeHandler.scheme || url.absoluteString == "about:blank" {
                 decisionHandler(.allow)
                 return

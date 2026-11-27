@@ -343,7 +343,7 @@ extension RepoTab {
 
     private func loadWorkingMarkdownPreview(path: String, staged: Bool) {
         loadMarkdownPreview(
-            key: "working:\(staged):\(path)",
+            key: "working:\(activeCheckoutPath):\(staged):\(path)",
             isCurrent: { self.selectedCommit == nil && self.selectedFilePath == path && self.selectedFileStaged == staged },
             fetch: { try $0.getWorkingFileVersions(path: path, staged: staged) }
         )
@@ -387,7 +387,7 @@ extension RepoTab {
 
     private func loadCommitMarkdownPreview(oidHex: String, path: String) {
         loadMarkdownPreview(
-            key: "commit:\(oidHex):\(path)",
+            key: "commit:\(activeCheckoutPath):\(oidHex):\(path)",
             isCurrent: { self.selectedCommit?.oidHex == oidHex && self.selectedFilePath == path },
             fetch: { try $0.getCommitFileVersions(oidHex: oidHex, path: path) }
         )

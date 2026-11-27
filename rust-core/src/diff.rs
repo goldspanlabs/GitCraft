@@ -130,13 +130,22 @@ pub fn working_file_content(
     if !meta.is_file() {
         return Ok(None);
     }
+    let Ok(canonical_root) = std::fs::canonicalize(repo_path) else {
+        return Ok(None);
+    };
+    let Ok(canonical_file) = std::fs::canonicalize(&full_path) else {
+        return Ok(None);
+    };
+    if !canonical_file.starts_with(&canonical_root) {
+        return Ok(None);
+    }
     if meta.len() as usize > MAX_PREVIEW_BYTES {
         return Err(crate::GitCraftError::message(format!(
             "File is too large to preview ({} bytes)",
             meta.len()
         )));
     }
-    let bytes = std::fs::read(&full_path)?;
+    let bytes = std::fs::read(&canonical_file)?;
     if bytes.contains(&0) {
         return Err(crate::GitCraftError::message(
             "Binary file cannot be previewed",
