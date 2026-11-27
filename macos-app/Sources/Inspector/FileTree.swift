@@ -17,8 +17,8 @@ enum FileTree {
         var folders: [String: Folder] = [:]
         var files: [(name: String, change: FileChange)] = []
 
-        mutating func insert(_ change: FileChange, parts: ArraySlice<Substring>) {
-            guard let first = parts.first.map(String.init) else { return }
+        mutating func insert(_ change: FileChange, parts: ArraySlice<String>) {
+            guard let first = parts.first else { return }
             if parts.count == 1 {
                 files.append((first, change))
             } else {
@@ -32,7 +32,10 @@ enum FileTree {
     static func rows(from changes: [FileChange], collapsedFolderPaths: Set<String>) -> [FlatFileRow] {
         var root = Folder()
         for change in changes {
-            root.insert(change, parts: ArraySlice(change.path.split(separator: "/")))
+            var parts = change.path.split(separator: "/").map(String.init)
+            // Git reports an untracked folder as one entry ending in a slash. It stays on the name.
+            if change.path.hasSuffix("/"), !parts.isEmpty { parts[parts.count - 1] += "/" }
+            root.insert(change, parts: ArraySlice(parts))
         }
 
         var rows: [FlatFileRow] = []

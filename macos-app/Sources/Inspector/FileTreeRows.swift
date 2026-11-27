@@ -7,7 +7,7 @@ private enum FileTreeMetrics {
 
 /// The rows of a file tree, for the enclosing lazy stack. Not a stack of its own: that would
 /// build every row at once.
-struct FileTreeRows<FileRow: View>: View {
+struct FileTreeRows<FileRow: View, FolderControl: View>: View {
     let changes: [FileChange]
     @Binding var collapsedFolderPaths: Set<String>
     /// Keeps row ids apart when two trees share a stack. A file's row id, which the list
@@ -15,6 +15,8 @@ struct FileTreeRows<FileRow: View>: View {
     var idPrefix = ""
     /// Margin between the pane edge and the row highlight (matches the 10pt header inset).
     var edgeInset: CGFloat = 10
+    /// A control ahead of a folder's icon, such as a staging checkbox, given the folder's path.
+    @ViewBuilder let folderControl: (String) -> FolderControl
     /// Draws a file, given its name within its folder and its depth in the tree.
     @ViewBuilder let fileRow: (FileChange, String, Int) -> FileRow
 
@@ -39,7 +41,8 @@ struct FileTreeRows<FileRow: View>: View {
                         path: folderPath,
                         isExpanded: isExpanded,
                         depth: item.row.depth,
-                        collapsedFolderPaths: $collapsedFolderPaths
+                        collapsedFolderPaths: $collapsedFolderPaths,
+                        leading: { folderControl(folderPath) }
                     )
                 case let .file(change, name):
                     fileRow(change, name, item.row.depth)
@@ -51,40 +54,50 @@ struct FileTreeRows<FileRow: View>: View {
 }
 
 /// A folder in a file tree. Clicking it expands or collapses it.
-private struct FileTreeFolderRow: View {
+private struct FileTreeFolderRow<Leading: View>: View {
     let name: String
     let path: String
     let isExpanded: Bool
     let depth: Int
     @Binding var collapsedFolderPaths: Set<String>
+    @ViewBuilder var leading: () -> Leading
+
+    private func toggle() {
+        if isExpanded {
+            collapsedFolderPaths.insert(path)
+        } else {
+            collapsedFolderPaths.remove(path)
+        }
+    }
 
     var body: some View {
-        Button {
-            if isExpanded {
-                collapsedFolderPaths.insert(path)
-            } else {
-                collapsedFolderPaths.remove(path)
+        HStack(spacing: 6) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: FileTreeMetrics.chevronWidth)
+            // Outside the button, so a click on it doesn't also open or close the folder.
+            leading()
+            Button(action: toggle) {
+                HStack(spacing: 6) {
+                    PhosphorIcon(glyph: .folder, size: 14)
+                        .foregroundStyle(.secondary)
+                    Text(name)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: FileTreeMetrics.chevronWidth)
-                PhosphorIcon(glyph: .folder, size: 14)
-                    .foregroundStyle(.secondary)
-                Text(name)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-            }
-            .fileTreeRowPadding(depth: depth)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         }
-        .buttonStyle(.plain)
+        .fileTreeRowPadding(depth: depth)
+        // The chevron and the row's margins open and close it too.
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
         .help(path)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 }
 

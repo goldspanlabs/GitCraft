@@ -24,9 +24,10 @@ impl RepoSession {
                 )
             } else {
                 // No commits yet: there is no HEAD to reset to, so drop the entry from the index.
+                // `-r` lets `path` be a folder.
                 git_cli::mutate(
                     &self.path,
-                    &["--literal-pathspecs", "rm", "--cached", "--", &path],
+                    &["--literal-pathspecs", "rm", "--cached", "-r", "--", &path],
                 )
             }
         })

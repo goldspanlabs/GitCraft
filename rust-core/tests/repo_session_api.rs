@@ -2049,3 +2049,51 @@ fn commit_file_versions_do_not_follow_moves_to_another_directory() {
     assert_eq!(pair.old_content, None);
     assert!(pair.new_content.is_some());
 }
+
+#[test]
+fn stage_and_unstage_a_folder_takes_everything_inside_and_nothing_else() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    std::fs::create_dir_all(dir.path().join("src/deep")).unwrap();
+    write(dir.path(), "src/one.txt", "one\n");
+    write(dir.path(), "src/deep/two.txt", "two\n");
+    run_git(dir.path(), &["add", "src"]);
+    run_git(dir.path(), &["commit", "-m", "src"]);
+
+    write(dir.path(), "src/one.txt", "changed\n");
+    std::fs::remove_file(dir.path().join("src/deep/two.txt")).unwrap();
+    write(dir.path(), "src/new.txt", "new\n");
+    write(dir.path(), "a.txt", "alpha changed\n");
+
+    session.stage("src".into()).unwrap();
+
+    let status = session.status().unwrap();
+    let paths = |files: &[gitcraft_core::FileChange]| -> Vec<String> {
+        files.iter().map(|f| f.path.clone()).collect()
+    };
+    assert_eq!(
+        paths(&status.staged_files),
+        ["src/deep/two.txt", "src/new.txt", "src/one.txt"]
+    );
+    assert_eq!(paths(&status.unstaged_files), ["a.txt"]);
+
+    run_git(dir.path(), &["add", "a.txt"]);
+    session.unstage("src".into()).unwrap();
+
+    assert_eq!(paths(&session.status().unwrap().staged_files), ["a.txt"]);
+}
+
+#[test]
+fn unstage_a_folder_before_the_first_commit() {
+    let dir = init_repo();
+    let session = open(dir.path());
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    write(dir.path(), "src/one.txt", "one\n");
+    write(dir.path(), "src/two.txt", "two\n");
+    session.stage("src".into()).unwrap();
+
+    session.unstage("src".into()).unwrap();
+
+    assert!(session.status().unwrap().staged_files.is_empty());
+    assert!(dir.path().join("src/one.txt").exists());
+}

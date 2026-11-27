@@ -351,7 +351,8 @@ private struct CommitFileList: View {
             FileTreeRows(
                 changes: tab.commitDetail?.files ?? [],
                 collapsedFolderPaths: $collapsedFolderPaths,
-                edgeInset: edgeInset
+                edgeInset: edgeInset,
+                folderControl: { _ in EmptyView() }
             ) { change, name, depth in
                 fileRow(change, name: name, depth: depth)
             }

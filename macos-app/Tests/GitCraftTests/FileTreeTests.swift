@@ -43,6 +43,10 @@ final class FileTreeTests: XCTestCase {
         )
     }
 
+    func testAnUntrackedFolderKeepsItsSlashSoItDoesNotReadAsAFile() {
+        XCTAssertEqual(describe(["src/new/"]), ["0 folder:src", "1 file:new/"])
+    }
+
     func testSingleChildFolderChainsShareOneRow() {
         XCTAssertEqual(
             describe(["a/b/c/one.txt", "a/b/c/two.txt"]),

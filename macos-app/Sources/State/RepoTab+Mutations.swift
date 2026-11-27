@@ -39,11 +39,13 @@ extension RepoTab {
 
     // MARK: - Working Tree & Staging
 
-    func stageFile(_ path: String) {
+    /// Stages a file, or everything changed in a folder.
+    func stagePath(_ path: String) {
         performMutation { try $0.stage(path: path) }
     }
 
-    func unstageFile(_ path: String) {
+    /// Unstages a file, or everything staged in a folder.
+    func unstagePath(_ path: String) {
         performMutation { try $0.unstage(path: path) }
     }
 
