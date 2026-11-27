@@ -32,7 +32,7 @@ struct NewWorktreeSheet: View {
 
     private static func suggestedFolderName(repoName: String, suffix: String) -> String {
         let cleaned = suffix
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmed
             .components(separatedBy: CharacterSet(charactersIn: "/\\ \t\n"))
             .filter { !$0.isEmpty }
             .joined(separator: "-")
@@ -78,7 +78,7 @@ struct NewWorktreeSheet: View {
     private var startPointDisplay: String {
         if let start = startPoint {
             if start.count == 40, start.allSatisfy(\.isHexDigit) {
-                return String(start.prefix(7))
+                return start.shortOid
             }
             return start
         }
@@ -90,7 +90,7 @@ struct NewWorktreeSheet: View {
         case .existingBranch:
             return existingBranch
         case .newBranch:
-            return branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return branchName.trimmed.isEmpty
                 ? startPointDisplay
                 : branchName
         case .detached:
@@ -99,14 +99,14 @@ struct NewWorktreeSheet: View {
     }
 
     private var confirmDisabled: Bool {
-        if folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if folderPath.trimmed.isEmpty {
             return true
         }
         switch mode {
         case .existingBranch:
-            return existingBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return existingBranch.trimmed.isEmpty
         case .newBranch:
-            return branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return branchName.trimmed.isEmpty
         case .detached:
             return false
         }

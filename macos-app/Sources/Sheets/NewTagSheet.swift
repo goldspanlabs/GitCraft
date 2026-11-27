@@ -15,7 +15,7 @@ struct NewTagSheet: View {
     @FocusState private var focusedField: Field?
 
     private var trimmedTagName: String {
-        tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        tagName.trimmed
     }
 
     private var targetCommit: CommitRow? {
@@ -25,12 +25,6 @@ struct NewTagSheet: View {
 
     private var headDisplay: String {
         tab.currentBranch.isEmpty ? "HEAD" : tab.currentBranch
-    }
-
-    private var defaultRemoteName: String {
-        tab.remotes.first(where: { $0.name == "origin" })?.name
-            ?? tab.remotes.first?.name
-            ?? "origin"
     }
 
     var body: some View {
@@ -102,7 +96,7 @@ struct NewTagSheet: View {
                     Toggle(
                         tab.remotes.isEmpty
                             ? "Push tag to remote (no remotes configured)"
-                            : "Push tag to \(defaultRemoteName)",
+                            : "Push tag to \(tab.defaultRemoteName)",
                         isOn: $pushToRemote
                     )
                     .font(.system(size: 13))

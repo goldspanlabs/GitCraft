@@ -76,9 +76,10 @@ impl RepoSession {
     pub fn remove_worktree(&self, path: String, force: bool) -> Result<(), GitCraftError> {
         self.with_mutation_lock(|| {
             let entries = worktree::list_entries(&self.path)?;
-            let target = entries.iter().find(|w| w.path == path).ok_or_else(|| {
-                GitCraftError::message(format!("{path} is not a worktree of this repository"))
-            })?;
+            let target = entries
+                .iter()
+                .find(|w| w.path == path)
+                .ok_or_else(|| not_a_worktree(&path))?;
             if target.is_main {
                 return Err(GitCraftError::message("cannot remove the primary checkout"));
             }
@@ -130,9 +131,11 @@ impl RepoSession {
         if worktree::contains_path(&self.path, path)? {
             Ok(())
         } else {
-            Err(GitCraftError::message(format!(
-                "{path} is not a worktree of this repository"
-            )))
+            Err(not_a_worktree(path))
         }
     }
+}
+
+fn not_a_worktree(path: &str) -> GitCraftError {
+    GitCraftError::message(format!("{path} is not a worktree of this repository"))
 }

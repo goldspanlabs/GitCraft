@@ -50,12 +50,9 @@ pub fn get_commit_detail(
     sync_repo: &gix::ThreadSafeRepository,
     oid_hex: &str,
 ) -> Result<CommitDetail, GitCraftError> {
-    let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
+    let oid = gix::ObjectId::from_hex(oid_hex.as_bytes()).map_err(GitCraftError::from_display)?;
     let repo = sync_repo.to_thread_local();
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
+    let commit = repo.find_commit(oid).map_err(GitCraftError::from_display)?;
 
     let meta = extract_commit_metadata(&commit, true);
     let parent_oids: Vec<String> = commit
@@ -106,7 +103,7 @@ pub fn get_commit_detail(
 
     Ok(CommitDetail {
         oid_hex: oid_hex.to_owned(),
-        short_oid: oid_hex.chars().take(7).collect(),
+        short_oid: super::short_oid(oid_hex),
         summary: meta.summary,
         body: meta.body,
         author_name: meta.author_name,

@@ -39,31 +39,25 @@ extension RepoTab {
     func loadMoreCommits() {
         guard !isLoadingMore, hasMoreCommits else { return }
         isLoadingMore = true
-        let session = self.session
         let offset = UInt32(commits.count)
         let limit = pageSize
         let query = activeSearchQuery
         let generation = graphGeneration
         let scoped = scopeToCurrentBranch
 
-        Task {
-            defer { isLoadingMore = false }
-            do {
-                let nextPage = try await Task.detached {
-                    try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
-                }.value
-                // The list or checkout was replaced while we fetched; this page belongs to the old one.
-                guard self.session === session, generation == graphGeneration else { return }
-                if nextPage.count < Int(limit) {
-                    hasMoreCommits = false
-                }
-                commits.append(contentsOf: nextPage)
-                graphRevision = UUID()
-            } catch {
-                guard self.session === session else { return }
-                showError(error)
+        loadInBackground({ session in
+            try RepoTab.graphPage(session, scoped: scoped, offset: offset, limit: limit, query: query)
+        }, apply: { [self] nextPage in
+            // The list was replaced while we fetched; this page belongs to the old one.
+            guard generation == graphGeneration else { return }
+            if nextPage.count < Int(limit) {
+                hasMoreCommits = false
             }
-        }
+            commits.append(contentsOf: nextPage)
+            graphRevision = UUID()
+        }, always: { [self] in
+            isLoadingMore = false
+        })
     }
 
     /// Runs the search once typing pauses, so each keystroke doesn't start a history walk.

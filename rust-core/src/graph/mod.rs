@@ -16,6 +16,11 @@ use detail::extract_commit_metadata;
 use lanes::{LaneState, RawCommit};
 use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
 
+/// A commit SHA abbreviated to seven characters, as git shows it.
+pub(crate) fn short_oid(oid_hex: &str) -> String {
+    oid_hex.chars().take(7).collect()
+}
+
 /// Rows from the last graph walk, kept so that paging down doesn't re-walk history from the
 /// tips for every page. It holds one walk, identified by `key` (refs, HEAD, query, scope and
 /// sort); any change to those starts a new walk.
@@ -168,7 +173,7 @@ fn graph_walk(
         let step = entry.and_then(|oid| {
             repo.find_commit(oid)
                 .map(|commit| (oid, commit))
-                .map_err(|e| GitCraftError::message(e.to_string()))
+                .map_err(GitCraftError::from_display)
         });
         let (oid, commit) = match step {
             Ok(found) => found,
@@ -275,9 +280,7 @@ fn cache_key(
         .map(|m| (m.len(), m.modified().ok()));
     let head = repo.head().ok();
     let head_state = head.as_ref().map(|h| {
-        let name = h
-            .referent_name()
-            .map(|n| n.as_bstr().to_str_lossy().into_owned());
+        let name = refs::head_ref_name(h);
         let gone = name
             .as_deref()
             .and_then(|n| n.strip_prefix("refs/heads/"))

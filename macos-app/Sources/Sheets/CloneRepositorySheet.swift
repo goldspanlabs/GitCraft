@@ -14,15 +14,15 @@ struct CloneRepositorySheet: View {
     @State private var errorMessage: String?
 
     private var trimmedURL: String {
-        urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        urlText.trimmed
     }
 
     private var trimmedParent: String {
-        parentFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        parentFolderPath.trimmed
     }
 
     private var trimmedFolderName: String {
-        folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        folderName.trimmed
     }
 
     private var destinationPath: String {
@@ -118,7 +118,7 @@ struct CloneRepositorySheet: View {
     }
 
     static func suggestedFolderName(from urlString: String) -> String {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = urlString.trimmed
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmed.isEmpty else { return "" }
         let lastSegment = trimmed.split(whereSeparator: { $0 == "/" || $0 == ":" }).last.map(String.init) ?? ""

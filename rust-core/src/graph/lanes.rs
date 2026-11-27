@@ -149,7 +149,7 @@ impl LaneState {
         }
 
         let oid_hex = commit.oid.to_hex().to_string();
-        let short_oid = oid_hex.chars().take(7).collect();
+        let short_oid = super::short_oid(&oid_hex);
 
         CommitRow {
             oid_hex,

@@ -63,7 +63,7 @@ fn execute_raw(
         std::fs::metadata(repo)?;
         return Err(crate::GitCraftError::GitNotFound);
     };
-    let mut command = Command::new(git);
+    let mut command = git_command(git, &path_env);
     command
         // Report non-ASCII paths verbatim instead of as "\303\251" escapes.
         .args(["-c", "core.quotepath=off"])
@@ -76,22 +76,8 @@ fn execute_raw(
         ])
         .args(args)
         .current_dir(repo)
-        .env("PATH", path_env)
         // There is no terminal to prompt on: fail with an error instead of waiting.
         .env("GIT_TERMINAL_PROMPT", "0")
-        // The app matches some of git's messages (for example "divergent branches"), so keep
-        // them in English whatever the system language is.
-        .env("LC_MESSAGES", "C")
-        .env_remove("LANGUAGE");
-    // An inherited LC_ALL would override LC_MESSAGES. Drop it, keeping its value as the
-    // character-type locale so hooks still see the encoding they had.
-    if let Some(all) = std::env::var_os("LC_ALL") {
-        command.env_remove("LC_ALL");
-        if std::env::var_os("LC_CTYPE").is_none() {
-            command.env("LC_CTYPE", all);
-        }
-    }
-    command
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -126,6 +112,26 @@ fn execute_raw(
         stdout: String::from_utf8_lossy(&captured.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&captured.stderr).into_owned(),
     })
+}
+
+/// A command that runs `git` with `path_env` as its `PATH` and its messages in English.
+fn git_command(git: PathBuf, path_env: &OsStr) -> Command {
+    let mut command = Command::new(git);
+    command
+        .env("PATH", path_env)
+        // The app matches some of git's messages (for example "divergent branches" or
+        // "xcode-select"), so keep them in English whatever the system language is.
+        .env("LC_MESSAGES", "C")
+        .env_remove("LANGUAGE");
+    // An inherited LC_ALL would override LC_MESSAGES. Drop it, keeping its value as the
+    // character-type locale so hooks still see the encoding they had.
+    if let Some(all) = std::env::var_os("LC_ALL") {
+        command.env_remove("LC_ALL");
+        if std::env::var_os("LC_CTYPE").is_none() {
+            command.env("LC_CTYPE", all);
+        }
+    }
+    command
 }
 
 fn execute(
@@ -270,11 +276,8 @@ fn check_availability_in_path(path_env: &OsStr, timeout: Duration) -> crate::Git
     let Some(git) = resolve_git(path_env) else {
         return crate::GitAvailability::Missing;
     };
-    let child = match Command::new(git)
+    let child = match git_command(git, path_env)
         .arg("--version")
-        .env("PATH", path_env)
-        .env("LC_MESSAGES", "C")
-        .env_remove("LANGUAGE")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -450,12 +453,25 @@ mod tests {
         assert_eq!(FORKS.with(Cell::get), 0);
     }
 
-    fn fake_git(dir: &Path, mode: u32) {
+    /// Writes a `git` shell script with `body` to `dir`, with permission bits `mode`.
+    fn fake_git_script(dir: &Path, body: &str, mode: u32) {
         use std::os::unix::fs::PermissionsExt;
 
         let path = dir.join("git");
-        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A `git` that does nothing and succeeds.
+    fn fake_git(dir: &Path, mode: u32) {
+        fake_git_script(dir, "exit 0", mode);
+    }
+
+    /// A temporary folder holding an executable `git` script with `body`.
+    fn folder_with_git(body: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fake_git_script(dir.path(), body, 0o755);
+        dir
     }
 
     #[test]
@@ -499,12 +515,7 @@ mod tests {
 
     /// How a `git` that prints `output` for `--version` is judged.
     fn availability_of(output: &str) -> crate::GitAvailability {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        let git = dir.path().join("git");
-        std::fs::write(&git, format!("#!/bin/sh\necho '{output}'\n")).unwrap();
-        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let dir = folder_with_git(&format!("echo '{output}'"));
         check_availability_in_path(dir.path().as_os_str(), PROBE_TIMEOUT)
     }
 
@@ -533,8 +544,6 @@ mod tests {
 
     #[test]
     fn availability_detects_present_missing_and_clt_stub() {
-        use std::os::unix::fs::PermissionsExt;
-
         assert_eq!(check_availability(), crate::GitAvailability::Available);
 
         let empty_dir = tempfile::tempdir().unwrap();
@@ -543,33 +552,20 @@ mod tests {
             crate::GitAvailability::Missing
         );
 
-        let stub_dir = tempfile::tempdir().unwrap();
-        let fake_git = stub_dir.path().join("git");
-        std::fs::write(
-            &fake_git,
-            "#!/bin/sh\necho 'xcode-select: note: No developer tools were found' >&2\nexit 1\n",
-        )
-        .unwrap();
-        let mut perms = std::fs::metadata(&fake_git).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&fake_git, perms).unwrap();
+        let stub_dir =
+            folder_with_git("echo 'xcode-select: note: No developer tools were found' >&2\nexit 1");
 
         assert_eq!(
             check_availability_in_path(stub_dir.path().as_os_str(), PROBE_TIMEOUT),
             crate::GitAvailability::NeedsCommandLineTools
         );
 
-        let slow_dir = tempfile::tempdir().unwrap();
-        let slow_git = slow_dir.path().join("git");
         let sleep_bin = if Path::new("/bin/sleep").exists() {
             "/bin/sleep"
         } else {
             "/usr/bin/sleep"
         };
-        std::fs::write(&slow_git, format!("#!/bin/sh\nexec {sleep_bin} 30\n")).unwrap();
-        let mut slow_perms = std::fs::metadata(&slow_git).unwrap().permissions();
-        slow_perms.set_mode(0o755);
-        std::fs::set_permissions(&slow_git, slow_perms).unwrap();
+        let slow_dir = folder_with_git(&format!("exec {sleep_bin} 30"));
 
         let started = Instant::now();
         assert_eq!(

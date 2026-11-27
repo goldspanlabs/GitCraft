@@ -451,7 +451,7 @@ final class DiffRowCellView: NSTableCellView {
 
 private extension NSColor {
     convenience init?(hex: String, isDark: Bool) {
-        var cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        var cleaned = hex.trimmed
         if cleaned.hasPrefix("#") {
             cleaned.removeFirst()
         }
