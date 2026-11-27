@@ -406,6 +406,7 @@ private struct WorkingFileRow: View {
             .toggleStyle(.checkbox)
             .labelsHidden()
             .help(isStaged ? "Unstage file" : "Stage file")
+            .accessibilityLabel(isStaged ? "Unstage \(file.path)" : "Stage \(file.path)")
 
             StatusBadge(status: file.status)
             Text(file.path)
@@ -441,6 +442,21 @@ struct StatusBadge: View {
         }
     }
 
+    /// What the letter stands for, for VoiceOver and the tooltip.
+    var statusName: String {
+        switch status {
+        case "A": return "Added"
+        case "?": return "Untracked"
+        case "D": return "Deleted"
+        case "R": return "Renamed"
+        case "C": return "Copied"
+        case "M": return "Modified"
+        case "U": return "Conflicted"
+        case "T": return "Type changed"
+        default: return "Changed"
+        }
+    }
+
     var body: some View {
         Text(status)
             .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -448,6 +464,8 @@ struct StatusBadge: View {
             .frame(width: 14, height: 14)
             .background(color.opacity(0.15))
             .cornerRadius(3)
+            .help(statusName)
+            .accessibilityLabel(statusName)
     }
 }
 

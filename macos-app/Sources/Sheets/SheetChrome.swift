@@ -101,7 +101,7 @@ extension View {
             Button(actionLabel, role: .destructive, action: onConfirm)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently reverts \(changedCount) changed file(s) and deletes untracked files. It can't be undone.")
+            Text("This permanently reverts \(changedCount == 1 ? "1 changed file" : "\(changedCount) changed files") and deletes untracked files. It can't be undone.")
         }
     }
 }

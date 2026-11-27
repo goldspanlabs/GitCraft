@@ -129,7 +129,7 @@ extension RepoTab {
             case .abortMerge:
                 return "This will abort the current merge and restore the repository to its pre-merge state."
             case .abortRebase:
-                return "This will stop the rebase and put your branch back as it was before the pull."
+                return "This will stop the rebase and put your branch and files back as they were before the rebase started."
             case .abortCherryPick:
                 return "This will stop the cherry-pick and put your branch and files back as they were before it started."
             case .abortRevert:

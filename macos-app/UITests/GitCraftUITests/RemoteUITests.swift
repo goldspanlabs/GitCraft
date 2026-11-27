@@ -192,7 +192,7 @@ final class RemoteUITests: XCTestCase {
         XCTAssertTrue(remotesHeader.waitForExistence(timeout: 10))
         rightClick(remotesHeader)
 
-        let addItem = app.menuItems["Add Remote"]
+        let addItem = app.menuItems["Add Remote…"]
         XCTAssertTrue(addItem.waitForExistence(timeout: 10))
         XCTAssertFalse(app.menuItems["Manage Remotes…"].exists)
         addItem.click()
@@ -223,9 +223,9 @@ final class RemoteUITests: XCTestCase {
 
         XCTAssertTrue(app.menuItems["Fetch origin"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.menuItems["Edit origin"].exists)
-        XCTAssertTrue(app.menuItems["Delete origin"].exists)
+        XCTAssertTrue(app.menuItems["Remove origin…"].exists)
         XCTAssertTrue(app.menuItems["Fetch Origin Automatically"].exists)
-        XCTAssertTrue(app.menuItems["Add New Remote"].exists)
+        XCTAssertTrue(app.menuItems["Add New Remote…"].exists)
 
         app.menuItems["Edit origin"].click()
         XCTAssertTrue(app.staticTexts["Edit URL of the remote repository"].waitForExistence(timeout: 10))
@@ -235,14 +235,14 @@ final class RemoteUITests: XCTestCase {
         app.buttons["Cancel"].click()
 
         rightClick(originFolder)
-        app.menuItems["Delete origin"].click()
+        app.menuItems["Remove origin…"].click()
         let confirmRemove = app.sheets.buttons["Remove"]
         XCTAssertTrue(confirmRemove.waitForExistence(timeout: 10))
         confirmRemove.click()
 
         XCTAssertTrue(
             waitUntil(timeout: 20) { (try? fixture.git(["remote"])) == "" },
-            "confirming Delete origin removes the remote"
+            "confirming Remove origin removes the remote"
         )
     }
 

@@ -8,6 +8,8 @@ struct OperationBanner: View {
     let onAbort: () -> Void
     var continueLabel: String?
     var onContinue: (() -> Void)?
+    /// Why Continue is disabled, shown as its tooltip; nil when there's nothing to explain.
+    var continueBlockedReason: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -22,6 +24,8 @@ struct OperationBanner: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(onContinue == nil)
+                    .help(onContinue == nil ? continueBlockedReason ?? "" : "")
+                    .accessibilityHint(onContinue == nil ? continueBlockedReason ?? "" : "")
             }
             Button(abortLabel, action: onAbort)
                 .buttonStyle(.bordered)

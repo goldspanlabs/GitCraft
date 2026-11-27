@@ -278,7 +278,7 @@ struct CommitTableView: NSViewRepresentable {
 
             // Acting on the checked-out branch.
             if !isDetached {
-                entries.append(.item("Merge into '\(branch)'") { [weak self] in self?.onCommitAction(.merge, oid) })
+                entries.append(.item("Merge into '\(branch)'…") { [weak self] in self?.onCommitAction(.merge, oid) })
                 entries.append(.item("Rebase '\(branch)' to Here…") { [weak self] in self?.onCommitAction(.rebase, oid) })
                 entries.append(.submenu("Reset '\(branch)' to Here…", [
                     .item("Soft — keep changes staged") { [weak self] in self?.onCommitAction(.reset(.soft), oid) },
