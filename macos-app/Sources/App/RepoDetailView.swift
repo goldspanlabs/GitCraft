@@ -83,8 +83,11 @@ struct RepoDetailView: View {
                         isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
-                        onSelectCommit: { tab.selectCommitFromTable($0) },
+                        onSelectCommits: { tab.selectCommitsFromTable($0) },
                         onCopyOid: { tab.copyOid($0) },
+                        onCopyOids: { tab.copyOids($0) },
+                        squashCheck: tab.squashCheck,
+                        onSquash: { tab.activeSheet = .squash($0) },
                         onCreateBranchAtCommit: { oid in
                             tab.presentNewBranch(startPoint: oid)
                         },
@@ -190,6 +193,10 @@ private struct RepoSheets: ViewModifier {
                     MergeCommitSheet(tab: tab, oid: oid)
                 case let .newTag(target):
                     NewTagSheet(tab: tab, target: target)
+                case let .squash(preview):
+                    SquashSheet(tab: tab, preview: preview)
+                case let .forcePush(plan):
+                    ForcePushSheet(tab: tab, plan: plan)
                 case .newStash:
                     NewStashSheet(tab: tab)
                 case .addRemote:

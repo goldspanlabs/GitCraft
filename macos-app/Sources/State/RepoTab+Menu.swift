@@ -18,10 +18,10 @@ extension RepoTab {
 
     /// A selected commit hides the commit fields, so amending or committing would act on text
     /// nobody can see.
-    var canAmend: Bool { selectedCommit == nil }
+    var canAmend: Bool { selectedCommit == nil && selectedCommits.isEmpty }
 
     func canCommit(autoStage: Bool) -> Bool {
-        selectedCommit == nil && GitPreferences.canCommit(
+        canAmend && GitPreferences.canCommit(
             summary: commitSummary,
             stagedCount: stagedFiles.count,
             changedCount: totalChangesCount,

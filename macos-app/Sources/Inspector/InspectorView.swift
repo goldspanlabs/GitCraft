@@ -31,7 +31,9 @@ struct InspectorView: View {
     @ObservedObject var tab: RepoTab
 
     var body: some View {
-        if let commit = tab.selectedCommit {
+        if !tab.selectedCommits.isEmpty {
+            MultiCommitInspectorView(tab: tab)
+        } else if let commit = tab.selectedCommit {
             CommitInspectorView(tab: tab, commit: commit)
         } else {
             WorkingChangesInspectorView(tab: tab)

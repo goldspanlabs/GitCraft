@@ -162,6 +162,24 @@ dictionary HeadPosition {
   string? branch;
 };
 
+dictionary PushCommit {
+  string oid_hex;
+  string short_oid;
+  string summary;
+};
+
+dictionary ForcePushPlan {
+  string branch;
+  string remote;
+  string destination;
+  string destination_ref;
+  string expected_remote_oid;
+  HeadPosition head;
+  sequence<PushCommit> removed;
+  sequence<PushCommit> added;
+  boolean is_default_branch;
+};
+
 dictionary PushResult {
   string branch;
   string destination;
@@ -175,6 +193,26 @@ dictionary PushResult {
 dictionary HeadMove {
   HeadPosition before;
   HeadPosition after;
+};
+
+dictionary SquashCommit {
+  string oid_hex;
+  string short_oid;
+  string summary;
+  string body;
+  string author_name;
+  string author_email;
+};
+
+dictionary SquashPreview {
+  sequence<SquashCommit> commits;
+  HeadPosition head;
+  boolean is_pushed;
+};
+
+dictionary SquashResult {
+  HeadMove head_move;
+  string squashed_oid;
 };
 
 dictionary StashInfo {
@@ -341,6 +379,12 @@ interface RepoSession {
   HeadMove? revert_commit(string commit);
 
   [Throws=GitCraftError]
+  SquashPreview squash_preview(sequence<string> oids);
+
+  [Throws=GitCraftError]
+  SquashResult squash_commits(sequence<string> oids, string message, HeadPosition expected);
+
+  [Throws=GitCraftError]
   sequence<DiffRow> diff();
 
   [Throws=GitCraftError]
@@ -416,6 +460,12 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   PushResult push();
+
+  [Throws=GitCraftError]
+  ForcePushPlan? force_push_plan();
+
+  [Throws=GitCraftError]
+  PushResult force_push(ForcePushPlan plan);
 
   boolean take_dirty();
   boolean take_graph_dirty();

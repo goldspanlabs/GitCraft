@@ -78,6 +78,15 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var stashes: [StashInfo] = []
     @Published var remotes: [RemoteInfo] = []
     @Published var selectedCommit: CommitRow?
+    /// The commits of a multi-selection, in list order; empty unless two or more are selected,
+    /// and then `selectedCommit` is nil. Change it through `selectCommitsFromTable`.
+    @Published var selectedCommits: [CommitRow] = []
+    /// Whether `selectedCommits` can be squashed.
+    @Published var squashCheck = SquashCheck.checking
+    /// A commit to select once the history lists it, such as one a squash just made.
+    var pendingSelectionOid: String?
+    /// Counts squash checks, so an older answer can't replace a newer one.
+    var squashCheckGeneration = 0
     @Published var commitDetail: CommitDetail?
     @Published var diffRows: [DiffRow] = []
     @Published var selectedFilePath: String?
@@ -616,6 +625,8 @@ final class RepoTab: ObservableObject, Identifiable {
         stagedFiles = []
         unstagedFiles = []
         selectedCommit = nil
+        selectedCommits = []
+        pendingSelectionOid = nil
         commitDetail = nil
         loadedDetailOid = nil
         diffRows = []
@@ -643,6 +654,12 @@ final class RepoTab: ObservableObject, Identifiable {
     }
 
     func applyStatus(_ status: RepoStatus) {
+        // What a squash depends on, besides the history.
+        let operationState = { [self] in [isMerging, isRebasing, isCherryPicking, isReverting, hasConflicts] }
+        let stateBefore = operationState()
+        defer {
+            if operationState() != stateBefore { recheckSquash() }
+        }
         publish(status.branch.components(separatedBy: "...").first ?? status.branch, to: \.currentBranch)
         publish(status.isMerging, to: \.isMerging)
         publish(status.isRebasing, to: \.isRebasing)

@@ -10,7 +10,7 @@ use crate::{CommitRow, CommitSort, GitCraftError, RefBadge, RefKind};
 pub use detail::get_commit_detail;
 pub use refs::{list_branches, list_tags};
 
-use detail::extract_commit_metadata;
+pub(crate) use detail::extract_commit_metadata;
 use lanes::{LaneState, RawCommit};
 use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
 

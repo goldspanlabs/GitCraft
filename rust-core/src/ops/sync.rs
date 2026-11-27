@@ -163,7 +163,7 @@ impl RepoSession {
 
     /// Commits in a push summary's `old..new` (or forced `old...new`) range, or 0 when git
     /// can't count them here.
-    fn count_range(&self, summary: &str) -> u32 {
+    pub(super) fn count_range(&self, summary: &str) -> u32 {
         let range = summary.split_whitespace().next().unwrap_or("");
         let Some((old, new)) = range.split_once("...").or_else(|| range.split_once("..")) else {
             return 0;
@@ -179,7 +179,7 @@ impl RepoSession {
 
     /// The remote `branch` pushes to, as git chooses it: the branch's `pushRemote`, then
     /// `remote.pushDefault`, then the remote it pulls from, then the default remote.
-    fn push_remote(&self, branch: &str) -> String {
+    pub(super) fn push_remote(&self, branch: &str) -> String {
         let config = |key: String| {
             git_cli::run(&self.path, &["config", "--get", &key])
                 .ok()
@@ -194,23 +194,31 @@ impl RepoSession {
 }
 
 /// One ref's line from `git push --porcelain`: `<flag>\t<from>:<to>\t<summary>`.
-struct PorcelainRef {
+pub(super) struct PorcelainRef {
     /// `*` created, `=` already up to date, ` ` fast-forward, `+` forced, `!` rejected.
-    flag: char,
-    from: String,
-    to: String,
-    summary: String,
+    pub(super) flag: char,
+    pub(super) from: String,
+    pub(super) to: String,
+    pub(super) summary: String,
 }
 
 impl PorcelainRef {
     /// The line pushing `branch`, matched on its source: with remapped refspecs (say
     /// `main:deploy`) the destination can be any name. None when no line pushes it.
-    fn find(output: &str, branch: &str) -> Option<Self> {
+    pub(super) fn find(output: &str, branch: &str) -> Option<Self> {
         let wanted = format!("refs/heads/{branch}");
         output
             .lines()
             .filter_map(Self::parse)
             .find(|r| r.from == wanted)
+    }
+
+    /// The line updating the remote ref `destination`, for a push whose source isn't a branch.
+    pub(super) fn find_destination(output: &str, destination: &str) -> Option<Self> {
+        output
+            .lines()
+            .filter_map(Self::parse)
+            .find(|r| r.to == destination)
     }
 
     fn parse(line: &str) -> Option<Self> {

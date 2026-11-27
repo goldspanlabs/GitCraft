@@ -44,6 +44,7 @@ extension RepoTab {
         graphRevision = UUID()
         hasMoreCommits = rows.count >= Int(requested)
         historyState = .loaded
+        reconcileSelection()
     }
 
     /// Adds the next page to the commit list. Fewer rows than `requested` means the history ended.
@@ -209,10 +210,13 @@ extension RepoTab {
     func selectCommitFromTable(_ commit: CommitRow?) {
         revealTask?.cancel()
         revealTask = nil
+        pendingSelectionOid = nil
         selectCommit(commit)
     }
 
     func selectCommit(_ commit: CommitRow?) {
+        let hadMultiSelection = !selectedCommits.isEmpty
+        if hadMultiSelection { selectedCommits = [] }
         if let commit {
             // Always keep the freshest row (refs/lanes may have changed), but only
             // reload when this oid's detail is already loaded or in flight; a failed
@@ -226,7 +230,7 @@ extension RepoTab {
             loadedDetailOid = commit.oidHex
             loadCommitDetails(commit)
         } else {
-            guard selectedCommit != nil else { return }
+            guard selectedCommit != nil || hadMultiSelection else { return }
             isMarkdownPreview = false
             markdownPreviewGeneration &+= 1
             loadedMarkdownPreviewKey = nil
@@ -323,7 +327,7 @@ extension RepoTab {
         }
     }
 
-    private func resetMarkdownPreviewState() {
+    func resetMarkdownPreviewState() {
         markdownPreviewGeneration &+= 1
         loadedMarkdownPreviewKey = nil
         publish(.idle, to: \.markdownPreviewState)

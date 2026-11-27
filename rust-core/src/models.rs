@@ -239,6 +239,63 @@ pub struct HeadPosition {
     pub branch: Option<String>,
 }
 
+/// One commit of a squash, as the confirmation lists it.
+#[derive(Clone, Debug)]
+pub struct SquashCommit {
+    pub oid_hex: String,
+    pub short_oid: String,
+    pub summary: String,
+    pub body: String,
+    pub author_name: String,
+    pub author_email: String,
+}
+
+/// A squash that is allowed, as it stood when it was checked.
+#[derive(Clone, Debug)]
+pub struct SquashPreview {
+    /// Oldest first.
+    pub commits: Vec<SquashCommit>,
+    /// Where HEAD was; the squash refuses if it has moved.
+    pub head: HeadPosition,
+    /// Some of the commits are on a remote-tracking branch.
+    pub is_pushed: bool,
+}
+
+/// What a squash did.
+#[derive(Clone, Debug)]
+pub struct SquashResult {
+    pub head_move: HeadMove,
+    /// The commit that combines the selected ones.
+    pub squashed_oid: String,
+}
+
+/// A commit a force push removes or adds.
+#[derive(Clone, Debug)]
+pub struct PushCommit {
+    pub oid_hex: String,
+    pub short_oid: String,
+    pub summary: String,
+}
+
+/// A force push of the checked-out branch, as it stood when it was planned.
+#[derive(Clone, Debug)]
+pub struct ForcePushPlan {
+    pub branch: String,
+    pub remote: String,
+    /// The remote branch as shown, such as `origin/feature/x`.
+    pub destination: String,
+    /// The branch's full ref on the remote, such as `refs/heads/feature/x`.
+    pub destination_ref: String,
+    /// The remote tip being replaced; the push only overwrites this commit.
+    pub expected_remote_oid: String,
+    pub head: HeadPosition,
+    /// Commits on the remote that the push drops, newest first.
+    pub removed: Vec<PushCommit>,
+    /// Commits the push brings, newest first.
+    pub added: Vec<PushCommit>,
+    pub is_default_branch: bool,
+}
+
 /// What a push did, measured against where it actually went.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PushResult {

@@ -1,5 +1,7 @@
 mod branches;
+mod force_push;
 mod repo;
+mod squash;
 mod sync;
 mod tags_stash;
 mod working;

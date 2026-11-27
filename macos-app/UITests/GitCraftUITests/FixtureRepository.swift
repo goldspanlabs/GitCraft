@@ -53,7 +53,8 @@ struct FixtureRepository {
         stashes: Bool = false,
         conflict: Conflict? = nil,
         noCommits: Bool = false,
-        detachedHead: Bool = false
+        detachedHead: Bool = false,
+        extraCommits: [String] = []
     ) throws -> FixtureRepository {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitcraft-ui-\(UUID().uuidString)", isDirectory: true)
@@ -92,6 +93,13 @@ struct FixtureRepository {
             try git(["add", "feature.txt"], in: main)
             try git(["commit", "-m", "feature work"], in: main)
             try git(["switch", "main"], in: main)
+        }
+
+        for name in extraCommits {
+            // One commit per name on main, each adding its own file.
+            try "\(name)\n".write(to: main.appendingPathComponent("\(name).txt"), atomically: true, encoding: .utf8)
+            try git(["add", "\(name).txt"], in: main)
+            try git(["commit", "-m", name], in: main)
         }
 
         for branch in extraBranches {

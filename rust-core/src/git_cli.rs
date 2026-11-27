@@ -25,7 +25,7 @@ pub struct CommandOutput {
 
 /// Runs a read-only git command and returns its exit status, stdout, and stderr.
 pub fn run_status(repo: &Path, args: &[&str]) -> Result<CommandOutput, crate::GitCraftError> {
-    execute_raw(repo, args, READ_TIMEOUT, false, None)
+    execute_raw(repo, args, READ_TIMEOUT, false, None, &[])
 }
 
 /// Like [`run_status`], with `input` written to the command's standard input.
@@ -34,7 +34,7 @@ pub fn run_status_with_input(
     args: &[&str],
     input: Vec<u8>,
 ) -> Result<CommandOutput, crate::GitCraftError> {
-    execute_raw(repo, args, READ_TIMEOUT, false, Some(input))
+    execute_raw(repo, args, READ_TIMEOUT, false, Some(input), &[])
 }
 
 /// Runs a read-only git command and returns its stdout.
@@ -56,12 +56,31 @@ pub fn mutate_output(repo: &Path, args: &[&str]) -> Result<String, crate::GitCra
     execute(repo, args, MUTATE_TIMEOUT, true)
 }
 
+/// Like [`mutate_output`], keeping the exit status and both outputs for a caller that reads
+/// why a command failed (such as a rejected `push --porcelain`).
+pub fn mutate_status(repo: &Path, args: &[&str]) -> Result<CommandOutput, crate::GitCraftError> {
+    execute_raw(repo, args, MUTATE_TIMEOUT, true, None, &[])
+}
+
+/// Like [`mutate_output`], with `env` added to the command's environment and `input` written
+/// to its standard input.
+pub fn mutate_with(
+    repo: &Path,
+    args: &[&str],
+    env: &[(&str, OsString)],
+    input: Vec<u8>,
+) -> Result<String, crate::GitCraftError> {
+    let output = execute_raw(repo, args, MUTATE_TIMEOUT, true, Some(input), env)?;
+    successful_stdout(args, output)
+}
+
 fn execute_raw(
     repo: &Path,
     args: &[&str],
     timeout: Duration,
     mutating: bool,
     input: Option<Vec<u8>>,
+    env: &[(&str, OsString)],
 ) -> Result<CommandOutput, crate::GitCraftError> {
     let path_env = augmented_path();
     let Some(git) = resolve_git(&path_env) else {
@@ -91,6 +110,7 @@ fn execute_raw(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.envs(env.iter().map(|(key, value)| (key, value)));
     if !mutating {
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }
@@ -146,7 +166,12 @@ fn execute(
     timeout: Duration,
     mutating: bool,
 ) -> Result<String, crate::GitCraftError> {
-    let output = execute_raw(repo, args, timeout, mutating, None)?;
+    let output = execute_raw(repo, args, timeout, mutating, None, &[])?;
+    successful_stdout(args, output)
+}
+
+/// What a command printed, or an error carrying what it said if it failed.
+fn successful_stdout(args: &[&str], output: CommandOutput) -> Result<String, crate::GitCraftError> {
     if output.status.success() {
         Ok(output.stdout)
     } else {
