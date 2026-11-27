@@ -54,14 +54,6 @@ click **Open Anyway**. You only need to do this once per install.
 3. The first time you open it, macOS may say the app can't be verified. Open
    **System Settings → Privacy & Security** and click **Open Anyway**.
 
-### Updates
-
-GitCraft checks GitHub for a new release when it opens, at most once a day, and shows a banner
-when there is one. You can also choose **GitCraft → Check for Updates…**, skip a version, or turn
-automatic checks off in **Settings**. It never installs anything itself: for a Homebrew install the
-banner copies `brew upgrade --cask gitcraft` for you to run, and otherwise it downloads the new DMG
-in your browser.
-
 GitCraft needs macOS 15 Sequoia or later on an Apple Silicon Mac, and `git` 2.39 or later (installed
 with the Xcode Command Line Tools: `xcode-select --install`).
 
