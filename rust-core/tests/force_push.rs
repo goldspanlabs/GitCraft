@@ -486,3 +486,36 @@ fn without_an_upstream_follows_a_configured_push_refspec() {
         assert_eq!(fixture.remote_tip("main"), kept, "{spec}");
     }
 }
+
+#[test]
+fn without_an_upstream_ordinary_push_and_force_push_share_a_destination() {
+    let fixture = pushed();
+    run_git(
+        fixture.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/main:refs/heads/deploy",
+        ],
+    );
+    run_git(fixture.path(), &["branch", "--unset-upstream"]);
+    let kept = fixture.remote_tip("main");
+    commit_file(fixture.path(), "D.txt", "D", "D");
+
+    let ordinary = open(fixture.path()).push().unwrap();
+
+    // Naming the branch doesn't bypass the remote's push refspec.
+    assert_eq!(ordinary.destination, "origin/deploy");
+    assert_eq!(fixture.remote_tip("deploy"), head(fixture.path()));
+    assert_eq!(fixture.remote_tip("main"), kept);
+
+    // The first push set an upstream; the force push must agree without it too.
+    run_git(fixture.path(), &["fetch", "-q"]);
+    run_git(fixture.path(), &["branch", "--unset-upstream"]);
+    fixture.amend("D amended");
+
+    let plan = fixture.plan();
+
+    assert_eq!(plan.destination, ordinary.destination);
+    assert_eq!(plan.destination_ref, "refs/heads/deploy");
+}
