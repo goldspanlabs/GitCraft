@@ -7,6 +7,8 @@ namespace gitcraft_core {
 
   [Throws=GitCraftError]
   void clone_repository(string url, string destination);
+
+  string render_markdown_html(string markdown);
 };
 
 [Error]
@@ -218,6 +220,12 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   sequence<DiffRow> get_working_diff(string? path, boolean staged);
+
+  [Throws=GitCraftError]
+  string? get_commit_file_content(string oid_hex, string path);
+
+  [Throws=GitCraftError]
+  string? get_working_file_content(string path, boolean staged);
 
   [Throws=GitCraftError]
   sequence<BranchInfo> list_branches();

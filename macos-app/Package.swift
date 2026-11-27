@@ -12,6 +12,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
+                .linkedFramework("WebKit"),
                 .linkedLibrary("gitcraft_core", .when(platforms: [.macOS])),
             ]
         ),

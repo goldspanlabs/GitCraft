@@ -1818,3 +1818,68 @@ fn merging_a_branch_that_is_already_merged_warns_and_makes_no_commit() {
     assert!(err.to_string().contains("nothing to merge"));
     assert_eq!(rev(dir.path(), "main"), main, "no empty merge commit");
 }
+
+// ------------------------------------------------------------ file content ---
+
+#[test]
+fn working_file_content_distinguishes_staged_unstaged_and_deleted() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "notes.md", "# Staged\n");
+    session.stage("notes.md".into()).unwrap();
+    write(dir.path(), "notes.md", "# Unstaged\n");
+
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), true)
+            .unwrap()
+            .as_deref(),
+        Some("# Staged\n")
+    );
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), false)
+            .unwrap()
+            .as_deref(),
+        Some("# Unstaged\n")
+    );
+
+    fs::remove_file(dir.path().join("notes.md")).unwrap();
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), false)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn commit_file_content_reads_historical_blob_and_handles_deleted_files() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "readme.md", "# v1\n");
+    run_git(dir.path(), &["add", "readme.md"]);
+    run_git(dir.path(), &["commit", "-m", "add readme"]);
+    let add_oid = rev(dir.path(), "HEAD");
+
+    fs::remove_file(dir.path().join("readme.md")).unwrap();
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "delete readme"]);
+    let del_oid = rev(dir.path(), "HEAD");
+
+    assert_eq!(
+        session
+            .get_commit_file_content(add_oid, "readme.md".into())
+            .unwrap()
+            .as_deref(),
+        Some("# v1\n")
+    );
+    assert_eq!(
+        session
+            .get_commit_file_content(del_oid, "readme.md".into())
+            .unwrap(),
+        None
+    );
+}

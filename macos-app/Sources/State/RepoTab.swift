@@ -39,6 +39,14 @@ final class RepoTab: ObservableObject, Identifiable {
         case loading, loaded, failed
     }
 
+    enum MarkdownPreviewState: Equatable {
+        case idle
+        case loading
+        case loaded(String)
+        case deleted
+        case unavailable(String)
+    }
+
     let id = UUID()
     let url: URL
     /// The repository's primary checkout, the folder that owns `.git`. It names the tab.
@@ -74,6 +82,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var diffRows: [DiffRow] = []
     @Published var selectedFilePath: String?
     @Published var selectedFileStaged = false
+    @Published var isMarkdownPreview = false
+    @Published var markdownPreviewState: MarkdownPreviewState = .idle
     @Published var scrollRequest: ScrollRequest?
     @Published var isBusy = false {
         didSet { if !isBusy { busyLabel = nil } }

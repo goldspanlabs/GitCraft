@@ -4,6 +4,7 @@ mod diff;
 mod git_cli;
 mod graph;
 mod highlight;
+mod markdown;
 mod models;
 mod ops;
 mod status;
@@ -23,6 +24,11 @@ pub fn check_git_availability() -> GitAvailability {
 /// The oldest supported git version, such as `2.39`.
 pub fn minimum_git_version() -> String {
     git_cli::minimum_version()
+}
+
+/// Renders Markdown into an HTML fragment for previewing.
+pub fn render_markdown_html(markdown: String) -> String {
+    markdown::render_html(&markdown)
 }
 
 use std::{
@@ -226,6 +232,22 @@ impl RepoSession {
         staged: bool,
     ) -> Result<Vec<DiffRow>, GitCraftError> {
         diff::working_tree_file(&self.path, path.as_deref(), staged)
+    }
+
+    pub fn get_commit_file_content(
+        &self,
+        oid_hex: String,
+        path: String,
+    ) -> Result<Option<String>, GitCraftError> {
+        diff::commit_file_content(&self.path, &oid_hex, &path)
+    }
+
+    pub fn get_working_file_content(
+        &self,
+        path: String,
+        staged: bool,
+    ) -> Result<Option<String>, GitCraftError> {
+        diff::working_file_content(&self.path, &path, staged)
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {

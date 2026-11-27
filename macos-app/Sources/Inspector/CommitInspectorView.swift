@@ -242,7 +242,11 @@ struct CommitInspectorView: View {
                 badgeText: commit.shortOid,
                 badgeColor: .blue,
                 diffRows: tab.diffRows,
-                emptyMessage: "No diff content for selection"
+                emptyMessage: "No diff content for selection",
+                canPreviewMarkdown: RepoTab.isMarkdownPath(tab.selectedFilePath),
+                isMarkdownPreview: tab.isMarkdownPreview,
+                markdownPreviewState: tab.markdownPreviewState,
+                onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
         }
     }

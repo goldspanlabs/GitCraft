@@ -283,6 +283,32 @@ extension RepoTab {
         } else {
             publish(nil, to: \.selectedFilePath)
             publish([], to: \.diffRows)
+            publish(.idle, to: \.markdownPreviewState)
+        }
+    }
+
+    nonisolated static func isMarkdownPath(_ path: String?) -> Bool {
+        guard let path else { return false }
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        return ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd"
+    }
+
+    func toggleMarkdownPreview() {
+        isMarkdownPreview.toggle()
+        if isMarkdownPreview {
+            loadMarkdownPreviewForSelection()
+        }
+    }
+
+    func loadMarkdownPreviewForSelection() {
+        guard let path = selectedFilePath, Self.isMarkdownPath(path) else {
+            publish(.idle, to: \.markdownPreviewState)
+            return
+        }
+        if let oid = selectedCommit?.oidHex {
+            loadCommitMarkdownPreview(oidHex: oid, path: path)
+        } else {
+            loadWorkingMarkdownPreview(path: path, staged: selectedFileStaged)
         }
     }
 
@@ -290,6 +316,29 @@ extension RepoTab {
         loadInBackground({ try $0.getWorkingDiff(path: path, staged: staged) }, apply: { [self] rows in
             if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
                 publish(Self.displayRows(rows), to: \.diffRows)
+            }
+        })
+        if isMarkdownPreview && Self.isMarkdownPath(path) {
+            loadWorkingMarkdownPreview(path: path, staged: staged)
+        } else {
+            publish(.idle, to: \.markdownPreviewState)
+        }
+    }
+
+    private func loadWorkingMarkdownPreview(path: String, staged: Bool) {
+        publish(.loading, to: \.markdownPreviewState)
+        loadInBackground({ session -> MarkdownPreviewState in
+            guard let content = try session.getWorkingFileContent(path: path, staged: staged) else {
+                return .deleted
+            }
+            return .loaded(renderMarkdownHtml(markdown: content))
+        }, apply: { [self] state in
+            if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
+                publish(state, to: \.markdownPreviewState)
+            }
+        }, onFailure: { [self] error in
+            if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
+                publish(.unavailable(error.localizedDescription), to: \.markdownPreviewState)
             }
         })
     }
@@ -321,6 +370,29 @@ extension RepoTab {
                 // this commit retry the load.
                 diffRows = []
                 loadedDetailOid = nil
+            }
+        })
+        if isMarkdownPreview, let path, Self.isMarkdownPath(path) {
+            loadCommitMarkdownPreview(oidHex: oidHex, path: path)
+        } else {
+            markdownPreviewState = .idle
+        }
+    }
+
+    private func loadCommitMarkdownPreview(oidHex: String, path: String) {
+        markdownPreviewState = .loading
+        loadInBackground({ session -> MarkdownPreviewState in
+            guard let content = try session.getCommitFileContent(oidHex: oidHex, path: path) else {
+                return .deleted
+            }
+            return .loaded(renderMarkdownHtml(markdown: content))
+        }, apply: { [self] state in
+            if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                markdownPreviewState = state
+            }
+        }, onFailure: { [self] error in
+            if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                markdownPreviewState = .unavailable(error.localizedDescription)
             }
         })
     }

@@ -104,6 +104,71 @@ pub fn commit_diff(
     Ok(parse_with_ext(&raw, ext)?)
 }
 
+/// Maximum file size (1 MiB) allowed for full-file preview.
+const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
+
+/// Reads a working-tree or staged file's full UTF-8 text for previewing.
+/// Returns `Ok(None)` if the file does not exist (e.g. deleted).
+pub fn working_file_content(
+    repo: &Path,
+    path: &str,
+    staged: bool,
+) -> Result<Option<String>, crate::GitCraftError> {
+    if staged {
+        return git_object_text(repo, &format!(":{path}"));
+    }
+    let full_path = repo.join(path);
+    let Ok(meta) = std::fs::metadata(&full_path) else {
+        return Ok(None);
+    };
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    if meta.len() as usize > MAX_PREVIEW_BYTES {
+        return Err(crate::GitCraftError::message(format!(
+            "File is too large to preview ({} bytes)",
+            meta.len()
+        )));
+    }
+    let bytes = std::fs::read(&full_path)?;
+    if bytes.contains(&0) {
+        return Err(crate::GitCraftError::message(
+            "Binary file cannot be previewed",
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// Reads a file's full UTF-8 text at a specific commit for previewing.
+/// Returns `Ok(None)` if the file does not exist at that commit (e.g. deleted).
+pub fn commit_file_content(
+    repo: &Path,
+    oid_hex: &str,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    git_object_text(repo, &format!("{oid_hex}:{path}"))
+}
+
+fn git_object_text(repo: &Path, spec: &str) -> Result<Option<String>, crate::GitCraftError> {
+    let output = git_cli::run_status(repo, &["cat-file", "-p", spec])?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let bytes = output.stdout.as_bytes();
+    if bytes.len() > MAX_PREVIEW_BYTES {
+        return Err(crate::GitCraftError::message(format!(
+            "File is too large to preview ({} bytes)",
+            bytes.len()
+        )));
+    }
+    if bytes.contains(&0) {
+        return Err(crate::GitCraftError::message(
+            "Binary file cannot be previewed",
+        ));
+    }
+    Ok(Some(output.stdout))
+}
+
 #[cfg(test)]
 pub fn parse(input: &str) -> io::Result<Vec<DiffRow>> {
     parse_with_ext(input, None)
