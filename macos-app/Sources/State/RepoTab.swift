@@ -11,6 +11,8 @@ final class RepoTab: ObservableObject, Identifiable {
     struct Toast: Identifiable {
         let id = UUID()
         let message: String
+        /// A finished action rather than a no-op or warning: drawn with a checkmark.
+        var isSuccess = false
     }
 
     enum LocalChangesHandling: String, CaseIterable, Identifiable {
@@ -61,10 +63,14 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var selectedFilePath: String?
     @Published var selectedFileStaged = false
     @Published var scrollRequest: ScrollRequest?
-    @Published var isBusy = false
+    @Published var isBusy = false {
+        didSet { if !isBusy { busyLabel = nil } }
+    }
+    /// What the running mutation is doing, for the title-bar spinner. Nil when it isn't named.
+    @Published var busyLabel: String?
     @Published var errorMessage: String?
 
-    /// A brief note over the commit graph for a no-op result, which isn't a failure.
+    /// A brief note over the commit graph: a finished action, or a no-op result, which isn't a failure.
     @Published var toast: Toast?
 
     @Published var pendingConfirmation: DestructiveAction?
@@ -752,13 +758,16 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Runs `work` off the main thread, then refreshes. `onFailure` gets the first chance to
     /// handle an error; returning true means it did, so the error banner is skipped.
+    /// `busyLabel` names the work for the title-bar spinner while it runs.
     func performMutation(
+        busyLabel: String? = nil,
         _ work: @escaping @Sendable (RepoSession) throws -> Void,
         onSuccess: (@MainActor () -> Void)? = nil,
         onFailure: (@MainActor (Error) -> Bool)? = nil
     ) {
         let session = self.session
         isBusy = true
+        self.busyLabel = busyLabel
         errorMessage = nil
         Task {
             defer { isBusy = false }

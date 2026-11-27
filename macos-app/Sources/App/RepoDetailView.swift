@@ -135,7 +135,12 @@ struct RepoDetailView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     if let toast = tab.toast {
-                        ToastView(message: toast.message, autoDismissAfter: 4) {
+                        ToastView(
+                            message: toast.message,
+                            tint: toast.isSuccess ? .green : .yellow,
+                            icon: toast.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                            autoDismissAfter: 4
+                        ) {
                             tab.toast = nil
                         }
                         .id(toast.id)

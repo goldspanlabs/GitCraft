@@ -91,7 +91,9 @@ extension RepoTab {
 
     func fetchRemote(_ name: String) {
         let includeTags = GitPreferences.fetchIncludesTags
-        performMutation { try $0.fetchRemote(name: name, includeTags: includeTags) }
+        performMutation(busyLabel: "Fetching \(name)…") {
+            try $0.fetchRemote(name: name, includeTags: includeTags)
+        }
     }
 
     func testRemoteConnection(url: String) async throws {
@@ -383,13 +385,24 @@ extension RepoTab {
     func runRemote(_ operation: RemoteOperation) {
         let pullStrategy = PullStrategyPreference.current.core
         let includeTags = GitPreferences.fetchIncludesTags
-        performMutation { session in
+        let remote = defaultRemoteName
+        let message = SendableBox<String?>(nil)
+        performMutation(busyLabel: operation.busyLabel, { session in
+            // Read the branches on both sides, so the note says what actually changed.
+            let before = (try? session.listBranches()) ?? []
             switch operation {
             case .fetch: try session.fetch(includeTags: includeTags)
             case .pull: try session.pull(strategy: pullStrategy)
             case .push: try session.push()
             }
-        }
+            let after = (try? session.listBranches()) ?? []
+            message.value = RemoteOperation.successMessage(
+                for: operation, before: before, after: after, remote: remote
+            )
+        }, onSuccess: { [weak self] in
+            guard let text = message.value else { return }
+            self?.toast = Toast(message: text, isSuccess: true)
+        })
     }
 
     func addWorktree(

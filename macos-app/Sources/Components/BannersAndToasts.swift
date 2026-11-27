@@ -81,6 +81,7 @@ struct UpdateBanner: View {
 private struct ErrorSummaryRow: View {
     let message: String
     let tint: Color
+    var icon = "exclamationmark.triangle.fill"
     let lineLimit: Int
     let spacerMinLength: CGFloat
     let closeStyle: HierarchicalShapeStyle
@@ -92,7 +93,7 @@ private struct ErrorSummaryRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: icon)
                 .foregroundStyle(tint)
             Text(parts.summary)
                 .font(.caption)
@@ -114,6 +115,7 @@ private struct ErrorSummaryRow: View {
                     .foregroundStyle(closeStyle)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
         }
         .sheet(isPresented: $showingDetails) {
             ErrorDetailsSheet(text: parts.full)
@@ -121,11 +123,12 @@ private struct ErrorSummaryRow: View {
     }
 }
 
-/// A brief note shown over the commit graph for a no-op result or error. It clears itself
+/// A brief note shown over the commit graph for a finished action, a no-op result or an error. It clears itself
 /// after `autoDismissAfter` seconds when set, or stays until closed.
 struct ToastView: View {
     let message: String
     var tint: Color = .yellow
+    var icon = "exclamationmark.triangle.fill"
     /// Clears the toast by itself after this many seconds; nil keeps it until closed.
     var autoDismissAfter: Double?
     let onDismiss: () -> Void
@@ -134,6 +137,7 @@ struct ToastView: View {
         ErrorSummaryRow(
             message: message,
             tint: tint,
+            icon: icon,
             lineLimit: 2,
             spacerMinLength: 4,
             closeStyle: .secondary,

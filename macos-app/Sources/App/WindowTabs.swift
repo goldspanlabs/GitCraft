@@ -223,8 +223,15 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         subtitleLabel.stringValue = tab.currentBranch
         if tab.isBusy {
             spinner.startAnimation(nil)
+            let label = tab.busyLabel ?? "Working…"
+            spinner.toolTip = label
+            spinner.setAccessibilityLabel(label)
+            spinner.setAccessibilityElement(true)
         } else {
             spinner.stopAnimation(nil)
+            spinner.toolTip = nil
+            spinner.setAccessibilityLabel(nil)
+            spinner.setAccessibilityElement(false)
         }
         dot.isDirty = true
         window?.tab.accessoryView = tab.totalChangesCount > 0 ? dot : nil
