@@ -1,6 +1,7 @@
 import AppKit
 
 final class CommitRowCellView: NSTableCellView {
+    private let leadingContentView = NSView()
     private let graphView = GraphCellView()
     private let badgesStack = NSStackView()
     private let summaryLabel = NSTextField(labelWithString: "")
@@ -72,7 +73,15 @@ final class CommitRowCellView: NSTableCellView {
     }
 
     private func setupViews() {
-        for view in [graphView, badgesStack, summaryLabel, avatarView, authorLabel, hashLabel, timeLabel] {
+        leadingContentView.translatesAutoresizingMaskIntoConstraints = false
+        leadingContentView.clipsToBounds = true
+        addSubview(leadingContentView)
+
+        for view in [graphView, badgesStack, summaryLabel] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            leadingContentView.addSubview(view)
+        }
+        for view in [avatarView, authorLabel, hashLabel, timeLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -103,18 +112,29 @@ final class CommitRowCellView: NSTableCellView {
         graphWidthConstraint = graphView.widthAnchor.constraint(equalToConstant: 24)
         avatarWidthConstraint = avatarView.widthAnchor.constraint(equalToConstant: 18)
 
+        let summaryTrailing = summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: leadingContentView.trailingAnchor)
+        // Lower than required so extreme lane counts can push past the clipping edge
+        // without triggering unsatisfiable-constraint errors.
+        summaryTrailing.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
-            graphView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            graphView.topAnchor.constraint(equalTo: topAnchor),
-            graphView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            leadingContentView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            leadingContentView.topAnchor.constraint(equalTo: topAnchor),
+            leadingContentView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            leadingContentView.trailingAnchor.constraint(equalTo: avatarView.leadingAnchor, constant: -10),
+            leadingContentView.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
+
+            graphView.leadingAnchor.constraint(equalTo: leadingContentView.leadingAnchor),
+            graphView.topAnchor.constraint(equalTo: leadingContentView.topAnchor),
+            graphView.bottomAnchor.constraint(equalTo: leadingContentView.bottomAnchor),
             graphWidthConstraint,
 
             badgesStack.leadingAnchor.constraint(equalTo: graphView.trailingAnchor, constant: 6),
-            badgesStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badgesStack.centerYAnchor.constraint(equalTo: leadingContentView.centerYAnchor),
 
             summaryLabel.leadingAnchor.constraint(equalTo: badgesStack.trailingAnchor, constant: 6),
-            summaryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: avatarView.leadingAnchor, constant: -10),
+            summaryLabel.centerYAnchor.constraint(equalTo: leadingContentView.centerYAnchor),
+            summaryTrailing,
 
             avatarView.centerYAnchor.constraint(equalTo: centerYAnchor),
             avatarWidthConstraint,
@@ -268,4 +288,11 @@ final class CommitRowCellView: NSTableCellView {
         let filtered = showTags ? refs : refs.filter { $0.kind != .tag }
         return Array(filtered.prefix(4))
     }
+
+    // Exposed for layout unit tests.
+    var leadingContentFrame: NSRect { leadingContentView.frame }
+    var leadingContentClipsToBounds: Bool { leadingContentView.clipsToBounds }
+    var summaryFrame: NSRect { summaryLabel.frame }
+    var authorFrame: NSRect { authorLabel.frame }
+    var timeFrame: NSRect { timeLabel.frame }
 }
