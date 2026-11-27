@@ -325,12 +325,20 @@ pub struct HeadMove {
     pub after: HeadPosition,
 }
 
+/// A local `branch.<name>.*` git config entry preserved across branch deletion undo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchConfigEntry {
+    pub key: String,
+    pub value: String,
+}
+
 /// How an action created, deleted, or moved a ref (branch or tag), so it can be undone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefMove {
     pub full_ref: String,
     pub before_oid: Option<String>,
     pub after_oid: Option<String>,
+    pub branch_config: Vec<BranchConfigEntry>,
 }
 
 #[derive(Clone, Debug)]

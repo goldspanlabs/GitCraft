@@ -195,10 +195,16 @@ dictionary HeadMove {
   HeadPosition after;
 };
 
+dictionary BranchConfigEntry {
+  string key;
+  string value;
+};
+
 dictionary RefMove {
   string full_ref;
   string? before_oid;
   string? after_oid;
+  sequence<BranchConfigEntry> branch_config;
 };
 
 dictionary SquashCommit {
@@ -384,7 +390,7 @@ interface RepoSession {
   string? ref_oid(string full_ref);
 
   [Throws=GitCraftError]
-  void undo_ref_move(string? expected_oid, string full_ref, string? target_oid);
+  void undo_ref_move(string? expected_oid, string full_ref, string? target_oid, sequence<BranchConfigEntry> branch_config);
 
   [Throws=GitCraftError]
   HeadMove? cherry_pick(string commit);

@@ -3,7 +3,8 @@ use crate::{
     validation::{
         format_ref_display, ref_exists, resolve_commit, validate_ref_arg, validate_remote_arg,
     },
-    worktree, GitCraftError, HeadMove, HeadPosition, MergeType, RefMove, RepoSession, ResetMode,
+    worktree, BranchConfigEntry, GitCraftError, HeadMove, HeadPosition, MergeType, RefMove,
+    RepoSession, ResetMode,
 };
 
 impl RepoSession {
@@ -59,6 +60,7 @@ impl RepoSession {
                 full_ref,
                 before_oid: None,
                 after_oid: Some(oid),
+                branch_config: Vec::new(),
             }))
         })
     }
@@ -73,11 +75,13 @@ impl RepoSession {
         self.with_mutation_lock(|| {
             let full_ref = format!("refs/heads/{branch_name}");
             let before_oid = self.ref_oid(full_ref.clone());
+            let branch_config = self.read_branch_config(&branch_name);
             git_cli::mutate(&self.path, &["branch", flag, &branch_name])?;
             Ok(before_oid.map(|oid| RefMove {
                 full_ref,
                 before_oid: Some(oid),
                 after_oid: None,
+                branch_config,
             }))
         })
     }
@@ -182,6 +186,7 @@ impl RepoSession {
                 full_ref: local_ref,
                 before_oid: Some(local_oid),
                 after_oid: Some(upstream_oid),
+                branch_config: Vec::new(),
             }))
         })
     }
@@ -362,7 +367,8 @@ impl RepoSession {
         })
     }
 
-    /// Undoes a checkout by switching back to `target`, only while HEAD is still at `expected`.
+    /// Undoes a checkout by switching back to `target`, only while HEAD is still at `expected`
+    /// and (when `target` is a branch) that branch still points to `target.oid`.
     pub fn undo_checkout(
         &self,
         expected: HeadPosition,
@@ -375,6 +381,11 @@ impl RepoSession {
                 ));
             }
             if let Some(branch_ref) = target.branch.as_deref() {
+                if self.ref_oid(branch_ref.to_owned()).as_deref() != Some(target.oid.as_str()) {
+                    return Err(GitCraftError::message(
+                        "The target branch has changed since then, so there's nothing to undo.",
+                    ));
+                }
                 let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
                 let branch = validate_ref_arg(branch)?;
                 git_cli::mutate(&self.path, &["checkout", &branch, "--"])
@@ -395,15 +406,17 @@ impl RepoSession {
             .filter(|s| !s.is_empty())
     }
 
-    /// Undoes a ref creation, deletion, or update on `full_ref`, only while it still points to
-    /// `expected_oid`.
+    /// Undoes a ref creation, deletion, or update on `full_ref`, atomically verifying it still
+    /// points to `expected_oid` (or is absent when `expected_oid` is `None`).
     pub fn undo_ref_move(
         &self,
         expected_oid: Option<String>,
         full_ref: String,
         target_oid: Option<String>,
+        branch_config: Vec<BranchConfigEntry>,
     ) -> Result<(), GitCraftError> {
         let full_ref = validate_ref_arg(&full_ref)?;
+        let expected_oid = expected_oid.as_deref().map(validate_ref_arg).transpose()?;
         let target_oid = target_oid.as_deref().map(validate_ref_arg).transpose()?;
         self.with_mutation_lock(|| {
             if self.ref_oid(full_ref.clone()) != expected_oid {
@@ -411,17 +424,80 @@ impl RepoSession {
                     "The ref has changed since then, so there's nothing to undo.",
                 ));
             }
-            if self.head_position().and_then(|h| h.branch).as_deref() == Some(full_ref.as_str()) {
-                return Err(GitCraftError::message(
-                    "Cannot modify the currently checked-out branch.",
-                ));
+            if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                if self.head_position().and_then(|h| h.branch).as_deref() == Some(full_ref.as_str())
+                {
+                    return Err(GitCraftError::message(
+                        "Cannot modify the currently checked-out branch.",
+                    ));
+                }
+                let worktrees = worktree::list_entries(&self.path)?;
+                if worktrees
+                    .iter()
+                    .any(|wt| wt.branch.as_deref() == Some(branch_name))
+                {
+                    return Err(GitCraftError::message(format!(
+                        "Cannot modify '{branch_name}' while it is checked out in another worktree."
+                    )));
+                }
             }
+            let old_arg = expected_oid.as_deref().unwrap_or("");
             if let Some(oid) = target_oid {
-                git_cli::mutate(&self.path, &["update-ref", &full_ref, &oid])
+                git_cli::mutate(&self.path, &["update-ref", &full_ref, &oid, old_arg])?;
+                if expected_oid.is_none() {
+                    self.restore_branch_config(&branch_config)?;
+                }
+                Ok(())
             } else {
-                git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref])
+                let old_oid = expected_oid
+                    .as_deref()
+                    .ok_or_else(|| GitCraftError::message("The ref has already been deleted."))?;
+                git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref, old_oid])?;
+                if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                    self.remove_branch_config(branch_name);
+                }
+                Ok(())
             }
         })
+    }
+
+    fn read_branch_config(&self, branch_name: &str) -> Vec<BranchConfigEntry> {
+        let Ok(output) = git_cli::run(&self.path, &["config", "--local", "--null", "--list"])
+        else {
+            return Vec::new();
+        };
+        let prefix = format!("branch.{branch_name}.");
+        output
+            .split('\0')
+            .filter_map(|entry| {
+                if entry.is_empty() {
+                    return None;
+                }
+                let (key, value) = entry.split_once('\n')?;
+                key.starts_with(&prefix).then(|| BranchConfigEntry {
+                    key: key.to_owned(),
+                    value: value.to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    fn restore_branch_config(&self, entries: &[BranchConfigEntry]) -> Result<(), GitCraftError> {
+        for entry in entries {
+            git_cli::mutate(
+                &self.path,
+                &["config", "--local", "--add", &entry.key, &entry.value],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn remove_branch_config(&self, branch_name: &str) {
+        let section = format!("branch.{branch_name}");
+        let _ = git_cli::run_status(
+            &self.path,
+            &["config", "--local", "--remove-section", &section],
+        );
     }
 
     /// Applies `commit`'s changes on top of the checked-out branch. Returns how HEAD moved.

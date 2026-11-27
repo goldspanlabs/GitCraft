@@ -560,11 +560,31 @@ fn undo_checkout_switches_back_and_refuses_when_head_moved() {
 }
 
 #[test]
-fn undo_ref_move_restores_deleted_branch_and_annotated_tag() {
+fn undo_checkout_refuses_when_target_branch_moved() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap().unwrap();
+    // Advance `main` externally while on `feature`.
+    let new_commit = commit_file(dir.path(), "other.txt", "new\n", "advance");
+    run_git(dir.path(), &["branch", "-f", "main", &new_commit]);
+
+    assert!(session.undo_checkout(moved.after, moved.before).is_err());
+    assert_eq!(current_branch(dir.path()), "feature");
+}
+
+#[test]
+fn undo_ref_move_restores_deleted_branch_config_and_annotated_tag() {
     let dir = init_repo_with_commit();
     let session = open(dir.path());
     let tip = head(dir.path());
     run_git(dir.path(), &["branch", "feature"]);
+    run_git(dir.path(), &["config", "branch.feature.remote", "origin"]);
+    run_git(
+        dir.path(),
+        &["config", "branch.feature.merge", "refs/heads/feature"],
+    );
 
     let deleted_branch = session
         .delete_branch("feature".into(), false)
@@ -576,11 +596,20 @@ fn undo_ref_move_restores_deleted_branch_and_annotated_tag() {
             deleted_branch.after_oid,
             deleted_branch.full_ref.clone(),
             deleted_branch.before_oid.clone(),
+            deleted_branch.branch_config.clone(),
         )
         .unwrap();
     assert_eq!(
         session.ref_oid("refs/heads/feature".into()).as_deref(),
         Some(tip.as_str())
+    );
+    assert_eq!(
+        run_git(dir.path(), &["config", "--get", "branch.feature.remote"]).trim(),
+        "origin"
+    );
+    assert_eq!(
+        run_git(dir.path(), &["config", "--get", "branch.feature.merge"]).trim(),
+        "refs/heads/feature"
     );
 
     let created_tag = session
@@ -597,6 +626,7 @@ fn undo_ref_move_restores_deleted_branch_and_annotated_tag() {
             deleted_tag.after_oid,
             deleted_tag.full_ref,
             deleted_tag.before_oid,
+            deleted_tag.branch_config,
         )
         .unwrap();
     assert_eq!(
@@ -605,4 +635,31 @@ fn undo_ref_move_restores_deleted_branch_and_annotated_tag() {
     );
     let tag_msg = run_git(dir.path(), &["tag", "-l", "-n1", "v1.0"]);
     assert!(tag_msg.contains("Release 1.0"));
+}
+
+#[test]
+fn undo_ref_move_refuses_when_branch_checked_out_in_sibling_worktree() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let created = session
+        .create_branch("wt-branch".into(), None, false)
+        .unwrap()
+        .unwrap();
+
+    let wt_dir = tempfile::tempdir().unwrap();
+    let wt_path = wt_dir.path().join("sibling");
+    run_git(
+        dir.path(),
+        &["worktree", "add", wt_path.to_str().unwrap(), "wt-branch"],
+    );
+
+    assert!(session
+        .undo_ref_move(
+            created.after_oid,
+            created.full_ref,
+            created.before_oid,
+            created.branch_config,
+        )
+        .is_err());
+    assert!(session.ref_oid("refs/heads/wt-branch".into()).is_some());
 }

@@ -40,6 +40,7 @@ impl RepoSession {
                 full_ref,
                 before_oid: None,
                 after_oid: Some(oid),
+                branch_config: Vec::new(),
             }))
         })
     }
@@ -62,6 +63,7 @@ impl RepoSession {
                 full_ref,
                 before_oid: Some(oid),
                 after_oid: None,
+                branch_config: Vec::new(),
             }))
         })
     }

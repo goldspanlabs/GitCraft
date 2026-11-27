@@ -30,7 +30,8 @@ enum UndoStep {
             try session.undoRefMove(
                 expectedOid: move.afterOid,
                 fullRef: move.fullRef,
-                targetOid: move.beforeOid
+                targetOid: move.beforeOid,
+                branchConfig: move.branchConfig
             )
         }
     }
@@ -38,10 +39,24 @@ enum UndoStep {
     /// Whether the step would still work. Runs off the main thread after each refresh.
     func stillApplies(in session: RepoSession) -> Bool {
         switch self {
-        case let .moveHead(move, _), let .checkout(move):
+        case let .moveHead(move, _):
             return session.headPosition() == move.after
+        case let .checkout(move):
+            guard session.headPosition() == move.after else { return false }
+            if let targetBranch = move.before.branch {
+                return session.refOid(fullRef: targetBranch) == move.before.oid
+            }
+            return true
         case let .moveRef(move):
             guard session.refOid(fullRef: move.fullRef) == move.afterOid else { return false }
+            if move.fullRef.hasPrefix("refs/heads/") {
+                let branchName = String(move.fullRef.dropFirst("refs/heads/".count))
+                if let worktrees = try? session.listWorktreeEntries(),
+                   worktrees.contains(where: { $0.branch == branchName })
+                {
+                    return false
+                }
+            }
             return session.headPosition()?.branch != move.fullRef
         }
     }
@@ -56,7 +71,14 @@ enum UndoStep {
         case let .checkout(move):
             return .checkout(HeadMove(before: move.after, after: move.before))
         case let .moveRef(move):
-            return .moveRef(RefMove(fullRef: move.fullRef, beforeOid: move.afterOid, afterOid: move.beforeOid))
+            return .moveRef(
+                RefMove(
+                    fullRef: move.fullRef,
+                    beforeOid: move.afterOid,
+                    afterOid: move.beforeOid,
+                    branchConfig: move.branchConfig
+                )
+            )
         }
     }
 
