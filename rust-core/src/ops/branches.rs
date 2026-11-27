@@ -112,7 +112,7 @@ impl RepoSession {
             })?;
 
             let upstream_oid = resolve_commit(&self.path, &upstream_ref)
-                .map_err(|e| GitCraftError::message(e.to_string()))?;
+                .map_err(GitCraftError::from_display)?;
 
             if local_oid == upstream_oid {
                 return Err(GitCraftError::warning(format!(

@@ -73,8 +73,8 @@ extension RepoTab {
 
     /// Applies a URL change and/or rename in one mutation so the two steps stay ordered.
     func updateRemote(_ remote: RemoteInfo, newName: String, newURL: String) {
-        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let url = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = newName.trimmed
+        let url = newURL.trimmed
         performMutation { session in
             if url != remote.fetchUrl || url != remote.pushUrl {
                 try session.setRemoteUrl(name: remote.name, url: url)
@@ -116,16 +116,16 @@ extension RepoTab {
             let lines = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             self.commitSummary = String(lines.first ?? "")
             self.commitBody = lines.count > 1
-                ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                ? String(lines[1]).trimmed
                 : ""
         }
     }
 
     /// Commits the staged changes. The Commit menu's "Commit and Push" item passes `pushAfter: true`.
     func commitChanges(pushAfter: Bool = false) {
-        let summary = commitSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summary = commitSummary.trimmed
         guard !summary.isEmpty else { return }
-        let body = commitBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = commitBody.trimmed
         let fullMessage = body.isEmpty ? summary : "\(summary)\n\n\(body)"
         // Hand-picked staging wins: auto-staging only fills in when nothing is staged.
         let autoStage = GitPreferences.shouldStageAll(
@@ -176,7 +176,7 @@ extension RepoTab {
             try RepoTab.withLocalChanges(
                 localChanges,
                 hasChanges: hasLocalChanges,
-                stashMessage: "Auto-stash before checking out \(oid.prefix(7))",
+                stashMessage: "Auto-stash before checking out \(oid.shortOid)",
                 session: session
             ) {
                 try session.checkoutBranch(branchName: oid)
@@ -194,7 +194,7 @@ extension RepoTab {
         checkout: Bool,
         localChanges: LocalChangesHandling = .doNotChange
     ) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = name.trimmed
         guard !trimmed.isEmpty else { return }
         let hasLocalChanges = checkout && totalChangesCount > 0
         performMutation { session in
@@ -342,7 +342,7 @@ extension RepoTab {
     // MARK: - Tags, Stashes & Sync
 
     func createTag(name: String, target: String?, message: String?, pushToRemote: Bool) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = name.trimmed
         guard !trimmed.isEmpty else { return }
         // The core trims the message and treats a blank one as none.
         performMutation {
@@ -399,7 +399,7 @@ extension RepoTab {
         detach: Bool,
         switchAfterCreate: Bool
     ) {
-        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPath = path.trimmed
         guard !trimmedPath.isEmpty else { return }
         let resolvedPath = Self.resolvePath(trimmedPath, relativeTo: activeCheckoutPath)
         // The core trims the branch and start point and treats blank ones as none.

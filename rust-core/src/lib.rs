@@ -34,12 +34,17 @@ use std::{
     },
 };
 
+/// `path` with symlinks and `..` resolved, or `path` itself when that fails.
+fn canonical_or_given(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
 /// One mutation lock per repository (keyed by its canonical common dir), shared by every
 /// session that opens it. A session per checkout or window would otherwise each hold its own
 /// lock and race on refs and `.git/index.lock`.
 fn mutation_lock_for(common_dir: PathBuf) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let key = std::fs::canonicalize(&common_dir).unwrap_or(common_dir);
+    let key = canonical_or_given(common_dir);
     let mut locks = LOCKS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -75,9 +80,7 @@ impl RepoSession {
     /// repository reports the same value, so it identifies the repository itself and stays
     /// valid after a linked worktree is deleted or pruned.
     pub fn common_dir(&self) -> String {
-        let dir = self.sync_repo.to_thread_local().common_dir().to_owned();
-        std::fs::canonicalize(&dir)
-            .unwrap_or(dir)
+        canonical_or_given(self.sync_repo.to_thread_local().common_dir().to_owned())
             .to_string_lossy()
             .into_owned()
     }
@@ -87,8 +90,8 @@ impl RepoSession {
         if !path.join(".git").exists() {
             return Err(GitCraftError::message("not a Git repository"));
         }
-        let sync_repo = gix::ThreadSafeRepository::open(&path)
-            .map_err(|e| GitCraftError::message(e.to_string()))?;
+        let sync_repo =
+            gix::ThreadSafeRepository::open(&path).map_err(GitCraftError::from_display)?;
         let (git_dir, common_dir) = {
             let repo = sync_repo.to_thread_local();
             (repo.git_dir().to_owned(), repo.common_dir().to_owned())

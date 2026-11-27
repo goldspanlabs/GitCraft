@@ -19,12 +19,8 @@ fn for_each_ref(
     repo: &gix::Repository,
     mut visit: impl FnMut(String, gix::Reference<'_>),
 ) -> Result<(), GitCraftError> {
-    let references = repo
-        .references()
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
-    let all_refs = references
-        .all()
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
+    let references = repo.references().map_err(GitCraftError::from_display)?;
+    let all_refs = references.all().map_err(GitCraftError::from_display)?;
 
     for reference_res in all_refs {
         let Ok(reference) = reference_res else {
@@ -34,6 +30,13 @@ fn for_each_ref(
         visit(full_name, reference);
     }
     Ok(())
+}
+
+/// The full name of the branch HEAD points to, such as `refs/heads/main`, or `None` when
+/// HEAD is detached.
+pub(crate) fn head_ref_name(head: &gix::Head<'_>) -> Option<String> {
+    head.referent_name()
+        .map(|name| name.as_bstr().to_str_lossy().into_owned())
 }
 
 /// Returns the full ref name that `refs/remotes/origin/HEAD` points to, if symbolic.
@@ -75,12 +78,8 @@ pub(crate) fn collect_refs_and_tips(repo: &gix::Repository) -> Result<RefsAndTip
     let mut tip_set: HashSet<gix::ObjectId> = HashSet::new();
     let mut local_tips: HashSet<gix::ObjectId> = HashSet::new();
 
-    let head = repo
-        .head()
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
-    let head_referent = head
-        .referent_name()
-        .map(|name| name.as_bstr().to_str_lossy().into_owned());
+    let head = repo.head().map_err(GitCraftError::from_display)?;
+    let head_referent = head_ref_name(&head);
 
     if let Some(head_id) = head.id() {
         let oid = head_id.detach();
@@ -190,12 +189,8 @@ pub fn list_branches(
     sync_repo: &gix::ThreadSafeRepository,
 ) -> Result<Vec<BranchInfo>, GitCraftError> {
     let repo = sync_repo.to_thread_local();
-    let head = repo
-        .head()
-        .map_err(|e| GitCraftError::message(e.to_string()))?;
-    let head_referent = head
-        .referent_name()
-        .map(|name| name.as_bstr().to_str_lossy().into_owned());
+    let head = repo.head().map_err(GitCraftError::from_display)?;
+    let head_referent = head_ref_name(&head);
 
     let mut remote_oids: HashMap<String, gix::ObjectId> = HashMap::new();
     let mut remote_head_targets: HashMap<String, String> = HashMap::new();

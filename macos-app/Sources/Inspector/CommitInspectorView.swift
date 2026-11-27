@@ -435,5 +435,5 @@ private struct CommitFileList: View {
 }
 
 private func formatShortParents(_ parents: [String]) -> String {
-    parents.map { String($0.prefix(7)) }.joined(separator: ", ")
+    parents.map(\.shortOid).joined(separator: ", ")
 }

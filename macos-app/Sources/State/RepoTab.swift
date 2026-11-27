@@ -114,8 +114,8 @@ final class RepoTab: ObservableObject, Identifiable {
             case .abortCherryPick: return "Abort in-progress cherry-pick?"
             case .abortRevert: return "Abort in-progress revert?"
             case let .dropStash(_, name): return "Drop \"\(name)\"?"
-            case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.prefix(7)) and discard changes?"
-            case let .rebase(branch, commit): return "Rebase \"\(branch)\" onto \(commit.prefix(7))?"
+            case let .resetHard(branch, commit): return "Reset \"\(branch)\" to \(commit.shortOid) and discard changes?"
+            case let .rebase(branch, commit): return "Rebase \"\(branch)\" onto \(commit.shortOid)?"
             }
         }
 
@@ -239,7 +239,7 @@ final class RepoTab: ObservableObject, Identifiable {
         get { commitDraft.summary }
         set {
             commitDraft.summary = newValue
-            publish(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, to: \.isCommitSummaryBlank)
+            publish(newValue.trimmed.isEmpty, to: \.isCommitSummaryBlank)
         }
     }
 
@@ -256,6 +256,14 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var scopeToCurrentBranch = true
     @Published var showTags = true
 
+    /// The remote that tag pushes go to: `origin` when there is one, else the first remote.
+    /// Mirrors `resolve_default_remote` in the Rust core, which picks the remote for real.
+    var defaultRemoteName: String {
+        remotes.first(where: { $0.name == "origin" })?.name
+            ?? remotes.first?.name
+            ?? "origin"
+    }
+
     var totalChangesCount: Int {
         Set(stagedFiles.map(\.path) + unstagedFiles.map(\.path)).count
     }
@@ -270,7 +278,7 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Trimmed search query passed to the Rust core, or `nil` when empty.
     var activeSearchQuery: String? {
-        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = searchQuery.trimmed
         return trimmed.isEmpty ? nil : trimmed
     }
 
@@ -867,14 +875,17 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Runs the read-only `work` off the main thread and hands its result to `apply`. A result
     /// or error that arrives after the tab has moved to another checkout is dropped. On an
-    /// error, `onFailure` runs before the error is shown.
+    /// error, `onFailure` runs before the error is shown. `always` runs last in every case,
+    /// including when the result is dropped.
     func loadInBackground<Value: Sendable>(
         _ work: @escaping @Sendable (RepoSession) throws -> Value,
         apply: @escaping @MainActor (Value) -> Void,
-        onFailure: (@MainActor (Error) -> Void)? = nil
+        onFailure: (@MainActor (Error) -> Void)? = nil,
+        always: (@MainActor () -> Void)? = nil
     ) {
         let session = self.session
         Task {
+            defer { always?() }
             do {
                 let value = try await Task.detached { try work(session) }.value
                 guard self.session === session else { return }

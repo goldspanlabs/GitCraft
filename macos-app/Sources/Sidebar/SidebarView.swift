@@ -128,9 +128,7 @@ struct SidebarView: View {
             Section(isExpanded: $isRemotesExpanded) {
                 if isRemotesExpanded {
                     if tab.remotes.isEmpty {
-                        Text("No remotes")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        EmptySectionLabel(text: "No remotes")
                     }
                     ForEach(remoteBranchRows) { row in
                         switch row.kind {
@@ -172,9 +170,7 @@ struct SidebarView: View {
             Section(isExpanded: $isWorktreesExpanded) {
                 if isWorktreesExpanded {
                     if !tab.worktrees.contains(where: { !$0.isMain }) {
-                        Text("No worktrees")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        EmptySectionLabel(text: "No worktrees")
                     } else {
                         ForEach(tab.worktrees, id: \.path) { worktree in
                             WorktreeRowView(tab: tab, worktree: worktree)
@@ -200,36 +196,10 @@ struct SidebarView: View {
             Section(isExpanded: $isTagsExpanded) {
                 if isTagsExpanded {
                     if tab.tags.isEmpty {
-                        Text("No tags")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        EmptySectionLabel(text: "No tags")
                     } else {
                         ForEach(tab.tags, id: \.fullRef) { tag in
-                            HStack(spacing: 6) {
-                                PhosphorIcon(glyph: .tag)
-                                    .foregroundStyle(.orange)
-                                    .frame(width: 16, alignment: .center)
-                                Text(tag.name)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .sidebarRowHighlight()
-                            .onTapGesture {
-                                tab.scrollToCommit(oidHex: tag.targetOidHex)
-                            }
-                            .nativeContextMenu {
-                                [.item("Push \(tag.name) to origin") {
-                                    tab.pushTag(tag.name)
-                                }, .separator,
-                                 .item("Delete \(tag.name) (Local)…") {
-                                    tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: false)
-                                 },
-                                 .item("Delete \(tag.name) (Local & Remote)…") {
-                                    tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: true)
-                                 }]
-                            }
+                            TagRowView(tab: tab, tag: tag)
                         }
                     }
                 }
@@ -244,41 +214,10 @@ struct SidebarView: View {
             Section(isExpanded: $isStashesExpanded) {
                 if isStashesExpanded {
                     if tab.stashes.isEmpty {
-                        Text("No stashes")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        EmptySectionLabel(text: "No stashes")
                     } else {
                         ForEach(tab.stashes, id: \.index) { stash in
-                            HStack(spacing: 6) {
-                                PhosphorIcon(glyph: .archive)
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 16, alignment: .center)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(stash.message)
-                                        .font(.system(size: 12))
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                    Text(stash.name)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .sidebarRowHighlight(showsPress: false)
-                            // One accessibility element per row, so UI tests can find a stash by index.
-                            .accessibilityElement(children: .contain)
-                            .accessibilityIdentifier("stash-row:\(stash.index)")
-                            .nativeContextMenu {
-                                [.item("Pop \(stash.name)") {
-                                    tab.stashPop(stash.index)
-                                }, .item("Apply \(stash.name)") {
-                                    tab.stashApply(stash.index)
-                                }, .separator,
-                                 .item("Drop \(stash.name)…") {
-                                    tab.pendingConfirmation = .dropStash(index: stash.index, name: stash.name)
-                                 }]
-                            }
+                            StashRowView(tab: tab, stash: stash)
                         }
                     }
                 }
@@ -308,6 +247,88 @@ private struct SectionHeaderLabel: View {
         }
         .contentShape(Rectangle())
         .nativeContextMenu(entries)
+    }
+}
+
+/// The placeholder a sidebar section shows when it has nothing to list.
+private struct EmptySectionLabel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+    }
+}
+
+private struct TagRowView: View {
+    @ObservedObject var tab: RepoTab
+    let tag: TagInfo
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .tag)
+                .foregroundStyle(.orange)
+                .frame(width: 16, alignment: .center)
+            Text(tag.name)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .sidebarRowHighlight()
+        .onTapGesture {
+            tab.scrollToCommit(oidHex: tag.targetOidHex)
+        }
+        .nativeContextMenu {
+            [.item("Push \(tag.name) to \(tab.defaultRemoteName)") {
+                tab.pushTag(tag.name)
+            }, .separator,
+             .item("Delete \(tag.name) (Local)…") {
+                tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: false)
+             },
+             .item("Delete \(tag.name) (Local & Remote)…") {
+                tab.pendingConfirmation = .deleteTag(name: tag.name, deleteRemote: true)
+             }]
+        }
+    }
+}
+
+private struct StashRowView: View {
+    @ObservedObject var tab: RepoTab
+    let stash: StashInfo
+
+    var body: some View {
+        HStack(spacing: 6) {
+            PhosphorIcon(glyph: .archive)
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .center)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(stash.message)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(stash.name)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .sidebarRowHighlight(showsPress: false)
+        // One accessibility element per row, so UI tests can find a stash by index.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("stash-row:\(stash.index)")
+        .nativeContextMenu {
+            [.item("Pop \(stash.name)") {
+                tab.stashPop(stash.index)
+            }, .item("Apply \(stash.name)") {
+                tab.stashApply(stash.index)
+            }, .separator,
+             .item("Drop \(stash.name)…") {
+                tab.pendingConfirmation = .dropStash(index: stash.index, name: stash.name)
+             }]
+        }
     }
 }
 
@@ -357,7 +378,7 @@ private struct WorktreeRowView: View {
 
     /// What's checked out here: the branch, or the commit when HEAD is detached.
     private var branchLabel: String {
-        worktree.branch ?? "detached at \(worktree.headOidHex.prefix(7))"
+        worktree.branch ?? "detached at \(worktree.headOidHex.shortOid)"
     }
 
     /// A worktree is identified by its folder, like the repository's own name for the main checkout.
@@ -505,7 +526,7 @@ private struct DetachedHeadRowView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, alignment: .center)
 
-            Text(String(oidHex.prefix(7)))
+            Text(oidHex.shortOid)
                 .lineLimit(1)
 
             Spacer()

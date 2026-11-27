@@ -12,7 +12,7 @@ struct CreateRepositorySheet: View {
     @State private var errorMessage: String?
 
     private var trimmedPath: String {
-        folderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        folderPath.trimmed
     }
 
     var body: some View {
@@ -73,7 +73,7 @@ struct CreateRepositorySheet: View {
 
     private func createRepository() {
         let path = trimmedPath
-        let branch = initialBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branch = initialBranch.trimmed
         guard !path.isEmpty else { return }
 
         isCreating = true

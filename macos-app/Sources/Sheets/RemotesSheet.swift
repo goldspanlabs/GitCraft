@@ -5,7 +5,7 @@ enum RemoteURLProtocol: String, CaseIterable, Equatable {
     case ssh = "SSH"
 
     static func detect(from url: String) -> RemoteURLProtocol? {
-        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = url.trimmed
         if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
             return .https
         }
@@ -24,7 +24,7 @@ enum RemoteURLProtocol: String, CaseIterable, Equatable {
     }
 
     func convert(_ url: String) -> String? {
-        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = url.trimmed
         switch self {
         case .https:
             if trimmed.hasPrefix("https://") { return trimmed }
@@ -102,11 +102,11 @@ struct RemotesSheet: View {
     }
 
     private var trimmedName: String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
+        name.trimmed
     }
 
     private var trimmedURL: String {
-        url.trimmingCharacters(in: .whitespacesAndNewlines)
+        url.trimmed
     }
 
     private var hasSeparatePushURL: Bool {

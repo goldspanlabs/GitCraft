@@ -15,7 +15,7 @@ struct NewBranchSheet: View {
         if let start = startPoint {
             // Shorten 40-char commit SHAs for display while keeping branch names intact.
             if start.count == 40, start.allSatisfy(\.isHexDigit) {
-                return String(start.prefix(7))
+                return start.shortOid
             }
             return start
         }
@@ -27,7 +27,7 @@ struct NewBranchSheet: View {
             title: "Create Branch",
             subtitle: "Create new branch",
             confirmLabel: checkout ? "Create and Checkout" : "Create",
-            confirmDisabled: branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            confirmDisabled: branchName.trimmed.isEmpty,
             onCancel: { dismiss() },
             onConfirm: {
                 if checkout && localChanges == .discard && tab.totalChangesCount > 0 {

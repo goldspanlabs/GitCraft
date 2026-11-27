@@ -7,7 +7,7 @@ extension Error {
         if let error = self as? GitCraftError {
             switch error {
             case let .Message(msg), let .Warning(msg):
-                return msg.trimmingCharacters(in: .whitespacesAndNewlines)
+                return msg.trimmed
             case .GitNotFound:
                 return "Git is not installed or could not be found. Install Git or Xcode Command Line Tools, then try again."
             }
@@ -48,7 +48,7 @@ struct ErrorSummary: Equatable {
     }
 
     init(_ message: String) {
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = message.trimmed
         let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
         let first = lines.first(where: Self.isErrorLine) ?? lines.first ?? trimmed
         full = trimmed

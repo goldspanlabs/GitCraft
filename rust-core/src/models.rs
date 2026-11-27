@@ -20,6 +20,11 @@ impl GitCraftError {
     pub fn warning(msg: impl Into<String>) -> Self {
         Self::Warning { msg: msg.into() }
     }
+
+    /// An error whose message is `err`'s text, for `map_err` on gix and other library errors.
+    pub fn from_display(err: impl std::fmt::Display) -> Self {
+        Self::message(err.to_string())
+    }
 }
 
 impl From<io::Error> for GitCraftError {

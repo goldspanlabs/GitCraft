@@ -185,7 +185,7 @@ enum GitPreferences {
         isBusy: Bool,
         amend: Bool = false
     ) -> Bool {
-        let hasSummary = !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSummary = !summary.trimmed.isEmpty
         let hasSomethingToCommit = stagedCount > 0 || (autoStage && changedCount > 0) || amend
         return hasSummary && hasSomethingToCommit && !isBusy
     }

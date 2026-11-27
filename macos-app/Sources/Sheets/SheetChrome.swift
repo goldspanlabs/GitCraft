@@ -73,7 +73,7 @@ struct CommitPreviewRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(commit?.shortOid ?? String(oid.prefix(7)))
+            Text(commit?.shortOid ?? oid.shortOid)
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(.secondary)
             Text(commit?.summary ?? "")
