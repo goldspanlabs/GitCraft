@@ -3,9 +3,10 @@ import SwiftUI
 
 struct DiffTableView: NSViewRepresentable {
     let rows: [DiffRow]
+    var revision: UUID? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(rows: rows)
+        Coordinator(rows: rows, revision: revision)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -49,11 +50,16 @@ struct DiffTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
-        // Compare every row: an edit in the middle of a hunk keeps the count and the first and
-        // last rows, and a partial check would leave the visible cells showing the old text.
-        let changed = context.coordinator.rows != rows
+        let changed: Bool
+        if let revision {
+            changed = context.coordinator.lastRevision != revision
+        } else {
+            // Fallback when no revision token is supplied (e.g. direct unit-test construction).
+            changed = context.coordinator.rows != rows
+        }
 
         if changed {
+            context.coordinator.lastRevision = revision
             context.coordinator.rows = rows
         }
         context.coordinator.updateColumnWidth(scrollView: scrollView, table: table)
@@ -63,6 +69,7 @@ struct DiffTableView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var lastRevision: UUID?
         var rows: [DiffRow] {
             didSet { longestLine = Self.longestLine(in: rows) }
         }
@@ -74,7 +81,8 @@ struct DiffTableView: NSViewRepresentable {
         private var visibleWidth: CGFloat = 0
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("DiffRowCell")
 
-        init(rows: [DiffRow]) {
+        init(rows: [DiffRow], revision: UUID? = nil) {
+            self.lastRevision = revision
             self.rows = rows
             self.longestLine = Self.longestLine(in: rows)
         }
@@ -440,7 +448,8 @@ final class DiffRowCellView: NSTableCellView {
             for span in row.spans {
                 let start = Int(span.startUtf16)
                 let len = Int(span.lenUtf16)
-                if start >= 0 && start + len <= utf16Len, let color = NSColor(hex: span.foreground, isDark: isDark) {
+                if start >= 0 && start + len <= utf16Len {
+                    let color = NSColor(rgb: span.foreground, isDark: isDark)
                     attr.addAttribute(.foregroundColor, value: color, range: NSRange(location: start, length: len))
                 }
             }
@@ -450,12 +459,7 @@ final class DiffRowCellView: NSTableCellView {
 }
 
 private extension NSColor {
-    convenience init?(hex: String, isDark: Bool) {
-        var cleaned = hex.trimmed
-        if cleaned.hasPrefix("#") {
-            cleaned.removeFirst()
-        }
-        guard cleaned.count == 6, let rgb = UInt64(cleaned, radix: 16) else { return nil }
+    convenience init(rgb: UInt32, isDark: Bool) {
         var r = CGFloat((rgb >> 16) & 0xFF) / 255.0
         var g = CGFloat((rgb >> 8) & 0xFF) / 255.0
         var b = CGFloat(rgb & 0xFF) / 255.0

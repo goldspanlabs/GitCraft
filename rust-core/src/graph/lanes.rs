@@ -1,9 +1,60 @@
+use std::ops::Deref;
+
 use crate::{CommitRow, GraphEdge, RefBadge};
+
+/// Stack-allocated parent OIDs for root, normal, and 2-parent merge commits; spills to the
+/// heap only for octopus merges (3+ parents).
+#[derive(Clone, Debug)]
+pub(crate) enum CommitParents {
+    Inline { buf: [gix::ObjectId; 2], len: u8 },
+    Heap(Vec<gix::ObjectId>),
+}
+
+impl CommitParents {
+    pub(crate) fn from_iter(iter: impl IntoIterator<Item = gix::ObjectId>) -> Self {
+        let mut iter = iter.into_iter();
+        let Some(first) = iter.next() else {
+            return Self::Inline {
+                buf: [gix::ObjectId::null(gix::hash::Kind::Sha1); 2],
+                len: 0,
+            };
+        };
+        let Some(second) = iter.next() else {
+            return Self::Inline {
+                buf: [first, first],
+                len: 1,
+            };
+        };
+        let Some(third) = iter.next() else {
+            return Self::Inline {
+                buf: [first, second],
+                len: 2,
+            };
+        };
+        let mut vec = Vec::with_capacity(4);
+        vec.push(first);
+        vec.push(second);
+        vec.push(third);
+        vec.extend(iter);
+        Self::Heap(vec)
+    }
+}
+
+impl Deref for CommitParents {
+    type Target = [gix::ObjectId];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Inline { buf, len } => &buf[..*len as usize],
+            Self::Heap(vec) => vec.as_slice(),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct RawCommit {
     pub oid: gix::ObjectId,
-    pub parents: Vec<gix::ObjectId>,
+    pub parents: CommitParents,
     pub summary: String,
     pub author_name: String,
     pub author_email: String,
@@ -27,7 +78,7 @@ struct LaneSlot {
 }
 
 /// Tracks active graph lanes and color assignments as commits are walked newest-first.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct LaneState {
     slots: Vec<Option<LaneSlot>>,
     next_color: u8,
@@ -63,7 +114,59 @@ impl LaneState {
             .map(|(idx, _)| idx)
     }
 
-    pub(crate) fn assign_commit(&mut self, commit: &RawCommit, refs: Vec<RefBadge>) -> CommitRow {
+    /// Advances lane and color state for `oid` without allocating edges or a `CommitRow`.
+    /// Produces the exact same `LaneState` transitions as [`Self::assign_commit`], for rows
+    /// that precede the requested page or fail a search filter.
+    pub(crate) fn advance_commit(&mut self, oid: gix::ObjectId, parents: &[gix::ObjectId]) {
+        // 1. Locate oid in active slots; collapse converging duplicates.
+        let mut first_match: Option<usize> = None;
+        for (idx, slot) in self.slots.iter_mut().enumerate() {
+            if slot.is_some_and(|s| s.oid == oid) {
+                if first_match.is_none() {
+                    first_match = Some(idx);
+                } else {
+                    *slot = None;
+                }
+            }
+        }
+
+        let (commit_lane, commit_color) = if let Some(first_slot) = first_match {
+            let color = self.slots[first_slot].expect("matched slot is Some").color;
+            (first_slot, color)
+        } else {
+            let free = self.first_free_slot();
+            self.place_in_free_slot(oid, free)
+        };
+
+        // 3. Route parents[0] into slots[commit_lane] to keep mainline straight.
+        if let Some(&first_parent) = parents.first() {
+            self.slots[commit_lane] = Some(LaneSlot {
+                oid: first_parent,
+                color: commit_color,
+            });
+        } else {
+            self.slots[commit_lane] = None;
+        }
+
+        // 4. Route parents[1..] into existing matching lanes or nearest free slot.
+        for &parent_oid in parents.iter().skip(1) {
+            let already_tracked = self
+                .slots
+                .iter()
+                .any(|s| s.is_some_and(|s| s.oid == parent_oid));
+            if !already_tracked {
+                let free = self.nearest_free_slot(commit_lane);
+                self.place_in_free_slot(parent_oid, free);
+            }
+        }
+
+        // 5. Trim trailing None slots to keep max_lanes compact.
+        while self.slots.last().is_some_and(Option::is_none) {
+            self.slots.pop();
+        }
+    }
+
+    pub(crate) fn assign_commit(&mut self, commit: RawCommit, refs: Vec<RefBadge>) -> CommitRow {
         let mut edges: Vec<GraphEdge> = Vec::new();
 
         // 1. Locate commit.oid in active slots; collapse converging duplicates.
@@ -144,9 +247,9 @@ impl LaneState {
         CommitRow {
             oid_hex,
             short_oid,
-            summary: commit.summary.clone(),
-            author_name: commit.author_name.clone(),
-            author_email: commit.author_email.clone(),
+            summary: commit.summary,
+            author_name: commit.author_name,
+            author_email: commit.author_email,
             timestamp: commit.timestamp,
             lane: commit_lane as u32,
             color_idx: commit_color,
@@ -170,7 +273,7 @@ mod tests {
     fn raw(id: u8, parents: &[u8], summary: &str) -> RawCommit {
         RawCommit {
             oid: oid(id),
-            parents: parents.iter().map(|&p| oid(p)).collect(),
+            parents: CommitParents::from_iter(parents.iter().map(|&p| oid(p))),
             summary: summary.to_owned(),
             author_name: "Tester".to_owned(),
             author_email: "tester@example.com".to_owned(),
@@ -182,9 +285,9 @@ mod tests {
     fn linear_history_uses_single_straight_lane() {
         let mut lanes = LaneState::default();
 
-        let c3 = lanes.assign_commit(&raw(3, &[2], "c3"), vec![]);
-        let c2 = lanes.assign_commit(&raw(2, &[1], "c2"), vec![]);
-        let c1 = lanes.assign_commit(&raw(1, &[], "c1"), vec![]);
+        let c3 = lanes.assign_commit(raw(3, &[2], "c3"), vec![]);
+        let c2 = lanes.assign_commit(raw(2, &[1], "c2"), vec![]);
+        let c1 = lanes.assign_commit(raw(1, &[], "c1"), vec![]);
 
         assert_eq!(c3.lane, 0);
         assert_eq!(c3.max_lanes, 1);
@@ -205,7 +308,7 @@ mod tests {
         //   c1 (root)
         let mut lanes = LaneState::default();
 
-        let c4 = lanes.assign_commit(&raw(4, &[3, 2], "Merge feature"), vec![]);
+        let c4 = lanes.assign_commit(raw(4, &[3, 2], "Merge feature"), vec![]);
         assert_eq!(c4.lane, 0);
         assert_eq!(c4.max_lanes, 2);
         // Outgoing merge edge from lane 0 -> lane 1
@@ -214,7 +317,7 @@ mod tests {
             .iter()
             .any(|e| e.from_lane == 0 && e.to_lane == 1 && e.is_merge));
 
-        let c3 = lanes.assign_commit(&raw(3, &[1], "Main work"), vec![]);
+        let c3 = lanes.assign_commit(raw(3, &[1], "Main work"), vec![]);
         assert_eq!(c3.lane, 0);
         assert_eq!(c3.max_lanes, 2);
         // Lane 1 should pass straight through while lane 0 is at c3
@@ -223,12 +326,12 @@ mod tests {
             .iter()
             .any(|e| e.from_lane == 1 && e.to_lane == 1 && !e.is_merge));
 
-        let c2 = lanes.assign_commit(&raw(2, &[1], "Feature work"), vec![]);
+        let c2 = lanes.assign_commit(raw(2, &[1], "Feature work"), vec![]);
         assert_eq!(c2.lane, 1);
         assert_eq!(c2.max_lanes, 2);
 
         // Now both lane 0 and lane 1 point to c1: should converge onto lane 0.
-        let c1 = lanes.assign_commit(&raw(1, &[], "Initial"), vec![]);
+        let c1 = lanes.assign_commit(raw(1, &[], "Initial"), vec![]);
         assert_eq!(c1.lane, 0);
         assert_eq!(c1.max_lanes, 2);
         assert!(c1
@@ -242,7 +345,7 @@ mod tests {
         // o5 merges [o1, o2, o3, o4]; each parent is a separate root-less branch tip.
         let mut lanes = LaneState::default();
 
-        let merge = lanes.assign_commit(&raw(5, &[1, 2, 3, 4], "Octopus"), vec![]);
+        let merge = lanes.assign_commit(raw(5, &[1, 2, 3, 4], "Octopus"), vec![]);
         assert_eq!(merge.lane, 0);
         assert_eq!(merge.max_lanes, 4);
         for target in 1..=3u32 {
@@ -265,13 +368,13 @@ mod tests {
         assert_eq!(colors.len(), 4);
 
         // Parents land on the lanes their edges promised.
-        let p2 = lanes.assign_commit(&raw(2, &[], "p2"), vec![]);
+        let p2 = lanes.assign_commit(raw(2, &[], "p2"), vec![]);
         assert_eq!(p2.lane, 1);
-        let p3 = lanes.assign_commit(&raw(3, &[], "p3"), vec![]);
+        let p3 = lanes.assign_commit(raw(3, &[], "p3"), vec![]);
         assert_eq!(p3.lane, 2);
-        let p4 = lanes.assign_commit(&raw(4, &[], "p4"), vec![]);
+        let p4 = lanes.assign_commit(raw(4, &[], "p4"), vec![]);
         assert_eq!(p4.lane, 3);
-        let p1 = lanes.assign_commit(&raw(1, &[], "p1"), vec![]);
+        let p1 = lanes.assign_commit(raw(1, &[], "p1"), vec![]);
         assert_eq!(p1.lane, 0);
         assert!(lanes.slots.is_empty());
     }
@@ -281,9 +384,9 @@ mod tests {
         // Two tips (c5 -> c2, c4 merge [c3, c2]) share c2, so the merge edge targets the existing lane.
         let mut lanes = LaneState::default();
 
-        let c5 = lanes.assign_commit(&raw(5, &[2], "Other tip"), vec![]);
+        let c5 = lanes.assign_commit(raw(5, &[2], "Other tip"), vec![]);
         assert_eq!(c5.lane, 0);
-        let c4 = lanes.assign_commit(&raw(4, &[3, 2], "Merge"), vec![]);
+        let c4 = lanes.assign_commit(raw(4, &[3, 2], "Merge"), vec![]);
         assert_eq!(c4.lane, 1);
         let to_existing = c4
             .edges
@@ -298,19 +401,19 @@ mod tests {
     fn independent_branch_tips_get_separate_lanes_and_free_slots_are_reused() {
         let mut lanes = LaneState::default();
 
-        let a = lanes.assign_commit(&raw(10, &[], "tip a (root)"), vec![]);
+        let a = lanes.assign_commit(raw(10, &[], "tip a (root)"), vec![]);
         assert_eq!(a.lane, 0);
         assert!(lanes.slots.is_empty());
 
         // Two live tips side by side.
-        let b = lanes.assign_commit(&raw(20, &[19], "tip b"), vec![]);
-        let c = lanes.assign_commit(&raw(30, &[29], "tip c"), vec![]);
+        let b = lanes.assign_commit(raw(20, &[19], "tip b"), vec![]);
+        let c = lanes.assign_commit(raw(30, &[29], "tip c"), vec![]);
         assert_eq!((b.lane, c.lane), (0, 1));
         assert_ne!(b.color_idx, c.color_idx);
 
         // Finishing lane 0 frees it, so the next new tip reuses lane 0.
-        lanes.assign_commit(&raw(19, &[], "end b"), vec![]);
-        let d = lanes.assign_commit(&raw(40, &[], "tip d"), vec![]);
+        lanes.assign_commit(raw(19, &[], "end b"), vec![]);
+        let d = lanes.assign_commit(raw(40, &[], "tip d"), vec![]);
         assert_eq!(d.lane, 0);
     }
 
@@ -318,9 +421,48 @@ mod tests {
     fn colors_wrap_after_eight_lanes() {
         let mut lanes = LaneState::default();
         let rows: Vec<_> = (1..=9u8)
-            .map(|i| lanes.assign_commit(&raw(i, &[100 + i], "tip"), vec![]))
+            .map(|i| lanes.assign_commit(raw(i, &[100 + i], "tip"), vec![]))
             .collect();
         let colors: Vec<u8> = rows.iter().map(|r| r.color_idx).collect();
         assert_eq!(colors, vec![0, 1, 2, 3, 4, 5, 6, 7, 0]);
+    }
+
+    #[test]
+    fn advance_commit_matches_assign_commit_state() {
+        let sequence = [
+            raw(10, &[9, 8], "merge"),
+            raw(9, &[7], "main"),
+            raw(8, &[7, 6], "nested merge"),
+            raw(11, &[6], "other tip"),
+            raw(7, &[5], "converged"),
+            raw(6, &[5], "converged 2"),
+            raw(5, &[], "root"),
+        ];
+
+        for split in 0..sequence.len() {
+            let mut full = LaneState::default();
+            let expected: Vec<CommitRow> = sequence
+                .iter()
+                .cloned()
+                .map(|c| full.assign_commit(c, vec![]))
+                .collect();
+
+            let mut skipped = LaneState::default();
+            for c in &sequence[..split] {
+                skipped.advance_commit(c.oid, &c.parents);
+            }
+            let actual: Vec<CommitRow> = sequence[split..]
+                .iter()
+                .cloned()
+                .map(|c| skipped.assign_commit(c, vec![]))
+                .collect();
+
+            for (exp, act) in expected[split..].iter().zip(actual.iter()) {
+                assert_eq!(exp.lane, act.lane, "split={split}");
+                assert_eq!(exp.color_idx, act.color_idx, "split={split}");
+                assert_eq!(exp.max_lanes, act.max_lanes, "split={split}");
+                assert_eq!(exp.edges, act.edges, "split={split}");
+            }
+        }
     }
 }

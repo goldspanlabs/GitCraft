@@ -204,3 +204,165 @@ fn graph_cache_notices_a_shallow_clone_being_deepened() {
     run_git(clone.path(), &["fetch", "--unshallow"]);
     assert_eq!(session.get_commit_graph(0, 100, None).unwrap().len(), 6);
 }
+
+#[test]
+fn cached_lane_geometry_matches_full_walk_across_checkpoint_boundary() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    run_git(p, &["init", "-b", "main"]);
+
+    // Build a 620-commit merge history via `git fast-import` so active lanes stay > 1
+    // across the 512-commit checkpoint boundary.
+    let mut child = Command::new("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(p)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+
+    let mut mark = 0usize;
+    let base_ts = 1_700_000_000i64;
+    let write_commit = |w: &mut std::process::ChildStdin,
+                        ref_name: &str,
+                        from: Option<usize>,
+                        merge: Option<usize>,
+                        m: usize,
+                        msg: &str| {
+        let ts = base_ts + (m as i64) * 60;
+        writeln!(w, "commit {ref_name}").unwrap();
+        writeln!(w, "mark :{m}").unwrap();
+        writeln!(w, "author Alice <alice@example.com> {ts} +0000").unwrap();
+        writeln!(w, "committer Alice <alice@example.com> {ts} +0000").unwrap();
+        writeln!(w, "data {}", msg.len()).unwrap();
+        writeln!(w, "{msg}").unwrap();
+        if let Some(f) = from {
+            writeln!(w, "from :{f}").unwrap();
+        }
+        if let Some(mg) = merge {
+            writeln!(w, "merge :{mg}").unwrap();
+        }
+        let body = format!("v{m}\n");
+        writeln!(w, "M 100644 inline file.txt").unwrap();
+        writeln!(w, "data {}", body.len()).unwrap();
+        writeln!(w, "{body}").unwrap();
+    };
+
+    mark += 1;
+    let mut main_tip = mark;
+    write_commit(&mut stdin, "refs/heads/main", None, None, mark, "root");
+
+    let mut feat_tip: Option<usize> = None;
+    let mut feat_left = 0usize;
+    while mark < 620 {
+        if feat_tip.is_none() && mark.is_multiple_of(5) && mark < 610 {
+            feat_tip = Some(main_tip);
+            feat_left = 4;
+        }
+        if let Some(ft) = feat_tip {
+            if feat_left > 0 {
+                mark += 1;
+                write_commit(
+                    &mut stdin,
+                    "refs/heads/_feat",
+                    Some(ft),
+                    None,
+                    mark,
+                    &format!("feat {mark}"),
+                );
+                feat_tip = Some(mark);
+                feat_left -= 1;
+                continue;
+            } else {
+                mark += 1;
+                write_commit(
+                    &mut stdin,
+                    "refs/heads/main",
+                    Some(main_tip),
+                    Some(ft),
+                    mark,
+                    &format!("merge {mark}"),
+                );
+                main_tip = mark;
+                feat_tip = None;
+                continue;
+            }
+        }
+        mark += 1;
+        write_commit(
+            &mut stdin,
+            "refs/heads/main",
+            Some(main_tip),
+            None,
+            mark,
+            &format!("main {mark}"),
+        );
+        main_tip = mark;
+    }
+    writeln!(stdin, "reset refs/remotes/origin/main\nfrom :{main_tip}\n").unwrap();
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    run_git(p, &["update-ref", "-d", "refs/heads/_feat"]);
+
+    for sort in [
+        gitcraft_core::CommitSort::ByDate,
+        gitcraft_core::CommitSort::Topological,
+    ] {
+        // Ground truth: fresh full walk in a separate session.
+        let baseline = open(p);
+        baseline.set_commit_sort(sort);
+        let full = baseline.get_commit_graph(0, 1000, None).unwrap();
+        assert!(
+            full.len() > 550,
+            "expected >550 commits, got {}",
+            full.len()
+        );
+
+        // Warm the compact checkpoint cache past 512 commits, then serve cache-hit pages
+        // before, at, and straddling the 512-commit checkpoint boundary.
+        let cached = open(p);
+        cached.set_commit_sort(sort);
+        let _ = cached.get_commit_graph(0, 620, None).unwrap();
+
+        for (offset, limit) in [(450u32, 50u32), (500, 40), (512, 50), (530, 60)] {
+            let page = cached.get_commit_graph(offset, limit, None).unwrap();
+            let expected = &full[offset as usize..(offset + limit) as usize];
+            assert_eq!(page.len(), expected.len());
+            for (i, (got, exp)) in page.iter().zip(expected.iter()).enumerate() {
+                let row_idx = offset as usize + i;
+                assert_eq!(got.oid_hex, exp.oid_hex, "{sort:?} row {row_idx} oid");
+                assert_eq!(got.lane, exp.lane, "{sort:?} row {row_idx} lane");
+                assert_eq!(got.color_idx, exp.color_idx, "{sort:?} row {row_idx} color");
+                assert_eq!(
+                    got.max_lanes, exp.max_lanes,
+                    "{sort:?} row {row_idx} max_lanes"
+                );
+                assert_eq!(got.edges, exp.edges, "{sort:?} row {row_idx} edges");
+                assert_eq!(got.refs, exp.refs, "{sort:?} row {row_idx} refs");
+                assert_eq!(got.is_remote_only, exp.is_remote_only);
+                assert_eq!(got.is_unpushed, exp.is_unpushed);
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_state_token_changes_when_refs_move() {
+    let dir = init_repo_with_commit();
+    let p = dir.path();
+    let session = open(p);
+
+    let before = session.graph_state_token(false).unwrap();
+    assert_eq!(before, session.graph_state_token(false).unwrap());
+
+    commit_file(p, "a.txt", "1\n", "second");
+    let after_commit = session.graph_state_token(false).unwrap();
+    assert_ne!(before, after_commit);
+
+    run_git(p, &["branch", "side"]);
+    let after_branch = session.graph_state_token(false).unwrap();
+    assert_ne!(after_commit, after_branch);
+}

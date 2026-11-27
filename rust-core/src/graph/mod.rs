@@ -5,13 +5,15 @@ mod refs;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
+use gix::bstr::ByteSlice;
+
 use crate::{CommitRow, CommitSort, GitCraftError, RefBadge, RefKind};
 
 pub use detail::get_commit_detail;
 pub use refs::{list_branches, list_tags};
 
 pub(crate) use detail::extract_commit_metadata;
-use lanes::{LaneState, RawCommit};
+use lanes::{CommitParents, LaneState, RawCommit};
 use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
 
 /// A commit SHA abbreviated to seven characters, as git shows it.
@@ -19,19 +21,50 @@ pub(crate) fn short_oid(oid_hex: &str) -> String {
     oid_hex.chars().take(7).collect()
 }
 
-/// Rows from the last graph walk, kept so that paging down doesn't re-walk history from the
+const FLAG_REMOTE_ONLY: u8 = 1 << 0;
+const FLAG_UNPUSHED: u8 = 1 << 1;
+
+/// Compact per-commit entry stored in [`CachedWalk::Indexed`] (~22 B vs ~375 B for `CommitRow`).
+#[derive(Clone, Copy)]
+struct IndexedCommit {
+    oid: gix::ObjectId,
+    flags: u8,
+}
+
+/// Snapshot [`LaneState`] every this many commits so any page can jump near `offset` and
+/// replay at most `CHECKPOINT_STRIDE - 1` commits.
+const CHECKPOINT_STRIDE: usize = 512;
+
+/// Upper bound on indexed unfiltered commits (~11 MiB at 22 B/commit).
+const MAX_INDEXED_COMMITS: usize = 500_000;
+
+/// Upper bound on cached search-result rows (search walks skip non-matching commits that still
+/// affect lane state, so search caches materialized rows directly).
+const MAX_CACHED_SEARCH_ROWS: usize = 5_000;
+
+#[derive(Default)]
+enum CachedWalk {
+    #[default]
+    Empty,
+    Indexed {
+        commits: Vec<IndexedCommit>,
+        checkpoints: Vec<LaneState>,
+        exhausted: bool,
+    },
+    Rows {
+        rows: Vec<CommitRow>,
+        exhausted: bool,
+    },
+}
+
+/// State from the last graph walk, kept so that paging down doesn't re-walk history from the
 /// tips for every page. It holds one walk, identified by `key` (refs, HEAD, query, scope and
 /// sort); any change to those starts a new walk.
 #[derive(Default)]
 pub(crate) struct GraphCache {
     key: String,
-    rows: Vec<CommitRow>,
-    /// The walk ran out of commits, so `rows` is the whole list.
-    exhausted: bool,
+    walk: CachedWalk,
 }
-
-/// Past this many rows a walk is not cached, to bound memory on very large histories.
-const MAX_CACHED_ROWS: usize = 50_000;
 
 pub(crate) type SharedGraphCache = Mutex<GraphCache>;
 
@@ -57,6 +90,37 @@ pub fn get_branch_graph(
     sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
     graph_walk(sync_repo, cache, offset, limit, search_query, true, sort)
+}
+
+/// Fingerprint of the repository's refs, HEAD, shallow boundary, scope, and sort order.
+/// Callers fetching multiple pages in a batch can compare this before and after each page
+/// to detect when refs moved mid-batch.
+pub fn graph_state_token(
+    sync_repo: &gix::ThreadSafeRepository,
+    scoped: bool,
+    sort: CommitSort,
+) -> Result<u64, GitCraftError> {
+    use std::hash::{Hash, Hasher};
+
+    let repo = sync_repo.to_thread_local();
+    let (refs_by_oid, mut tips, local_reachable) = collect_refs_and_tips(&repo)?;
+    if scoped {
+        if let Some((scoped_tips, _)) = branch_scope(&repo) {
+            tips = scoped_tips;
+        }
+    }
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        None,
+        scoped,
+        sort,
+    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    Ok(hasher.finish())
 }
 
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be
@@ -101,6 +165,7 @@ fn graph_walk(
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty());
 
+    let start = offset as usize;
     let target_count = offset.saturating_add(limit) as usize;
     let key = cache_key(
         &repo,
@@ -112,23 +177,56 @@ fn graph_walk(
         sort,
     );
     let mut cached_len = 0;
-    if let Ok(guard) = cache.lock() {
+    if let Ok(mut guard) = cache.lock() {
         if guard.key == key {
-            if guard.rows.len() >= target_count || guard.exhausted {
-                return Ok(page(&guard.rows, offset, limit));
+            match &guard.walk {
+                CachedWalk::Indexed {
+                    commits,
+                    checkpoints,
+                    exhausted,
+                } => {
+                    if commits.len() >= target_count || *exhausted {
+                        return materialize_indexed_page(
+                            &repo,
+                            &refs_by_oid,
+                            commits,
+                            checkpoints,
+                            offset,
+                            limit,
+                        );
+                    }
+                    cached_len = commits.len();
+                }
+                CachedWalk::Rows { rows, exhausted } => {
+                    if rows.len() >= target_count || *exhausted {
+                        return Ok(page(rows, offset, limit));
+                    }
+                    cached_len = rows.len();
+                }
+                CachedWalk::Empty => {}
             }
-            cached_len = guard.rows.len();
         }
+        // Drop the previous walk before allocating a new one so stale cached data doesn't
+        // coexist in memory with the replacement walk.
+        *guard = GraphCache::default();
     }
+
     // Walking further than asked, in steps that double, keeps the total cost of paging down
     // proportional to the history shown rather than to pages times history.
-    let walk_count = if target_count <= MAX_CACHED_ROWS {
+    let cache_cap = if query.is_none() {
+        MAX_INDEXED_COMMITS
+    } else {
+        MAX_CACHED_SEARCH_ROWS
+    };
+    let will_cache = target_count <= cache_cap;
+    let walk_count = if will_cache {
         target_count
             .max(cached_len.saturating_mul(2))
-            .min(MAX_CACHED_ROWS)
+            .min(cache_cap)
     } else {
         target_count
     };
+    let use_index = query.is_none() && will_cache;
 
     let has_local_refs = !local_reachable.is_empty();
     let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
@@ -152,8 +250,10 @@ fn graph_walk(
         CommitSort::Topological => {
             // Like `git log --topo-order`: a parent never appears before its children and
             // commits of one line of history are not interleaved with another's.
+            let commit_graph = repo.commit_graph_if_enabled().ok().flatten();
             let topo =
                 gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(hidden))
+                    .with_commit_graph(commit_graph)
                     .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
                     .parents(gix::traverse::commit::Parents::All)
                     .build()
@@ -167,7 +267,11 @@ fn graph_walk(
     };
 
     let mut lanes = LaneState::default();
-    let mut results: Vec<CommitRow> = Vec::new();
+    let mut indexed_commits: Vec<IndexedCommit> = Vec::new();
+    let mut checkpoints: Vec<LaneState> = Vec::new();
+    let mut cached_rows: Vec<CommitRow> = Vec::new();
+    let mut page_out: Vec<CommitRow> = Vec::new();
+    let mut matched_count: usize = 0;
 
     // Set when the walk fails after the requested range is already filled. The extra rows
     // were only a lookahead for the cache, so the page is still returned, but the partial
@@ -182,72 +286,244 @@ fn graph_walk(
         });
         let (oid, commit) = match step {
             Ok(found) => found,
-            Err(_) if results.len() >= target_count => {
+            Err(_) if matched_count >= target_count => {
                 lookahead_failed = true;
                 break;
             }
             Err(e) => return Err(e),
         };
 
-        let parents: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
+        let parents = CommitParents::from_iter(commit.parent_ids().map(|id| id.detach()));
 
-        let is_local = !has_local_refs || local_reachable.contains(&oid);
+        // Removing visited OIDs keeps `local_reachable` proportional to the active branch
+        // frontier instead of growing with total walked commits.
+        let is_local = !has_local_refs || local_reachable.remove(&oid);
         if is_local {
-            for &p in &parents {
+            for &p in parents.iter() {
                 local_reachable.insert(p);
             }
         }
+
+        if let Some(q) = query.as_deref() {
+            if !commit_matches_query(&commit, oid, q) {
+                lanes.advance_commit(oid, &parents);
+                continue;
+            }
+        }
+
+        let idx = matched_count;
         let is_remote_only = !is_local;
+        let is_unpushed = unpushed.contains(&oid);
 
-        let meta = extract_commit_metadata(&commit, false);
-        let raw = RawCommit {
-            oid,
-            parents,
-            summary: meta.summary,
-            author_name: meta.author_name,
-            author_email: meta.author_email,
-            timestamp: meta.timestamp,
-        };
-
-        let badges = refs_by_oid.get(&oid).cloned().unwrap_or_default();
-        let mut row = lanes.assign_commit(&raw, badges);
-        row.is_remote_only = is_remote_only;
-        row.is_unpushed = unpushed.contains(&oid);
-
-        let matches_query = match &query {
-            None => true,
-            Some(q) => {
-                row.summary.to_lowercase().contains(q)
-                    || row.author_name.to_lowercase().contains(q)
-                    || row.oid_hex.to_lowercase().contains(q)
+        if use_index {
+            if idx.is_multiple_of(CHECKPOINT_STRIDE) {
+                checkpoints.push(lanes.clone());
             }
-        };
-
-        if matches_query {
-            results.push(row);
-            if results.len() >= walk_count {
-                break;
+            let mut flags = 0u8;
+            if is_remote_only {
+                flags |= FLAG_REMOTE_ONLY;
             }
+            if is_unpushed {
+                flags |= FLAG_UNPUSHED;
+            }
+            indexed_commits.push(IndexedCommit { oid, flags });
+
+            if idx >= start && idx < target_count {
+                let row = build_commit_row(
+                    &commit,
+                    oid,
+                    parents,
+                    &mut lanes,
+                    &refs_by_oid,
+                    is_remote_only,
+                    is_unpushed,
+                );
+                page_out.push(row);
+            } else {
+                lanes.advance_commit(oid, &parents);
+            }
+        } else if will_cache {
+            // Search walk within cache cap: materialize rows for caching.
+            let row = build_commit_row(
+                &commit,
+                oid,
+                parents,
+                &mut lanes,
+                &refs_by_oid,
+                is_remote_only,
+                is_unpushed,
+            );
+            cached_rows.push(row);
+        } else if idx < start {
+            lanes.advance_commit(oid, &parents);
+        } else {
+            let row = build_commit_row(
+                &commit,
+                oid,
+                parents,
+                &mut lanes,
+                &refs_by_oid,
+                is_remote_only,
+                is_unpushed,
+            );
+            page_out.push(row);
+        }
+
+        matched_count += 1;
+        if matched_count >= walk_count {
+            break;
         }
     }
 
-    let exhausted = results.len() < walk_count;
-    let out = page(&results, offset, limit);
+    if !will_cache {
+        return Ok(page_out);
+    }
+
+    let exhausted = matched_count < walk_count;
+    let out = if use_index {
+        page_out
+    } else {
+        page(&cached_rows, offset, limit)
+    };
     if lookahead_failed {
         return Ok(out);
     }
     if let Ok(mut guard) = cache.lock() {
-        if results.len() <= MAX_CACHED_ROWS {
-            *guard = GraphCache {
-                key,
-                rows: results,
-                exhausted,
-            };
-        } else {
-            *guard = GraphCache::default();
-        }
+        *guard = GraphCache {
+            key,
+            walk: if use_index {
+                CachedWalk::Indexed {
+                    commits: indexed_commits,
+                    checkpoints,
+                    exhausted,
+                }
+            } else {
+                CachedWalk::Rows {
+                    rows: cached_rows,
+                    exhausted,
+                }
+            },
+        };
     }
     Ok(out)
+}
+
+fn build_commit_row(
+    commit: &gix::Commit<'_>,
+    oid: gix::ObjectId,
+    parents: CommitParents,
+    lanes: &mut LaneState,
+    refs_by_oid: &HashMap<gix::ObjectId, Vec<RefBadge>>,
+    is_remote_only: bool,
+    is_unpushed: bool,
+) -> CommitRow {
+    let meta = extract_commit_metadata(commit, false);
+    let raw = RawCommit {
+        oid,
+        parents,
+        summary: meta.summary,
+        author_name: meta.author_name,
+        author_email: meta.author_email,
+        timestamp: meta.timestamp,
+    };
+    let badges = refs_by_oid.get(&oid).cloned().unwrap_or_default();
+    let mut row = lanes.assign_commit(raw, badges);
+    row.is_remote_only = is_remote_only;
+    row.is_unpushed = is_unpushed;
+    row
+}
+
+fn materialize_indexed_page(
+    repo: &gix::Repository,
+    refs_by_oid: &HashMap<gix::ObjectId, Vec<RefBadge>>,
+    commits: &[IndexedCommit],
+    checkpoints: &[LaneState],
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<CommitRow>, GitCraftError> {
+    let start = offset as usize;
+    if start >= commits.len() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let end = start.saturating_add(limit as usize).min(commits.len());
+    let cp_idx = start / CHECKPOINT_STRIDE;
+    let cp_start = cp_idx * CHECKPOINT_STRIDE;
+    let mut lanes = checkpoints[cp_idx].clone();
+
+    for entry in &commits[cp_start..start] {
+        let commit = repo
+            .find_commit(entry.oid)
+            .map_err(GitCraftError::from_display)?;
+        let parents = CommitParents::from_iter(commit.parent_ids().map(|id| id.detach()));
+        lanes.advance_commit(entry.oid, &parents);
+    }
+
+    let mut out = Vec::with_capacity(end - start);
+    for entry in &commits[start..end] {
+        let commit = repo
+            .find_commit(entry.oid)
+            .map_err(GitCraftError::from_display)?;
+        let parents = CommitParents::from_iter(commit.parent_ids().map(|id| id.detach()));
+        let row = build_commit_row(
+            &commit,
+            entry.oid,
+            parents,
+            &mut lanes,
+            refs_by_oid,
+            (entry.flags & FLAG_REMOTE_ONLY) != 0,
+            (entry.flags & FLAG_UNPUSHED) != 0,
+        );
+        out.push(row);
+    }
+    Ok(out)
+}
+
+/// Matches a commit against an already-lowercased search query without allocating `String`s
+/// for the common ASCII case.
+fn commit_matches_query(commit: &gix::Commit<'_>, oid: gix::ObjectId, query_lower: &str) -> bool {
+    let raw_msg = commit.message_raw_sloppy();
+    let first_line = raw_msg
+        .split(|&b| b == b'\n')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if bytes_contain_ignore_case(first_line, query_lower) {
+        return true;
+    }
+    if let Ok(author) = commit.author() {
+        if bytes_contain_ignore_case(author.name.as_ref(), query_lower) {
+            return true;
+        }
+    }
+    let (hex_buf, hex_len) = oid_hex_bytes(oid);
+    bytes_contain_ignore_case(&hex_buf[..hex_len], query_lower)
+}
+
+fn bytes_contain_ignore_case(haystack: &[u8], needle_lower: &str) -> bool {
+    if needle_lower.is_ascii() && haystack.is_ascii() {
+        let needle = needle_lower.as_bytes();
+        if needle.is_empty() {
+            return true;
+        }
+        return haystack
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle));
+    }
+    haystack
+        .to_str_lossy()
+        .to_lowercase()
+        .contains(needle_lower)
+}
+
+fn oid_hex_bytes(oid: gix::ObjectId) -> ([u8; 64], usize) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let raw = oid.as_bytes();
+    let mut buf = [0u8; 64];
+    for (i, &b) in raw.iter().enumerate() {
+        buf[i * 2] = HEX[(b >> 4) as usize];
+        buf[i * 2 + 1] = HEX[(b & 0x0f) as usize];
+    }
+    (buf, raw.len() * 2)
 }
 
 fn page(rows: &[CommitRow], offset: u32, limit: u32) -> Vec<CommitRow> {
@@ -330,7 +606,12 @@ fn unpushed_head_commits(
     let Some(head_id) = head.id() else {
         return HashSet::new();
     };
-    repo.rev_walk([head_id.detach()])
+    let head_oid = head_id.detach();
+    // Fast path: when HEAD already matches any remote tip, nothing on HEAD is unpushed.
+    if remote_tips.contains(&head_oid) {
+        return HashSet::new();
+    }
+    repo.rev_walk([head_oid])
         .with_hidden(remote_tips)
         .all()
         .map(|walk| {
@@ -445,5 +726,16 @@ mod tests {
         let tags = list_tags(&sync_repo).unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].name, "v0.1.0");
+    }
+
+    #[test]
+    fn unicode_haystack_matches_ascii_query_case_insensitively() {
+        assert!(bytes_contain_ignore_case(
+            "Kelvin scale".as_bytes(),
+            "kelvin"
+        ));
+        assert!(bytes_contain_ignore_case("İpek".as_bytes(), "i"));
+        assert!(bytes_contain_ignore_case(b"Add UI Feature", "ui feature"));
+        assert!(!bytes_contain_ignore_case("İpek".as_bytes(), "xyz"));
     }
 }

@@ -75,7 +75,7 @@ dictionary GraphEdge {
 dictionary StyleSpan {
   u32 start_utf16;
   u32 len_utf16;
-  string foreground;
+  u32 foreground;
 };
 
 dictionary DiffRow {
@@ -255,6 +255,9 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   sequence<CommitRow> get_branch_graph(u32 offset, u32 limit, string? search_query);
+
+  [Throws=GitCraftError]
+  u64 graph_state_token(boolean scoped);
 
   [Throws=GitCraftError]
   CommitDetail get_commit_detail(string oid_hex);

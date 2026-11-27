@@ -20,6 +20,48 @@ extension RepoTab {
         return try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
     }
 
+    /// Fetches up to `totalLimit` commits in bounded UniFFI chunks so refreshing a deeply
+    /// scrolled history doesn't serialize tens of thousands of rows in one buffer. If refs
+    /// move between chunks, the inconsistent batch is discarded and retried (falling back to
+    /// a single atomic fetch if refs keep changing).
+    nonisolated static func graphPages(
+        _ session: RepoSession,
+        scoped: Bool,
+        totalLimit: UInt32,
+        query: String?
+    ) throws -> [CommitRow] {
+        let chunkSize: UInt32 = 2_000
+        if totalLimit <= chunkSize {
+            return try graphPage(session, scoped: scoped, offset: 0, limit: totalLimit, query: query)
+        }
+        session.setCommitSort(sort: CommitSortPreference.current.core)
+        for _ in 0..<3 {
+            let token = try session.graphStateToken(scoped: scoped)
+            var rows: [CommitRow] = []
+            rows.reserveCapacity(Int(totalLimit))
+            var offset: UInt32 = 0
+            var changed = false
+            while offset < totalLimit {
+                let remaining = totalLimit - offset
+                let request = min(chunkSize, remaining)
+                let page = try graphPage(session, scoped: scoped, offset: offset, limit: request, query: query)
+                if try session.graphStateToken(scoped: scoped) != token {
+                    changed = true
+                    break
+                }
+                rows.append(contentsOf: page)
+                if page.count < Int(request) {
+                    break
+                }
+                offset += UInt32(page.count)
+            }
+            if !changed {
+                return rows
+            }
+        }
+        return try graphPage(session, scoped: scoped, offset: 0, limit: totalLimit, query: query)
+    }
+
     /// Hides git's plumbing header lines (`index`, `---`, `+++`, mode lines). When the diff
     /// spans several files, each file's `diff --git` line is kept as a plain file name so
     /// the files stay distinguishable; a single-file diff needs no header at all.
