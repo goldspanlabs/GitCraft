@@ -279,6 +279,7 @@ impl RepoSession {
         path: String,
         commit_oid: Option<String>,
         staged: bool,
+        old_side: bool,
     ) -> Result<Option<Vec<u8>>, GitCraftError> {
         diff::read_repo_asset(
             &self.path,
@@ -286,6 +287,7 @@ impl RepoSession {
             &path,
             commit_oid.as_deref(),
             staged,
+            old_side,
         )
     }
 

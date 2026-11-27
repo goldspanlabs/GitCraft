@@ -316,6 +316,9 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         lock.unlock()
 
         let relativePath = requestURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let isOldSide = URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .contains(where: { $0.name == "diff-side" && $0.value == "old" }) ?? false
 
         queue.async { [weak self] in
             guard let self else { return }
@@ -324,9 +327,10 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
                 data = try? currentSession.getRepoAsset(
                     path: relativePath,
                     commitOid: currentCommitOid,
-                    staged: currentStaged
+                    staged: currentStaged,
+                    oldSide: isOldSide
                 )
-            } else if let rootURL {
+            } else if let rootURL, !isOldSide {
                 data = Self.boundedFileData(
                     rootURL: rootURL,
                     rootPrefix: rootPrefix,

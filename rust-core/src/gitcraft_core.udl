@@ -240,7 +240,7 @@ interface RepoSession {
   FileContentPair get_working_file_versions(string path, boolean staged);
 
   [Throws=GitCraftError]
-  bytes? get_repo_asset(string path, string? commit_oid, boolean staged);
+  bytes? get_repo_asset(string path, string? commit_oid, boolean staged, boolean old_side);
 
   [Throws=GitCraftError]
   sequence<BranchInfo> list_branches();

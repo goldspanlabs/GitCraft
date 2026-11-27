@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 
@@ -17,11 +17,11 @@ pub fn render_diff_html(old_markdown: Option<&str>, new_markdown: Option<&str>) 
         (None, None) => String::new(),
         (None, Some(new_md)) => {
             let blocks = render_blocks(new_md);
-            wrap_all(&blocks, "diff-added")
+            wrap_all(&blocks, "diff-added", false)
         }
         (Some(old_md), None) => {
             let blocks = render_blocks(old_md);
-            wrap_all(&blocks, "diff-deleted")
+            wrap_all(&blocks, "diff-deleted", true)
         }
         (Some(old_md), Some(new_md)) => {
             if old_md == new_md {
@@ -53,28 +53,34 @@ struct PendingHeading<'a> {
 /// table-of-contents links (e.g. `[Features](#features)`) scroll to the matching heading.
 fn assign_heading_ids<'a>(parser: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
     let mut out = Vec::new();
-    let mut slug_counts: HashMap<String, usize> = HashMap::new();
+    let mut used_ids: HashSet<String> = HashSet::new();
     let mut heading_buf: Option<PendingHeading<'a>> = None;
 
     for event in parser {
         if let Some(mut pending) = heading_buf.take() {
             match event {
                 Event::End(TagEnd::Heading(end_level)) => {
-                    let resolved_id = pending.id.or_else(|| {
-                        let text = collect_plain_text(&pending.inner);
-                        let base = github_slug(&text);
-                        if base.is_empty() {
-                            return None;
+                    let resolved_id = match pending.id {
+                        Some(explicit) => {
+                            used_ids.insert(explicit.to_string());
+                            Some(explicit)
                         }
-                        let count = slug_counts.entry(base.clone()).or_insert(0);
-                        let unique = if *count == 0 {
-                            base
-                        } else {
-                            format!("{base}-{count}")
-                        };
-                        *count += 1;
-                        Some(CowStr::Boxed(unique.into_boxed_str()))
-                    });
+                        None => {
+                            let text = collect_plain_text(&pending.inner);
+                            let base = github_slug(&text);
+                            if base.is_empty() {
+                                None
+                            } else {
+                                let mut candidate = base.clone();
+                                let mut suffix = 1usize;
+                                while !used_ids.insert(candidate.clone()) {
+                                    candidate = format!("{base}-{suffix}");
+                                    suffix += 1;
+                                }
+                                Some(CowStr::Boxed(candidate.into_boxed_str()))
+                            }
+                        }
+                    };
                     out.push(Event::Start(Tag::Heading {
                         level: pending.level,
                         id: resolved_id,
@@ -251,24 +257,99 @@ fn events_to_html(events: Vec<Event<'_>>) -> String {
     out
 }
 
-fn wrap_all(blocks: &[String], class_name: &str) -> String {
+fn wrap_all(blocks: &[String], class_name: &str, is_deleted: bool) -> String {
     let mut out = String::new();
     for block in blocks {
-        out.push_str("<div class=\"diff-block ");
-        out.push_str(class_name);
-        out.push_str("\">");
-        out.push_str(block);
-        out.push_str("</div>\n");
+        push_diff_block(&mut out, class_name, block, is_deleted);
     }
     out
+}
+
+fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: bool) {
+    out.push_str("<div class=\"diff-block ");
+    out.push_str(class_name);
+    out.push_str("\">");
+    if is_deleted {
+        out.push_str(&tag_deleted_assets(block));
+    } else {
+        out.push_str(block);
+    }
+    out.push_str("</div>\n");
+}
+
+/// Appends `diff-side=old` to relative `src="..."` and `srcset="..."` attributes inside
+/// deleted diff blocks so the preview asset handler resolves them from the old revision.
+fn tag_deleted_assets(html: &str) -> String {
+    let mut result = tag_attr(html, "src=\"");
+    result = tag_attr(&result, "srcset=\"");
+    result
+}
+
+fn tag_attr(html: &str, attr_prefix: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(pos) = rest.find(attr_prefix) {
+        let after_prefix = pos + attr_prefix.len();
+        out.push_str(&rest[..after_prefix]);
+        let remainder = &rest[after_prefix..];
+        let Some(end_quote) = remainder.find('"') else {
+            out.push_str(remainder);
+            return out;
+        };
+        let val = &remainder[..end_quote];
+        if attr_prefix == "srcset=\"" {
+            let tagged_parts: Vec<String> = val
+                .split(',')
+                .map(|entry| {
+                    let trimmed = entry.trim();
+                    let mut parts = trimmed.splitn(2, char::is_whitespace);
+                    let url_part = parts.next().unwrap_or("");
+                    let desc = parts.next();
+                    let tagged_url = append_old_side_param(url_part);
+                    match desc {
+                        Some(d) => format!("{tagged_url} {d}"),
+                        None => tagged_url,
+                    }
+                })
+                .collect();
+            out.push_str(&tagged_parts.join(", "));
+        } else {
+            out.push_str(&append_old_side_param(val));
+        }
+        out.push('"');
+        rest = &remainder[end_quote + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn append_old_side_param(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("data:")
+        || trimmed.starts_with('#')
+    {
+        return trimmed.to_owned();
+    }
+    let (base, frag) = match trimmed.find('#') {
+        Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
+        None => (trimmed, None),
+    };
+    let sep = if base.contains('?') { '&' } else { '?' };
+    match frag {
+        Some(f) => format!("{base}{sep}diff-side=old{f}"),
+        None => format!("{base}{sep}diff-side=old"),
+    }
 }
 
 const MAX_LCS_BLOCKS: usize = 1500;
 
 fn diff_blocks_html(old: &[String], new: &[String]) -> String {
     if old.len() > MAX_LCS_BLOCKS || new.len() > MAX_LCS_BLOCKS {
-        let mut out = wrap_all(old, "diff-deleted");
-        out.push_str(&wrap_all(new, "diff-added"));
+        let mut out = wrap_all(old, "diff-deleted", true);
+        out.push_str(&wrap_all(new, "diff-added", false));
         return out;
     }
 
@@ -296,27 +377,19 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
             i += 1;
             j += 1;
         } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
-            out.push_str("<div class=\"diff-block diff-deleted\">");
-            out.push_str(&old[i]);
-            out.push_str("</div>\n");
+            push_diff_block(&mut out, "diff-deleted", &old[i], true);
             i += 1;
         } else {
-            out.push_str("<div class=\"diff-block diff-added\">");
-            out.push_str(&new[j]);
-            out.push_str("</div>\n");
+            push_diff_block(&mut out, "diff-added", &new[j], false);
             j += 1;
         }
     }
     while i < n {
-        out.push_str("<div class=\"diff-block diff-deleted\">");
-        out.push_str(&old[i]);
-        out.push_str("</div>\n");
+        push_diff_block(&mut out, "diff-deleted", &old[i], true);
         i += 1;
     }
     while j < m {
-        out.push_str("<div class=\"diff-block diff-added\">");
-        out.push_str(&new[j]);
-        out.push_str("</div>\n");
+        push_diff_block(&mut out, "diff-added", &new[j], false);
         j += 1;
     }
     out
@@ -338,11 +411,20 @@ mod tests {
 
     #[test]
     fn deduplicates_heading_ids_like_github() {
-        let md = "## Why GitCraft?\n\n## Features\n\n## Features\n";
+        let md = "## Why GitCraft?\n\n## Features\n\n## Features-1\n\n## Features\n";
         let html = render_html(md);
         assert!(html.contains("<h2 id=\"why-gitcraft\">Why GitCraft?</h2>"));
         assert!(html.contains("<h2 id=\"features\">Features</h2>"));
-        assert!(html.contains("<h2 id=\"features-1\">Features</h2>"));
+        assert!(html.contains("<h2 id=\"features-1\">Features-1</h2>"));
+        assert!(html.contains("<h2 id=\"features-2\">Features</h2>"));
+    }
+
+    #[test]
+    fn deleted_blocks_tag_relative_assets_with_old_diff_side() {
+        let old = "![Logo](assets/logo.png)\n\n<img src=\"https://example.com/badge.svg\">\n";
+        let html = render_diff_html(Some(old), None);
+        assert!(html.contains("src=\"assets/logo.png?diff-side=old\""));
+        assert!(html.contains("src=\"https://example.com/badge.svg\""));
     }
 
     #[test]

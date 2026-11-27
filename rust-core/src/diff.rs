@@ -286,20 +286,34 @@ fn odb_blob_text(
 /// Maximum asset size (16 MiB) allowed when loading images/assets in Markdown preview.
 const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
 
-/// Reads raw asset bytes from the matching diff side (commit tree, staged index, or working tree)
-/// with symlink containment and a size cap.
+/// Reads raw asset bytes from the matching diff side (commit tree or its parent, HEAD or index,
+/// or working tree) with symlink containment and a size cap.
 pub fn read_repo_asset(
     repo_path: &Path,
     sync_repo: &gix::ThreadSafeRepository,
     path: &str,
     commit_oid: Option<&str>,
     staged: bool,
+    old_side: bool,
 ) -> Result<Option<Vec<u8>>, crate::GitCraftError> {
     if let Some(oid_hex) = commit_oid {
         let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
             .map_err(crate::GitCraftError::from_display)?;
         let repo = sync_repo.to_thread_local();
-        let Ok(commit) = repo.find_commit(oid) else {
+        let target_oid = if old_side {
+            let Some(parent_id) = repo
+                .find_commit(oid)
+                .ok()
+                .and_then(|c| c.parent_ids().next())
+                .map(|p| p.detach())
+            else {
+                return Ok(None);
+            };
+            parent_id
+        } else {
+            oid
+        };
+        let Ok(commit) = repo.find_commit(target_oid) else {
             return Ok(None);
         };
         let Ok(tree) = commit.tree() else {
@@ -312,6 +326,35 @@ pub fn read_repo_asset(
     }
 
     if staged {
+        let repo = sync_repo.to_thread_local();
+        if old_side {
+            let Ok(head_id) = repo.head_id() else {
+                return Ok(None);
+            };
+            let Ok(commit) = repo.find_commit(head_id.detach()) else {
+                return Ok(None);
+            };
+            let Ok(tree) = commit.tree() else {
+                return Ok(None);
+            };
+            let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+                return Ok(None);
+            };
+            return odb_blob_bytes(&repo, entry.oid().into());
+        }
+        let Ok(index) = repo.index() else {
+            return Ok(None);
+        };
+        let Some(entry) = index.entry_by_path(path.into()) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.id);
+    }
+
+    if old_side {
+        if !is_tracked(repo_path, path) {
+            return Ok(None);
+        }
         let repo = sync_repo.to_thread_local();
         let Ok(index) = repo.index() else {
             return Ok(None);

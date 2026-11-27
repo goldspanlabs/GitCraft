@@ -1937,36 +1937,61 @@ fn repo_asset_reads_from_matching_commit_index_or_working_tree() {
     write(dir.path(), "assets/logo.png", "v1-bytes");
     run_git(dir.path(), &["add", "assets/logo.png"]);
     run_git(dir.path(), &["commit", "-m", "add logo"]);
-    let v1_oid = rev(dir.path(), "HEAD");
 
-    write(dir.path(), "assets/logo.png", "v2-staged");
+    write(dir.path(), "assets/logo.png", "v2-committed");
+    run_git(dir.path(), &["add", "assets/logo.png"]);
+    run_git(dir.path(), &["commit", "-m", "update logo"]);
+    let v2_oid = rev(dir.path(), "HEAD");
+
+    write(dir.path(), "assets/logo.png", "v3-staged");
     session.stage("assets/logo.png".into()).unwrap();
-    write(dir.path(), "assets/logo.png", "v3-working");
+    write(dir.path(), "assets/logo.png", "v4-working");
 
     assert_eq!(
         session
-            .get_repo_asset("assets/logo.png".into(), Some(v1_oid), false)
+            .get_repo_asset("assets/logo.png".into(), Some(v2_oid.clone()), false, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v2-committed".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), Some(v2_oid), false, true)
             .unwrap()
             .as_deref(),
         Some(b"v1-bytes".as_slice())
     );
     assert_eq!(
         session
-            .get_repo_asset("assets/logo.png".into(), None, true)
+            .get_repo_asset("assets/logo.png".into(), None, true, false)
             .unwrap()
             .as_deref(),
-        Some(b"v2-staged".as_slice())
+        Some(b"v3-staged".as_slice())
     );
     assert_eq!(
         session
-            .get_repo_asset("assets/logo.png".into(), None, false)
+            .get_repo_asset("assets/logo.png".into(), None, true, true)
             .unwrap()
             .as_deref(),
-        Some(b"v3-working".as_slice())
+        Some(b"v2-committed".as_slice())
     );
     assert_eq!(
         session
-            .get_repo_asset("assets/missing.png".into(), None, false)
+            .get_repo_asset("assets/logo.png".into(), None, false, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v4-working".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, false, true)
+            .unwrap()
+            .as_deref(),
+        Some(b"v3-staged".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/missing.png".into(), None, false, false)
             .unwrap(),
         None
     );
