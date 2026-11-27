@@ -138,6 +138,9 @@ struct RepoDetailView: View {
                             }
                         },
                         onClickWorkingChanges: {
+                            // The table reports the new selection only after this, so switch the
+                            // inspector here: otherwise the pane grows while still showing the commit.
+                            tab.selectCommitFromTable(nil)
                             isBottomCollapsed = false
                             isBottomMaximized = false
                             isBottomExpandedToMax = true
