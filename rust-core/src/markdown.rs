@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 
@@ -54,6 +54,7 @@ struct PendingHeading<'a> {
 fn assign_heading_ids<'a>(parser: impl Iterator<Item = Event<'a>>) -> Vec<Event<'a>> {
     let mut out = Vec::new();
     let mut used_ids: HashSet<String> = HashSet::new();
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     let mut heading_buf: Option<PendingHeading<'a>> = None;
 
     for event in parser {
@@ -70,13 +71,17 @@ fn assign_heading_ids<'a>(parser: impl Iterator<Item = Event<'a>>) -> Vec<Event<
                             let base = github_slug(&text);
                             if base.is_empty() {
                                 None
+                            } else if used_ids.insert(base.clone()) {
+                                Some(CowStr::Boxed(base.into_boxed_str()))
                             } else {
-                                let mut candidate = base.clone();
-                                let mut suffix = 1usize;
-                                while !used_ids.insert(candidate.clone()) {
-                                    candidate = format!("{base}-{suffix}");
-                                    suffix += 1;
-                                }
+                                let suffix = next_suffix.entry(base.clone()).or_insert(1);
+                                let candidate = loop {
+                                    let c = format!("{base}-{}", *suffix);
+                                    *suffix += 1;
+                                    if used_ids.insert(c.clone()) {
+                                        break c;
+                                    }
+                                };
                                 Some(CowStr::Boxed(candidate.into_boxed_str()))
                             }
                         }
@@ -277,50 +282,165 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
     out.push_str("</div>\n");
 }
 
-/// Appends `diff-side=old` to relative `src="..."` and `srcset="..."` attributes inside
-/// deleted diff blocks so the preview asset handler resolves them from the old revision.
+/// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
+/// regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
 fn tag_deleted_assets(html: &str) -> String {
-    let mut result = tag_attr(html, "src=\"");
-    result = tag_attr(&result, "srcset=\"");
-    result
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len);
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] != b'<' {
+            let start = i;
+            while i < len && bytes[i] != b'<' {
+                i += 1;
+            }
+            out.push_str(&html[start..i]);
+            continue;
+        }
+
+        // Preserve HTML comments verbatim.
+        if html[i..].starts_with("<!--") {
+            let end = html[i + 4..]
+                .find("-->")
+                .map(|off| i + 4 + off + 3)
+                .unwrap_or(len);
+            out.push_str(&html[i..end]);
+            i = end;
+            continue;
+        }
+
+        // Only inspect opening tags (`<tag ...>`), skipping closing/declaration tags.
+        let tag_start = i;
+        i += 1;
+        if i >= len || !bytes[i].is_ascii_alphabetic() {
+            out.push('<');
+            continue;
+        }
+
+        // Copy `<tagName`.
+        while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b':')
+        {
+            i += 1;
+        }
+        out.push_str(&html[tag_start..i]);
+
+        // Scan attributes until the closing `>` of this opening tag.
+        while i < len {
+            let ws_start = i;
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            out.push_str(&html[ws_start..i]);
+            if i >= len {
+                break;
+            }
+            if bytes[i] == b'>' {
+                out.push('>');
+                i += 1;
+                break;
+            }
+            if bytes[i] == b'/' {
+                out.push('/');
+                i += 1;
+                continue;
+            }
+
+            // Read attribute name.
+            let name_start = i;
+            while i < len
+                && !bytes[i].is_ascii_whitespace()
+                && bytes[i] != b'='
+                && bytes[i] != b'>'
+                && bytes[i] != b'/'
+            {
+                i += 1;
+            }
+            let attr_name = &html[name_start..i];
+            out.push_str(attr_name);
+
+            // Optional whitespace before `=`.
+            let pre_eq = i;
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= len || bytes[i] != b'=' {
+                out.push_str(&html[pre_eq..i]);
+                continue;
+            }
+            i += 1; // consume '='
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            out.push_str(&html[pre_eq..i]);
+            if i >= len {
+                break;
+            }
+
+            let is_src = attr_name.eq_ignore_ascii_case("src");
+            let is_srcset = attr_name.eq_ignore_ascii_case("srcset");
+
+            // Read attribute value (double-quoted, single-quoted, or unquoted).
+            let (val, quote_char) = if bytes[i] == b'"' || bytes[i] == b'\'' {
+                let q = bytes[i];
+                i += 1;
+                let val_start = i;
+                while i < len && bytes[i] != q {
+                    i += 1;
+                }
+                let val = &html[val_start..i];
+                let closed = i < len && bytes[i] == q;
+                if closed {
+                    i += 1;
+                }
+                (val, Some((q as char, closed)))
+            } else {
+                let val_start = i;
+                while i < len && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                    i += 1;
+                }
+                (&html[val_start..i], None)
+            };
+
+            let rewritten = if is_srcset {
+                rewrite_srcset(val)
+            } else if is_src {
+                append_old_side_param(val)
+            } else {
+                val.to_owned()
+            };
+
+            if let Some((q, closed)) = quote_char {
+                out.push(q);
+                out.push_str(&rewritten);
+                if closed {
+                    out.push(q);
+                }
+            } else {
+                out.push_str(&rewritten);
+            }
+        }
+    }
+
+    out
 }
 
-fn tag_attr(html: &str, attr_prefix: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(pos) = rest.find(attr_prefix) {
-        let after_prefix = pos + attr_prefix.len();
-        out.push_str(&rest[..after_prefix]);
-        let remainder = &rest[after_prefix..];
-        let Some(end_quote) = remainder.find('"') else {
-            out.push_str(remainder);
-            return out;
-        };
-        let val = &remainder[..end_quote];
-        if attr_prefix == "srcset=\"" {
-            let tagged_parts: Vec<String> = val
-                .split(',')
-                .map(|entry| {
-                    let trimmed = entry.trim();
-                    let mut parts = trimmed.splitn(2, char::is_whitespace);
-                    let url_part = parts.next().unwrap_or("");
-                    let desc = parts.next();
-                    let tagged_url = append_old_side_param(url_part);
-                    match desc {
-                        Some(d) => format!("{tagged_url} {d}"),
-                        None => tagged_url,
-                    }
-                })
-                .collect();
-            out.push_str(&tagged_parts.join(", "));
-        } else {
-            out.push_str(&append_old_side_param(val));
-        }
-        out.push('"');
-        rest = &remainder[end_quote + 1..];
-    }
-    out.push_str(rest);
-    out
+fn rewrite_srcset(val: &str) -> String {
+    val.split(',')
+        .map(|entry| {
+            let trimmed = entry.trim();
+            let mut parts = trimmed.splitn(2, char::is_whitespace);
+            let url_part = parts.next().unwrap_or("");
+            let desc = parts.next();
+            let tagged_url = append_old_side_param(url_part);
+            match desc {
+                Some(d) => format!("{tagged_url} {d}"),
+                None => tagged_url,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn append_old_side_param(url: &str) -> String {
@@ -421,10 +541,32 @@ mod tests {
 
     #[test]
     fn deleted_blocks_tag_relative_assets_with_old_diff_side() {
-        let old = "![Logo](assets/logo.png)\n\n<img src=\"https://example.com/badge.svg\">\n";
+        let old = concat!(
+            "![Logo](assets/logo.png)\n\n",
+            "<img src='assets/single.png' data-src=\"keep.png\">\n",
+            "<img SRC = \"assets/spaced.png\">\n",
+            "<img src=assets/unquoted.png>\n",
+            "<source SRCSET = 'assets/a.png 1x, assets/b.png 2x'>\n",
+            "<img src=\"https://example.com/badge.svg\">\n",
+        );
         let html = render_diff_html(Some(old), None);
         assert!(html.contains("src=\"assets/logo.png?diff-side=old\""));
+        assert!(html.contains("src='assets/single.png?diff-side=old'"));
+        assert!(html.contains("data-src=\"keep.png\""));
+        assert!(html.contains("SRC = \"assets/spaced.png?diff-side=old\""));
+        assert!(html.contains("src=assets/unquoted.png?diff-side=old"));
+        assert!(html
+            .contains("SRCSET = 'assets/a.png?diff-side=old 1x, assets/b.png?diff-side=old 2x'"));
         assert!(html.contains("src=\"https://example.com/badge.svg\""));
+    }
+
+    #[test]
+    fn repeated_headings_deduplicate_without_quadratic_slowdown() {
+        let md = "# Same\n\n".repeat(2_000);
+        let html = render_html(&md);
+        assert!(html.contains("<h1 id=\"same\">Same</h1>"));
+        assert!(html.contains("<h1 id=\"same-1\">Same</h1>"));
+        assert!(html.contains("<h1 id=\"same-1999\">Same</h1>"));
     }
 
     #[test]
