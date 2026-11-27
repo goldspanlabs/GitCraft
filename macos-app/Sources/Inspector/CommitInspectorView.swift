@@ -246,6 +246,7 @@ struct CommitInspectorView: View {
                 canPreviewMarkdown: RepoTab.isMarkdownPath(tab.selectedFilePath),
                 isMarkdownPreview: tab.isMarkdownPreview,
                 markdownPreviewState: tab.markdownPreviewState,
+                repoRootPath: tab.activeCheckoutPath,
                 onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
         }

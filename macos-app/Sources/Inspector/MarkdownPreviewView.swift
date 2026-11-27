@@ -1,19 +1,23 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 /// Renders an HTML fragment produced from Markdown inside a WebKit view styled to match
 /// the native macOS diff pane.
 struct MarkdownPreviewView: NSViewRepresentable {
     let html: String
+    let repoRootPath: String?
+    let filePath: String?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(repoRootPath: repoRootPath)
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        config.setURLSchemeHandler(context.coordinator.schemeHandler, forURLScheme: RepoAssetSchemeHandler.scheme)
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -24,13 +28,37 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        guard context.coordinator.loadedHTML != html else { return }
+        context.coordinator.schemeHandler.repoRootURL = repoRootPath.map {
+            URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL
+        }
+        let baseURL = Self.baseURL(for: filePath)
+        guard context.coordinator.loadedHTML != html || context.coordinator.loadedBaseURL != baseURL else {
+            return
+        }
         context.coordinator.loadedHTML = html
-        webView.loadHTMLString(Self.wrapDocument(body: html), baseURL: nil)
+        context.coordinator.loadedBaseURL = baseURL
+        webView.loadHTMLString(Self.wrapDocument(body: html), baseURL: baseURL)
+    }
+
+    private static func baseURL(for filePath: String?) -> URL? {
+        guard let root = URL(string: "\(RepoAssetSchemeHandler.scheme)://root/") else { return nil }
+        guard let filePath, !filePath.isEmpty else { return root }
+        let dir = (filePath as NSString).deletingLastPathComponent
+        guard !dir.isEmpty, dir != "." else { return root }
+        return root.appendingPathComponent(dir, isDirectory: true)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedHTML: String?
+        var loadedBaseURL: URL?
+        let schemeHandler: RepoAssetSchemeHandler
+
+        init(repoRootPath: String?) {
+            let rootURL = repoRootPath.map {
+                URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL
+            }
+            self.schemeHandler = RepoAssetSchemeHandler(repoRootURL: rootURL)
+        }
 
         func webView(
             _ webView: WKWebView,
@@ -87,6 +115,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
           }
           main {
             max-width: 820px;
+            margin: 0 auto;
             padding: 18px 24px 32px;
           }
           h1, h2, h3, h4, h5, h6 {
@@ -171,4 +200,46 @@ struct MarkdownPreviewView: NSViewRepresentable {
         </html>
         """
     }
+}
+
+/// Serves relative repository assets (such as images referenced in README.md) to WKWebView
+/// without running into file:// origin restrictions.
+private final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "gitcraft-repo"
+    var repoRootURL: URL?
+
+    init(repoRootURL: URL?) {
+        self.repoRootURL = repoRootURL
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let rootURL = repoRootURL,
+              let requestURL = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+
+        let relativePath = requestURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let targetURL = rootURL.appendingPathComponent(relativePath).standardizedFileURL
+        let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+        guard targetURL.path.hasPrefix(rootPath),
+              let data = try? Data(contentsOf: targetURL) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+
+        let mimeType = UTType(filenameExtension: targetURL.pathExtension)?.preferredMIMEType
+            ?? "application/octet-stream"
+        let response = URLResponse(
+            url: requestURL,
+            mimeType: mimeType,
+            expectedContentLength: data.count,
+            textEncodingName: nil
+        )
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
