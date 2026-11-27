@@ -50,6 +50,17 @@ extension RepoTab {
     /// The step Undo would take back now.
     var latestUndo: UndoEntry? { undoStack.last }
 
+    /// The Edit menu's title when there is nothing to name.
+    static let genericUndoTitle = "Undo Repository Action"
+
+    /// The Edit menu item's title, naming the step it would take back.
+    var undoMenuTitle: String {
+        latestUndo.map { "Undo \($0.actionName)" } ?? Self.genericUndoTitle
+    }
+
+    /// Whether Undo can run now.
+    var canUndo: Bool { latestUndo != nil && !isBusy }
+
     /// Adds a step to the stack and shows `message` with an Undo button for it.
     func recordUndo(actionName: String, step: UndoStep, message: String) {
         let entry = UndoEntry(actionName: actionName, step: step)
@@ -88,7 +99,7 @@ extension RepoTab {
     /// Undoes the latest step. Steps are undone newest first, so an `id` that isn't the
     /// latest does nothing.
     func undo(_ id: UUID? = nil) {
-        guard let entry = latestUndo, id == nil || id == entry.id, !isBusy else { return }
+        guard canUndo, let entry = latestUndo, id == nil || id == entry.id else { return }
         let step = SendableBox(entry.step)
         performMutation(busyLabel: "Undoing \(entry.actionName)…", { session in
             try step.value.perform(in: session)

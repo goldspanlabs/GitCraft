@@ -164,7 +164,7 @@ struct RepositoryUndoMenuItem: View {
         if let tab {
             ActiveTabUndoMenuItem(tab: tab)
         } else {
-            Button("Undo Repository Action") {}
+            Button(RepoTab.genericUndoTitle) {}
                 .keyboardShortcut("z", modifiers: [.command, .option])
                 .disabled(true)
         }
@@ -175,10 +175,10 @@ private struct ActiveTabUndoMenuItem: View {
     @ObservedObject var tab: RepoTab
 
     var body: some View {
-        Button(tab.latestUndo.map { "Undo \($0.actionName)" } ?? "Undo Repository Action") {
+        Button(tab.undoMenuTitle) {
             tab.undo()
         }
         .keyboardShortcut("z", modifiers: [.command, .option])
-        .disabled(tab.latestUndo == nil || tab.isBusy)
+        .disabled(!tab.canUndo)
     }
 }

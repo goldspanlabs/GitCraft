@@ -127,6 +127,194 @@ final class UndoStackTests: XCTestCase {
         XCTAssertNil(tab.toasts.last?.action, "nothing moved, so no Undo button")
     }
 
+    private func write(_ name: String, _ contents: String) throws {
+        try contents.write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+
+    private func read(_ name: String) throws -> String {
+        try String(contentsOf: repo.appendingPathComponent(name), encoding: .utf8)
+    }
+
+    /// `git status --porcelain`, which tells staged, unstaged and untracked apart.
+    private func porcelain() throws -> [String] {
+        try git(["status", "--porcelain"], in: repo).split(separator: "\n").map(String.init)
+    }
+
+    /// A second commit on main, then a staged and an unstaged edit on top: the state a reset
+    /// back to the first commit changes, and its undo must put back.
+    private func commitAndEditOnMain() throws -> (first: String, second: String) {
+        let first = try rev("main")
+        try write("README.md", "second\n")
+        try git(["commit", "-q", "-am", "second"], in: repo)
+        try write("staged.txt", "staged\n")
+        try git(["add", "staged.txt"], in: repo)
+        try write("README.md", "unstaged edit\n")
+        return (first, try rev("main"))
+    }
+
+    // MARK: Each undoable action
+
+    @MainActor
+    func testUndoingASoftResetRestoresTheBranchAndItsStagedChanges() async throws {
+        let (first, second) = try commitAndEditOnMain()
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let statusBefore = try porcelain()
+
+        tab.resetTo(first, mode: .soft)
+        try await waitFor("the soft reset") { try self.rev("main") == first && tab.latestUndo != nil && !tab.isBusy }
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Reset")
+
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == second && tab.undoStack.isEmpty && !tab.isBusy }
+        XCTAssertEqual(try porcelain(), statusBefore, "staged and unstaged changes are as they were")
+        XCTAssertEqual(try read("README.md"), "unstaged edit\n")
+        XCTAssertNil(tab.errorMessage)
+    }
+
+    @MainActor
+    func testUndoingAMixedResetRestoresTheBranchAndKeepsTheFiles() async throws {
+        let (first, second) = try commitAndEditOnMain()
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.resetTo(first, mode: .mixed)
+        try await waitFor("the mixed reset") { try self.rev("main") == first && tab.latestUndo != nil && !tab.isBusy }
+
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == second && tab.undoStack.isEmpty && !tab.isBusy }
+        // Git doesn't keep the earlier staging, so the staged file comes back unstaged.
+        XCTAssertEqual(try porcelain(), [" M README.md", "?? staged.txt"])
+        XCTAssertEqual(try read("README.md"), "unstaged edit\n")
+        XCTAssertEqual(try read("staged.txt"), "staged\n")
+    }
+
+    @MainActor
+    func testUndoingARevertBringsTheChangeBack() async throws {
+        try write("README.md", "changed\n")
+        try git(["commit", "-q", "-am", "change readme"], in: repo)
+        let change = try rev("main")
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.revertCommit(change)
+        try await waitFor("the revert") { tab.latestUndo != nil && !tab.isBusy }
+        XCTAssertEqual(try read("README.md"), "hello\n")
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Revert")
+
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == change && tab.undoStack.isEmpty && !tab.isBusy }
+        XCTAssertEqual(try read("README.md"), "changed\n")
+        XCTAssertEqual(try porcelain(), [])
+    }
+
+    @MainActor
+    func testUndoingACherryPickKeepsUnrelatedLocalEdits() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let before = try rev("main")
+        try write("README.md", "local edit\n")
+
+        try await cherryPickOther(tab)
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == before && tab.undoStack.isEmpty && !tab.isBusy }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repo.appendingPathComponent("picked.txt").path))
+        XCTAssertEqual(try read("README.md"), "local edit\n", "an edit to another file survives the undo")
+        XCTAssertEqual(try porcelain(), [" M README.md"])
+    }
+
+    // MARK: What isn't undoable
+
+    @MainActor
+    func testAHardResetRecordsNoUndo() async throws {
+        let (first, _) = try commitAndEditOnMain()
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.resetTo(first, mode: .hard)
+        let confirmation = try XCTUnwrap(tab.pendingConfirmation, "a hard reset asks first")
+        tab.executeConfirmed(confirmation)
+        try await waitFor("the hard reset") { try self.rev("main") == first && !tab.isBusy }
+
+        XCTAssertTrue(tab.undoStack.isEmpty, "the discarded changes can't be brought back")
+        XCTAssertFalse(tab.canUndo)
+    }
+
+    @MainActor
+    func testAConflictingCherryPickRecordsNoUndo() async throws {
+        try git(["checkout", "-q", "other"], in: repo)
+        try write("README.md", "other side\n")
+        try git(["commit", "-q", "-am", "other readme"], in: repo)
+        try git(["checkout", "-q", "main"], in: repo)
+        try write("README.md", "main side\n")
+        try git(["commit", "-q", "-am", "main readme"], in: repo)
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.cherryPick(try rev("other"))
+        try await waitFor("the conflict to be reported") { tab.errorMessage != nil && !tab.isBusy }
+
+        XCTAssertTrue(tab.undoStack.isEmpty, "the banner's Abort covers a stopped cherry-pick")
+        XCTAssertFalse(tab.toasts.contains { $0.action != nil })
+        try git(["cherry-pick", "--abort"], in: repo)
+    }
+
+    // MARK: Refusal and labels
+
+    @MainActor
+    func testAStaleUndoIsRefusedAndChangesNothing() async throws {
+        let tab = try RepoTab(url: repo)
+        // Let the first load finish (it prunes the stack once), and stop the watcher, so
+        // nothing prunes the stale step before the undo runs.
+        try await waitFor("the first load") { !tab.branches.isEmpty }
+        tab.stopWatcher()
+        let main = try rev("main")
+
+        // A step whose "after" isn't where HEAD is: what's left once the branch moved on.
+        let stale = HeadMove(
+            before: HeadPosition(oid: main, branch: "refs/heads/main"),
+            after: HeadPosition(oid: try rev("other"), branch: "refs/heads/main")
+        )
+        tab.recordUndo(actionName: "Cherry Pick", step: .moveHead(stale, mode: .keep), message: "Cherry-picked.")
+        tab.undo()
+        try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+
+        XCTAssertEqual(try rev("main"), main, "the refused undo leaves the branch alone")
+        XCTAssertTrue(tab.undoStack.isEmpty, "a step that can't be undone leaves the stack")
+        XCTAssertFalse(tab.toasts.contains { $0.action != nil }, "and its note goes too")
+        XCTAssertTrue(tab.errorMessage?.contains("nothing to undo") == true, tab.errorMessage ?? "")
+    }
+
+    @MainActor
+    func testTheMenuTitleNamesTheLatestStep() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        XCTAssertEqual(tab.undoMenuTitle, RepoTab.genericUndoTitle)
+        XCTAssertFalse(tab.canUndo)
+
+        try await cherryPickOther(tab)
+
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Cherry Pick")
+        XCTAssertTrue(tab.canUndo)
+    }
+
+    @MainActor
+    func testTheDoneNoteSaysWhereTheBranchIsNow() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let before = try rev("main")
+
+        try await cherryPickOther(tab)
+        tab.undo()
+        try await waitFor("the undo") { tab.undoStack.isEmpty && !tab.isBusy }
+
+        XCTAssertEqual(
+            tab.toasts.last?.message,
+            "Undid Cherry Pick. \"main\" is back at \(before.shortOid)."
+        )
+    }
+
     @MainActor
     func testTheStackForgetsTheOldestPastItsLimit() throws {
         let tab = try RepoTab(url: repo)

@@ -229,6 +229,42 @@ fn a_failed_cherry_pick_reports_an_error_not_a_move() {
 }
 
 #[test]
+fn undoing_a_cherry_pick_refuses_when_a_local_edit_touches_the_picked_file() {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["checkout", "-q", "-b", "other"]);
+    let picked = commit_file(dir.path(), "a.txt", "picked\n", "change a");
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+    let session = open(dir.path());
+
+    let moved = session.cherry_pick(picked).unwrap().unwrap();
+    // An edit on top of the picked change: undoing would have to overwrite it.
+    write(dir.path(), "a.txt", "edited after the pick\n");
+
+    assert!(session
+        .undo_head_move(moved.after.clone(), moved.before.oid, ResetMode::Keep)
+        .is_err());
+    assert_eq!(head(dir.path()), moved.after.oid, "the branch stays put");
+    assert_eq!(read(dir.path(), "a.txt"), "edited after the pick\n");
+}
+
+#[test]
+fn undo_head_move_rejects_a_bad_target() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let here = session.head_position().unwrap();
+
+    for target in ["--hard", "   ", "no-such-commit"] {
+        assert!(
+            session
+                .undo_head_move(here.clone(), target.into(), ResetMode::Keep)
+                .is_err(),
+            "{target:?} must be refused"
+        );
+    }
+    assert_eq!(session.head_position().unwrap(), here);
+}
+
+#[test]
 fn undo_refuses_once_the_branch_has_moved_on() {
     let dir = init_repo_with_commit();
     let first = head(dir.path());
