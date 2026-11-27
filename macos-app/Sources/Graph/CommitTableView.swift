@@ -44,6 +44,7 @@ struct CommitTableView: NSViewRepresentable {
     /// The checked-out branch's name; empty when HEAD is detached.
     let currentBranch: String
     let onCommitAction: (CommitAction, String) -> Void
+    var onClickWorkingChanges: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -84,6 +85,7 @@ struct CommitTableView: NSViewRepresentable {
             return table.selectedRowIndexes.compactMap { coordinator.commitOid(atRow: $0) }
         }
         table.onCopy = { [weak coordinator = context.coordinator] in coordinator?.onCopyOids($0) }
+        table.onClickWorkingChanges = { [weak coordinator = context.coordinator] in coordinator?.onClickWorkingChanges() }
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit"))
         column.resizingMask = .autoresizingMask
@@ -159,6 +161,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCheckoutCommit = onCheckoutCommit
         coordinator.currentBranch = currentBranch
         coordinator.onCommitAction = onCommitAction
+        coordinator.onClickWorkingChanges = onClickWorkingChanges
 
         if isAppendOnly {
             // Pagination only appends commits at the bottom; inserting the new rows leaves
@@ -230,6 +233,7 @@ struct CommitTableView: NSViewRepresentable {
         var onCheckoutCommit: (String) -> Void
         var currentBranch = ""
         var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
+        var onClickWorkingChanges: () -> Void = {}
         var lastHandledScrollID: UUID?
         var isRestoringSelection = false
         weak var tableView: NSTableView?

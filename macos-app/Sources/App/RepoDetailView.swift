@@ -4,6 +4,9 @@ import SwiftUI
 struct RepoDetailView: View {
     @ObservedObject var workspace: WorkspaceState
     @ObservedObject var tab: RepoTab
+    @State private var isBottomExpandedToMax = false
+    @AppStorage(BottomPanelDefaults.collapsedKey) private var isBottomCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isBottomMaximized = false
 
     /// The tooltip on a disabled Continue button while conflicts remain.
     private var conflictsBlockContinue: String? {
@@ -66,7 +69,12 @@ struct RepoDetailView: View {
             // Main Split: Commit Graph (top) + Diff/Staging Inspector (bottom)
             // The working-changes inspector has no tab strip to reopen a collapsed pane from, so
             // only a selected commit's inspector can be collapsed by dragging.
-            PersistentVSplit(minTop: 200, minBottom: 312, canCollapse: tab.selectedCommit != nil) {
+            PersistentVSplit(
+                minTop: 200,
+                minBottom: 312,
+                canCollapse: tab.selectedCommit != nil,
+                isExpandedToMax: $isBottomExpandedToMax
+            ) {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,
@@ -114,6 +122,13 @@ struct RepoDetailView: View {
                             case let .reset(mode): tab.resetTo(oid, mode: mode)
                             case .cherryPick: tab.cherryPick(oid)
                             case .revert: tab.revertCommit(oid)
+                            }
+                        },
+                        onClickWorkingChanges: {
+                            withAnimation(BottomPanelDefaults.animation) {
+                                isBottomCollapsed = false
+                                isBottomMaximized = false
+                                isBottomExpandedToMax = true
                             }
                         }
                     )
@@ -166,6 +181,20 @@ struct RepoDetailView: View {
             }
             .animation(.easeOut(duration: 0.2), value: tab.toasts.map(\.id))
             .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
+            .onChange(of: tab.selectedCommit?.oidHex) { _, newValue in
+                if newValue != nil, isBottomExpandedToMax {
+                    withAnimation(BottomPanelDefaults.animation) {
+                        isBottomExpandedToMax = false
+                    }
+                }
+            }
+            .onChange(of: tab.selectedCommits.isEmpty) { _, isEmpty in
+                if !isEmpty, isBottomExpandedToMax {
+                    withAnimation(BottomPanelDefaults.animation) {
+                        isBottomExpandedToMax = false
+                    }
+                }
+            }
         }
         .modifier(RepoSheets(tab: tab))
         // Hairline under the toolbar: the title bar's own separator doesn't show here.

@@ -13,6 +13,9 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
     /// Whether dragging the divider down can collapse the bottom pane. Off for a bottom pane that
     /// has no tab strip to reopen it from; the divider then only resizes.
     var canCollapse = true
+    /// When true, expands the bottom pane to `maxBottom` (leaving `minTop` for the top pane)
+    /// without overwriting `storedHeight` or entering the full-split `isMaximized` mode.
+    @Binding var isExpandedToMax: Bool
     @ViewBuilder let top: () -> Top
     @ViewBuilder let bottom: () -> Bottom
 
@@ -25,7 +28,8 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
     var body: some View {
         GeometryReader { geo in
             let maxBottom = max(minBottom, geo.size.height - minTop - 1)
-            let expandedHeight = min(max(CGFloat(storedHeight), minBottom), maxBottom)
+            let targetHeight = isExpandedToMax ? maxBottom : CGFloat(storedHeight)
+            let expandedHeight = min(max(targetHeight, minBottom), maxBottom)
             let bottomHeight = isCollapsed ? BottomPanelDefaults.collapsedHeight : expandedHeight
 
             VStack(spacing: 0) {
@@ -79,6 +83,9 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
         if dragStartHeight == nil {
             dragStartHeight = Double(currentHeight)
             dragStartedCollapsed = isCollapsed
+        }
+        if isExpandedToMax {
+            isExpandedToMax = false
         }
         let proposed = CGFloat(dragStartHeight ?? Double(currentHeight)) - translation
 

@@ -5,6 +5,17 @@ final class CommitNSTableView: NSTableView, NSMenuItemValidation {
     /// The selected commits' SHAs in list order; empty when the selection has no commit.
     var oidsForCopy: () -> [String] = { [] }
     var onCopy: ([String]) -> Void = { _ in }
+    var onClickWorkingChanges: () -> Void = {}
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let clickedRow = row(at: point)
+        let isPlainClick = event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty
+        if clickedRow == 0 && isPlainClick {
+            onClickWorkingChanges()
+        }
+        super.mouseDown(with: event)
+    }
 
     @objc func copy(_: Any?) {
         let oids = oidsForCopy()
