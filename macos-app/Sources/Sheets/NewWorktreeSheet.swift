@@ -82,7 +82,7 @@ struct NewWorktreeSheet: View {
             }
             return start
         }
-        return tab.currentBranch.isEmpty ? "HEAD" : tab.currentBranch
+        return tab.currentBranchLabel
     }
 
     private var activeSuffix: String {
@@ -321,24 +321,16 @@ struct NewWorktreeSheet: View {
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
         let currentParent = URL(fileURLWithPath: folderPath).deletingLastPathComponent()
-        if FileManager.default.fileExists(atPath: currentParent.path) {
-            panel.directoryURL = currentParent
-        } else {
-            panel.directoryURL = URL(fileURLWithPath: tab.repoPath).deletingLastPathComponent()
-        }
-        guard panel.runModal() == .OK, let chosen = panel.url else { return }
+        let start = FileManager.default.fileExists(atPath: currentParent.path)
+            ? currentParent
+            : URL(fileURLWithPath: tab.repoPath).deletingLastPathComponent()
+        guard let chosen = pickFolder(startingIn: start) else { return }
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: chosen.path)) ?? []
         if contents.isEmpty {
             folderPath = chosen.path
         } else {
-            let repoName = URL(fileURLWithPath: tab.repoPath).lastPathComponent
+            let repoName = tab.repoPath.folderName
             let name = Self.suggestedFolderName(repoName: repoName, suffix: activeSuffix)
             folderPath = chosen.appendingPathComponent(name).path
         }

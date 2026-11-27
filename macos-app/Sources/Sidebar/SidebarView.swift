@@ -383,7 +383,7 @@ private struct WorktreeRowView: View {
 
     /// A worktree is identified by its folder, like the repository's own name for the main checkout.
     private var title: String {
-        URL(fileURLWithPath: worktree.path).lastPathComponent
+        worktree.path.folderName
     }
 
     /// The branch is already listed under Local Branches, so only a detached HEAD, which has

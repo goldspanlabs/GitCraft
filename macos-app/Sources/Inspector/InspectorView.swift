@@ -14,12 +14,7 @@ struct ExpandedDescriptionSheet: View {
                 .font(.system(size: 13))
                 .scrollContentBackground(.hidden)
                 .padding(6)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                )
+                .inputFieldBox()
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
@@ -222,14 +217,7 @@ private struct WorkingChangesInspectorView: View {
                     .focusable()
                     .focused($fileListFocused)
                     .focusEffectDisabled()
-                    .onKeyPress(.upArrow) {
-                        tab.moveWorkingFileSelection(by: -1)
-                        return .handled
-                    }
-                    .onKeyPress(.downArrow) {
-                        tab.moveWorkingFileSelection(by: 1)
-                        return .handled
-                    }
+                    .arrowKeySelection { tab.moveWorkingFileSelection(by: $0) }
                     .onChange(of: tab.selectedFilePath) { scrollToSelection(proxy) }
                     .onChange(of: tab.selectedFileStaged) { scrollToSelection(proxy) }
                 }
@@ -313,12 +301,7 @@ private struct CommitMessageFields: View {
                 .font(.system(size: 12))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                )
+                .inputFieldBox()
                 .accessibilityIdentifier("commit-summary")
 
             ZStack(alignment: .topLeading) {
@@ -351,12 +334,7 @@ private struct CommitMessageFields: View {
             .sheet(isPresented: $isExpandingDescription) {
                 ExpandedDescriptionSheet(text: $draft.body)
             }
-            .background(Color(nsColor: .textBackgroundColor))
-            .cornerRadius(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-            )
+            .inputFieldBox()
         }
     }
 }
@@ -384,8 +362,7 @@ private struct WorkingFileSection<RowContent: View>: View {
         Group {
             HStack {
                 Text("\(title) (\(files.count))")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .sectionTitleStyle()
                 Spacer()
                 if !files.isEmpty {
                     Button(actionTitle, action: onAction)
@@ -529,9 +506,7 @@ private struct DiffHeaderBar: View {
                     .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .paneHeaderBar()
     }
 }
 

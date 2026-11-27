@@ -11,4 +11,10 @@ extension String {
     var shortOid: String {
         String(prefix(7))
     }
+
+    /// The last component of this path, such as `repo` for `/Users/me/repo`. Checkouts are
+    /// named by their folder.
+    var folderName: String {
+        URL(fileURLWithPath: self).lastPathComponent
+    }
 }

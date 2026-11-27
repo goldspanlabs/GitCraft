@@ -21,6 +21,8 @@ final class WorkspaceState: ObservableObject {
     static var isTerminating = false
 
     private static let recentKey = "recentRepositories"
+    /// The single recent repository older versions saved, read once and moved into `recentKey`.
+    private static let legacyRecentKey = "recentRepository"
     private static let openTabsKey = "openRepositoryTabs"
 
     private var repoControllers: [RepoWindowController] = []
@@ -49,7 +51,7 @@ final class WorkspaceState: ObservableObject {
     }) {
         self.gitAvailabilityProvider = gitAvailabilityProvider
         recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
-        if let legacy = UserDefaults.standard.string(forKey: "recentRepository"),
+        if let legacy = UserDefaults.standard.string(forKey: Self.legacyRecentKey),
            !recentPaths.contains(legacy)
         {
             recentPaths.insert(legacy, at: 0)
@@ -132,32 +134,64 @@ final class WorkspaceState: ObservableObject {
         return opened
     }
 
-    @discardableResult
-    func chooseRepository() -> Bool {
-        if refreshGitAvailability() != .available {
+    /// True when git can be used. Otherwise shows the welcome window, which explains what is
+    /// missing.
+    private func requireGit() -> Bool {
+        guard refreshGitAvailability() == .available else {
             ensureWelcomeVisible()
             return false
         }
-        return presentOpenRepositoryPanel()
+        return true
+    }
+
+    /// Like `requireGit()`, checking for git off the main thread.
+    private func requireGitAsync() async -> Bool {
+        guard await refreshGitAvailabilityAsync() == .available else {
+            ensureWelcomeVisible()
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    func chooseRepository() -> Bool {
+        requireGit() && presentOpenRepositoryPanel()
     }
 
     @discardableResult
     func chooseRepositoryAsync() async -> Bool {
-        if await refreshGitAvailabilityAsync() != .available {
-            ensureWelcomeVisible()
-            return false
-        }
+        guard await requireGitAsync() else { return false }
         return presentOpenRepositoryPanel()
     }
 
     private func presentOpenRepositoryPanel() -> Bool {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open Repository"
-        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        guard let url = pickFolder(prompt: "Open Repository", canCreateFolders: false) else { return false }
         return openRepository(at: url, validateGit: false)
+    }
+
+    enum NewRepositoryOutcome: Equatable {
+        case opened
+        /// The sheet was closed while the repository was being made, so it isn't opened.
+        case cancelled
+        case failed(String)
+    }
+
+    /// Runs `make`, which creates a repository at `path`, off the main thread, then opens it in a
+    /// tab. `isCancelled` is asked once `make` has finished. `openFailure` is the message used
+    /// when the new repository can't be opened and no better reason is known.
+    func makeAndOpenRepository(
+        at path: String,
+        openFailure: String,
+        isCancelled: () -> Bool,
+        make: @escaping @Sendable () throws -> Void
+    ) async -> NewRepositoryOutcome {
+        do {
+            try await Task.detached(priority: .userInitiated) { try make() }.value
+        } catch {
+            return .failed(error.displayMessage)
+        }
+        if isCancelled() { return .cancelled }
+        return openRepository(at: URL(fileURLWithPath: path)) ? .opened : .failed(openError ?? openFailure)
     }
 
     /// Opens `url` in a new tab, or brings its existing tab to the front.
@@ -168,19 +202,13 @@ final class WorkspaceState: ObservableObject {
 
     @discardableResult
     func openRepositoryAsync(at url: URL) async -> Bool {
-        if await refreshGitAvailabilityAsync() != .available {
-            ensureWelcomeVisible()
-            return false
-        }
+        guard await requireGitAsync() else { return false }
         return openRepository(at: url, validateGit: false)
     }
 
     @discardableResult
     private func openRepository(at url: URL, validateGit: Bool) -> Bool {
-        if validateGit, refreshGitAvailability() != .available {
-            ensureWelcomeVisible()
-            return false
-        }
+        if validateGit, !requireGit() { return false }
         let resolvedPath = RepoTab.canonicalPath(for: url.path)
         let resolved = URL(fileURLWithPath: resolvedPath)
         if let existing = repoControllers.first(where: { $0.tab.contains(checkoutPath: resolvedPath) }) {
@@ -222,10 +250,7 @@ final class WorkspaceState: ObservableObject {
     }
 
     func openWelcome() {
-        let controller = WelcomeWindowController(workspace: self)
-        welcomeControllers.append(controller)
-        refreshActiveTab()
-        controller.showInTabs()
+        addWelcomeController().showInTabs()
     }
 
     private func ensureWelcomeVisible() {
@@ -238,25 +263,23 @@ final class WorkspaceState: ObservableObject {
     }
 
     func openNewWindow() {
+        addWelcomeController().showInNewWindow()
+    }
+
+    private func addWelcomeController() -> WelcomeWindowController {
         let controller = WelcomeWindowController(workspace: self)
         welcomeControllers.append(controller)
         refreshActiveTab()
-        controller.showInNewWindow()
+        return controller
     }
 
     func restoreClosedTab() {
-        guard refreshGitAvailability() == .available else {
-            ensureWelcomeVisible()
-            return
-        }
+        guard requireGit() else { return }
         popAndRestoreClosedTab()
     }
 
     func restoreClosedTabAsync() async {
-        guard await refreshGitAvailabilityAsync() == .available else {
-            ensureWelcomeVisible()
-            return
-        }
+        guard await requireGitAsync() else { return }
         popAndRestoreClosedTab()
     }
 
@@ -273,7 +296,7 @@ final class WorkspaceState: ObservableObject {
         recentPaths = []
         guard !Self.isUITestRun else { return }
         UserDefaults.standard.removeObject(forKey: Self.recentKey)
-        UserDefaults.standard.removeObject(forKey: "recentRepository")
+        UserDefaults.standard.removeObject(forKey: Self.legacyRecentKey)
     }
 
     func focusCommitFilter() {

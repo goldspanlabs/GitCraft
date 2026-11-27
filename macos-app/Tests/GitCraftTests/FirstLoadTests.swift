@@ -121,33 +121,6 @@ final class FirstLoadTests: XCTestCase {
     }
 
     private func makeRepo(commit: Bool = true) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("gitcraft-first-load-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try git(["init", "-b", "main"], in: url)
-        try git(["config", "user.name", "GitCraft Tests"], in: url)
-        try git(["config", "user.email", "tests@gitcraft.local"], in: url)
-        try "hello\n".write(to: url.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
-        if commit {
-            try git(["add", "README.md"], in: url)
-            try git(["commit", "-m", "initial"], in: url)
-        }
-        return url
-    }
-
-    @discardableResult
-    private func git(_ arguments: [String], in directory: URL) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed: \(output)")
-        return output
+        try makeTestRepository(at: temporaryFolderURL("gitcraft-first-load-test"), commit: commit)
     }
 }

@@ -8,7 +8,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let symlink = root.appendingPathComponent("repo-link", isDirectory: true)
         try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: repo)
 
@@ -26,7 +26,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let wtA = root.appendingPathComponent("wt-a", isDirectory: true)
         let wtB = root.appendingPathComponent("wt-b", isDirectory: true)
         try git(["worktree", "add", "-b", "branch-a", wtA.path], in: repo)
@@ -45,7 +45,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         let gone = root.appendingPathComponent("gone", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
@@ -94,7 +94,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         let locked = root.appendingPathComponent("locked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
@@ -128,7 +128,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
 
@@ -154,7 +154,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
         try "unsaved work\n".write(
@@ -223,7 +223,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
 
@@ -259,7 +259,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let tab = try RepoTab(url: repo)
         defer { tab.stopWatcher() }
 
@@ -293,7 +293,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
 
@@ -335,7 +335,7 @@ final class WorktreeTabTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         // A bare-backed repository has no primary checkout, so the only fallback for wt1 is wt2.
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
         let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
@@ -379,7 +379,7 @@ final class WorktreeTabTests: XCTestCase {
 
         // The only other checkout lives inside the active one, so removing the active one
         // would delete it too.
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
         let outer = root.appendingPathComponent("outer", isDirectory: true)
@@ -405,7 +405,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
         let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
@@ -420,7 +420,7 @@ final class WorktreeTabTests: XCTestCase {
 
         // An unrelated repository now sits where the fallback checkout was.
         try FileManager.default.removeItem(atPath: other.path)
-        _ = try makeRepo(at: URL(fileURLWithPath: other.path, isDirectory: true))
+        _ = try makeTestRepository(at: URL(fileURLWithPath: other.path, isDirectory: true))
 
         tab.removeWorktree(path: active, label: "main", force: false)
         let deadline = Date().addingTimeInterval(10)
@@ -438,7 +438,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
 
@@ -465,7 +465,7 @@ final class WorktreeTabTests: XCTestCase {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let repo = try makeRepo(at: root.appendingPathComponent("repo", isDirectory: true))
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
         let linked = root.appendingPathComponent("linked", isDirectory: true)
         try git(["worktree", "add", "-b", "linked", linked.path], in: repo)
 
@@ -494,7 +494,7 @@ final class WorktreeTabTests: XCTestCase {
 
         // A bare-backed repository has no separate main folder, so the first checkout git lists
         // doubles as the tab's `repoPath`.
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
         let wt1 = root.appendingPathComponent("wt1", isDirectory: true)
@@ -525,7 +525,7 @@ final class WorktreeTabTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         // A bare-backed repository with a single checkout has nowhere else to go.
-        let source = try makeRepo(at: root.appendingPathComponent("source", isDirectory: true))
+        let source = try makeTestRepository(at: root.appendingPathComponent("source", isDirectory: true))
         let bare = root.appendingPathComponent("origin.git", isDirectory: true)
         try git(["clone", "--bare", source.path, bare.path], in: root)
         let only = root.appendingPathComponent("only", isDirectory: true)
@@ -551,37 +551,6 @@ final class WorktreeTabTests: XCTestCase {
             .appendingPathComponent("gitcraft-wt-test-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
-    }
-
-    private func makeRepo(at url: URL) throws -> URL {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try git(["init", "-b", "main"], in: url)
-        try git(["config", "user.name", "GitCraft Tests"], in: url)
-        try git(["config", "user.email", "tests@gitcraft.local"], in: url)
-        try "hello\n".write(
-            to: url.appendingPathComponent("README.md"),
-            atomically: true,
-            encoding: .utf8
-        )
-        try git(["add", "README.md"], in: url)
-        try git(["commit", "-m", "initial"], in: url)
-        return url
-    }
-
-    @discardableResult
-    private func git(_ arguments: [String], in directory: URL) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " ")) failed: \(output)")
-        return output
     }
 }
 

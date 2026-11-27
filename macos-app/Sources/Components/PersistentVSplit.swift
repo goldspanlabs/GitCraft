@@ -89,7 +89,7 @@ struct PersistentVSplit<Top: View, Bottom: View>: View {
         }
 
         if shouldCollapse != isCollapsed {
-            withAnimation(.easeInOut(duration: 0.18)) { isCollapsed = shouldCollapse }
+            withAnimation(BottomPanelDefaults.animation) { isCollapsed = shouldCollapse }
         }
         if shouldCollapse {
             // The drag shrank the stored height on its way down; put back the height the pane had

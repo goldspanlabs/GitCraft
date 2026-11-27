@@ -60,13 +60,7 @@ struct CreateRepositorySheet: View {
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = pickFolder() else { return }
         folderPath = url.path
         errorMessage = nil
     }
@@ -79,20 +73,18 @@ struct CreateRepositorySheet: View {
         isCreating = true
         errorMessage = nil
         Task {
-            do {
-                try await Task.detached(priority: .userInitiated) {
-                    try initRepository(path: path, initialBranch: branch.isEmpty ? nil : branch)
-                }.value
-                isCreating = false
-                guard !isDismissed else { return }
-                if workspace.openRepository(at: URL(fileURLWithPath: path)) {
-                    onDismiss()
-                } else {
-                    errorMessage = workspace.openError ?? "Repository created, but failed to open."
-                }
-            } catch {
-                isCreating = false
-                errorMessage = error.displayMessage
+            let outcome = await workspace.makeAndOpenRepository(
+                at: path,
+                openFailure: "Repository created, but failed to open.",
+                isCancelled: { isDismissed }
+            ) {
+                try initRepository(path: path, initialBranch: branch.isEmpty ? nil : branch)
+            }
+            isCreating = false
+            switch outcome {
+            case .opened: onDismiss()
+            case .cancelled: break
+            case let .failed(message): errorMessage = message
             }
         }
     }

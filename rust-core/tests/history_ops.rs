@@ -5,12 +5,8 @@ mod common;
 
 use std::{fs, path::Path};
 
-use common::{commit_file, head, init_repo_with_commit, open, run_git, write};
+use common::{commit_file, head, init_repo_with_commit, open, rev, run_git, write};
 use gitcraft_core::ResetMode;
-
-fn rev(dir: &Path, name: &str) -> String {
-    run_git(dir, &["rev-parse", name]).trim().to_owned()
-}
 
 fn read(dir: &Path, name: &str) -> String {
     fs::read_to_string(dir.join(name)).unwrap()

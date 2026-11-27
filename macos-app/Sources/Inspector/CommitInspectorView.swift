@@ -22,7 +22,7 @@ private struct BottomPaneBar: View {
                         selection.wrappedValue = item
                         // Picking a tab while collapsed reopens the panel at its last height.
                         if isCollapsed {
-                            withAnimation(.easeInOut(duration: 0.18)) { isCollapsed = false }
+                            withAnimation(BottomPanelDefaults.animation) { isCollapsed = false }
                         }
                     } label: {
                         Text(item.rawValue)
@@ -41,7 +41,7 @@ private struct BottomPaneBar: View {
             }
             Spacer()
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(BottomPanelDefaults.animation) {
                     // From the collapsed strip this only reopens the panel at its last height;
                     // a second click maximizes.
                     if isCollapsed {
@@ -74,7 +74,7 @@ private struct BottomPaneBar: View {
         // the same toggle as a labeled action on the bar.
         .accessibilityElement(children: .contain)
         .accessibilityAction(named: isCollapsed ? "Show Panel" : "Collapse Panel") {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(BottomPanelDefaults.animation) {
                 if isMaximized { isMaximized = false }
                 isCollapsed.toggle()
             }
@@ -207,8 +207,7 @@ struct CommitInspectorView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text("CHANGED FILES (\(tab.commitDetail?.files.count ?? 0))")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .sectionTitleStyle()
                     Spacer()
                     Button("All") {
                         tab.selectCommitFile(nil)
@@ -217,9 +216,7 @@ struct CommitInspectorView: View {
                     .font(.caption.weight(tab.selectedFilePath == nil ? .semibold : .regular))
                     .foregroundStyle(tab.selectedFilePath == nil ? Color.accentColor : Color.secondary)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                .paneHeaderBar()
 
                 Divider()
 
@@ -232,14 +229,7 @@ struct CommitInspectorView: View {
                     .focusable()
                     .focused($fileListFocused)
                     .focusEffectDisabled()
-                    .onKeyPress(.upArrow) {
-                        moveFileSelection(by: -1)
-                        return .handled
-                    }
-                    .onKeyPress(.downArrow) {
-                        moveFileSelection(by: 1)
-                        return .handled
-                    }
+                    .arrowKeySelection { moveFileSelection(by: $0) }
                     .onChange(of: tab.selectedFilePath) {
                         if let path = tab.selectedFilePath { proxy.scrollTo(path) }
                     }
@@ -279,8 +269,7 @@ private struct CommitMessagePane: View {
                     AvatarView(name: commit.authorName, email: tab.commitDetail?.authorEmail ?? "", size: 44)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("AUTHOR")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .sectionTitleStyle(.caption2)
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(commit.authorName).font(.title3.weight(.medium))
                             if let email = tab.commitDetail?.authorEmail, !email.isEmpty {
@@ -295,12 +284,12 @@ private struct CommitMessagePane: View {
 
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                     GridRow {
-                        Text("SHA").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("SHA").sectionTitleStyle(.caption2)
                         Text(commit.oidHex).font(.system(size: 12, design: .monospaced))
                     }
                     if let parents = tab.commitDetail?.parentOids, !parents.isEmpty {
                         GridRow {
-                            Text("PARENTS").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            Text("PARENTS").sectionTitleStyle(.caption2)
                             Text(formatShortParents(parents))
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -324,8 +313,7 @@ private struct CommitMessagePane: View {
                 Divider()
 
                 Text("CHANGED FILES (\(tab.commitDetail?.files.count ?? 0))")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .sectionTitleStyle(.caption2)
                 CommitFileList(
                     tab: tab,
                     collapsedFolderPaths: $collapsedFolderPaths,

@@ -145,7 +145,7 @@ struct RepoCommands: Commands {
     }
 
     private func recentMenuLabel(for path: String, among paths: [String]) -> String {
-        let name = URL(fileURLWithPath: path).lastPathComponent
+        let name = path.folderName
         let hasDuplicate = paths.filter { URL(fileURLWithPath: $0).lastPathComponent == name }.count > 1
         guard hasDuplicate else { return name }
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path

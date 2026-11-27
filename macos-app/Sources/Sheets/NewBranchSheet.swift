@@ -19,7 +19,7 @@ struct NewBranchSheet: View {
             }
             return start
         }
-        return tab.currentBranch.isEmpty ? "HEAD" : tab.currentBranch
+        return tab.currentBranchLabel
     }
 
     var body: some View {

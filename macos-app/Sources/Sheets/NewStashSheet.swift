@@ -8,7 +8,7 @@ struct NewStashSheet: View {
     @FocusState private var isMessageFocused: Bool
 
     private var branchDisplay: String {
-        tab.currentBranch.isEmpty ? "HEAD" : tab.currentBranch
+        tab.currentBranchLabel
     }
 
     private var changesSummary: String {

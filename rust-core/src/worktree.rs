@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::{git_cli, GitCraftError};
+use crate::{git_cli, validation::canonical_or_given, GitCraftError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorktreeInfo {
@@ -132,7 +132,7 @@ pub(crate) fn contains_path(repo: &Path, path: &str) -> Result<bool, GitCraftErr
 pub(crate) fn list(repo: &Path, skip: Option<&Path>) -> Result<Vec<WorktreeInfo>, GitCraftError> {
     let mut worktrees = list_entries(repo)?;
     // Git lists resolved paths, so the skipped one is compared in the same form.
-    let skip = skip.map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()));
+    let skip = skip.map(canonical_or_given);
     let fill_dirty = |worktree: &mut WorktreeInfo| {
         let checkout = Path::new(&worktree.path);
         if !worktree.is_prunable && Some(checkout) != skip.as_deref() && checkout.is_dir() {

@@ -6,7 +6,7 @@ mod common;
 
 use std::{fs, path::Path, process::Command};
 
-use common::{init_repo, init_repo_with_commit, open, run_git, write};
+use common::{init_repo, init_repo_with_commit, open, rev, run_git, write};
 use gitcraft_core::{GitCraftError, MergeType, PullStrategy};
 
 // ---------------------------------------------------------------- staging ---
@@ -1529,10 +1529,6 @@ fn merge_fixture(diverged: bool) -> tempfile::TempDir {
         run_git(dir.path(), &["commit", "-m", "main work"]);
     }
     dir
-}
-
-fn rev(dir: &Path, name: &str) -> String {
-    run_git(dir, &["rev-parse", name]).trim().to_owned()
 }
 
 fn parents(dir: &Path, name: &str) -> Vec<String> {

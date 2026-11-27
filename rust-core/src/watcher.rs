@@ -1,4 +1,4 @@
-use crate::{git_cli, worktree};
+use crate::{git_cli, validation::canonical_or_given, worktree};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
@@ -24,10 +24,6 @@ enum Change {
     Graph,
     /// Files or index changed in an inactive sibling worktree: only sidebar dirty counts need re-reading.
     Worktrees,
-}
-
-fn canonical_or_owned(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// Normalizes a relative path under a git directory to forward-slash components so
@@ -113,14 +109,7 @@ fn classify_path(
         {
             return Change::Worktrees;
         }
-        // Fallback for uncanonicalized event paths containing `/.git/`.
-        let text = path.to_string_lossy();
-        if let Some((_, inside)) = text.split_once("/.git/") {
-            return classify_inside_git_dir(inside, common_dir == git_dir);
-        }
-        return Change::Status;
-    }
-    if sibling_worktrees.iter().any(|s| path.starts_with(s)) {
+    } else if sibling_worktrees.iter().any(|s| path.starts_with(s)) {
         return Change::Worktrees;
     }
     // Fallback for uncanonicalized event paths containing `/.git/`.
@@ -141,7 +130,7 @@ fn registered_worktree_paths(common_dir: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
         .filter_map(|entry| fs::read_to_string(entry.path().join("gitdir")).ok())
         .filter_map(|text| Path::new(text.trim_end()).parent().map(Path::to_path_buf))
-        .map(|p| canonical_or_owned(&p))
+        .map(|p| canonical_or_given(&p))
         .collect()
 }
 
@@ -252,16 +241,16 @@ fn any_visible_to_git(worktree: &Path, files: &HashSet<PathBuf>) -> bool {
 /// Graph-level events also re-scan the registered worktrees, so a checkout added after the
 /// session opened gets watched and classified too.
 pub fn spawn_dirty_watcher(repo: &Path, git_dir: &Path, common_dir: &Path, flags: WatchFlags) {
-    let worktree = canonical_or_owned(repo);
-    let git_dir = canonical_or_owned(git_dir);
-    let common_dir = canonical_or_owned(common_dir);
+    let worktree = canonical_or_given(repo);
+    let git_dir = canonical_or_given(git_dir);
+    let common_dir = canonical_or_given(common_dir);
     thread::spawn(move || {
         // Asked here so that opening a repository doesn't wait for another git command.
         let initial_siblings: Vec<PathBuf> = worktree::list_entries(&worktree)
             .unwrap_or_default()
             .into_iter()
             .filter(|w| !w.is_prunable)
-            .map(|w| canonical_or_owned(Path::new(&w.path)))
+            .map(|w| canonical_or_given(Path::new(&w.path)))
             .filter(|p| p != &worktree && p.is_dir())
             .collect();
         let shared_siblings = Arc::new(Mutex::new(initial_siblings.clone()));
@@ -526,10 +515,10 @@ mod tests {
         .unwrap();
 
         let found = registered_worktree_paths(&common_dir);
-        assert_eq!(found, vec![canonical_or_owned(checkout.path())]);
+        assert_eq!(found, vec![canonical_or_given(checkout.path())]);
 
         let siblings = current_siblings(Path::new("/nowhere"), &[], &common_dir);
-        assert_eq!(siblings, vec![canonical_or_owned(checkout.path())]);
+        assert_eq!(siblings, vec![canonical_or_given(checkout.path())]);
 
         // A registration whose folder has been deleted is not watched.
         fs::remove_dir_all(checkout.path()).unwrap();
