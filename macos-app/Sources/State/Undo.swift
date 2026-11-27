@@ -9,14 +9,30 @@ import AppKit
 /// `RepoTab.recordUndo`.
 enum UndoStep {
     /// Move HEAD from `move.after` back to `move.before`, using `mode`. Undoes a reset,
-    /// cherry-pick or revert; its inverse redoes one.
+    /// cherry-pick, revert, commit, amend, merge or rebase; its inverse redoes one.
     case moveHead(HeadMove, mode: ResetMode)
+
+    /// Switch HEAD back from `move.after` to `move.before`. Undoes a checkout; its inverse
+    /// redoes it.
+    case checkout(HeadMove)
+
+    /// Restore a branch or tag ref to `move.beforeOid` (or delete it if `beforeOid` is nil).
+    case moveRef(RefMove)
 
     /// Runs the step. Throws, without changing anything, when it no longer applies.
     func perform(in session: RepoSession) throws {
         switch self {
         case let .moveHead(move, mode):
             try session.undoHeadMove(expected: move.after, target: move.before.oid, mode: mode)
+        case let .checkout(move):
+            try session.undoCheckout(expected: move.after, target: move.before)
+        case let .moveRef(move):
+            try session.undoRefMove(
+                expectedOid: move.afterOid,
+                fullRef: move.fullRef,
+                targetOid: move.beforeOid,
+                branchConfig: move.branchConfig
+            )
         }
     }
 
@@ -25,6 +41,23 @@ enum UndoStep {
         switch self {
         case let .moveHead(move, _):
             return session.headPosition() == move.after
+        case let .checkout(move):
+            guard session.headPosition() == move.after else { return false }
+            if let targetBranch = move.before.branch {
+                return session.refOid(fullRef: targetBranch) == move.before.oid
+            }
+            return true
+        case let .moveRef(move):
+            guard session.refOid(fullRef: move.fullRef) == move.afterOid else { return false }
+            if move.fullRef.hasPrefix("refs/heads/") {
+                let branchName = String(move.fullRef.dropFirst("refs/heads/".count))
+                if let worktrees = try? session.listWorktreeEntries(),
+                   worktrees.contains(where: { $0.branch == branchName })
+                {
+                    return false
+                }
+            }
+            return session.headPosition()?.branch != move.fullRef
         }
     }
 
@@ -35,6 +68,17 @@ enum UndoStep {
             // The same mode in the other direction: a soft reset is redone softly, and a
             // cherry-pick or revert is redone with keep, so local edits stay either way.
             return .moveHead(HeadMove(before: move.after, after: move.before), mode: mode)
+        case let .checkout(move):
+            return .checkout(HeadMove(before: move.after, after: move.before))
+        case let .moveRef(move):
+            return .moveRef(
+                RefMove(
+                    fullRef: move.fullRef,
+                    beforeOid: move.afterOid,
+                    afterOid: move.beforeOid,
+                    branchConfig: move.branchConfig
+                )
+            )
         }
     }
 
@@ -44,6 +88,24 @@ enum UndoStep {
         case let .moveHead(move, _):
             let branch = move.before.branch.map { "\"\($0.replacingOccurrences(of: "refs/heads/", with: ""))\"" } ?? "HEAD"
             return "\(branch) is back at \(move.before.oid.shortOid)."
+        case let .checkout(move):
+            if let branch = move.before.branch {
+                return "Switched back to \"\(branch.replacingOccurrences(of: "refs/heads/", with: ""))\"."
+            }
+            return "Switched back to \(move.before.oid.shortOid)."
+        case let .moveRef(move):
+            let label = move.fullRef
+                .replacingOccurrences(of: "refs/heads/", with: "")
+                .replacingOccurrences(of: "refs/tags/", with: "")
+            let kind = move.fullRef.hasPrefix("refs/tags/") ? "Tag" : "Branch"
+            if move.beforeOid == nil {
+                return "\(kind) \"\(label)\" was removed."
+            } else if move.afterOid == nil {
+                return "\(kind) \"\(label)\" is back."
+            } else if let oid = move.beforeOid {
+                return "\(kind) \"\(label)\" is back at \(oid.shortOid)."
+            }
+            return "\(kind) \"\(label)\" updated."
         }
     }
 }
@@ -99,23 +161,58 @@ extension RepoTab {
         undoMode: ResetMode,
         _ work: @escaping @Sendable (RepoSession) throws -> HeadMove?
     ) {
+        performUndoable(actionName: actionName, message: message, work: work) {
+            .moveHead($0, mode: undoMode)
+        }
+    }
+
+    /// Runs `work`, which reports a checkout's `HeadMove`, and records it as undoable.
+    func performUndoableCheckout(
+        actionName: String,
+        message: String,
+        _ work: @escaping @Sendable (RepoSession) throws -> HeadMove?
+    ) {
+        performUndoable(actionName: actionName, message: message, work: work) {
+            .checkout($0)
+        }
+    }
+
+    /// Runs `work`, which reports a ref change, and records it as undoable.
+    func performUndoableRefMove(
+        actionName: String,
+        message: String,
+        onFailure: ((Error) -> Bool)? = nil,
+        _ work: @escaping @Sendable (RepoSession) throws -> RefMove?
+    ) {
+        performUndoable(actionName: actionName, message: message, onFailure: onFailure, work: work) {
+            .moveRef($0)
+        }
+    }
+
+    private func performUndoable<Move: Sendable>(
+        actionName: String,
+        message: String,
+        onFailure: ((Error) -> Bool)? = nil,
+        work: @escaping @Sendable (RepoSession) throws -> Move?,
+        makeStep: @escaping @MainActor (Move) -> UndoStep
+    ) {
         // One history change at a time: a second one finishing first would clear `isBusy`
         // under the first and let pruning drop the step it is about to record.
         guard !isBusy else { return }
-        let moved = SendableBox<HeadMove?>(nil)
+        let moved = SendableBox<Move?>(nil)
         performMutation({ session in
             moved.value = try work(session)
         }, onSuccess: { [weak self] in
             guard let self else { return }
             if let move = moved.value {
-                self.recordUndo(actionName: actionName, step: .moveHead(move, mode: undoMode), message: message)
+                self.recordUndo(actionName: actionName, step: makeStep(move), message: message)
             } else {
-                // HEAD stayed put, but a reset still changed the index or files, so what was
-                // undone before can't be redone on top of it.
+                // Nothing recorded to undo, but the action may still have changed the tree
+                // or refs, so what was undone before can't be redone on top of it.
                 self.redoStack.removeAll()
                 self.showToast(message, isSuccess: true)
             }
-        })
+        }, onFailure: onFailure)
     }
 
     /// Undoes the latest step. Steps are undone newest first, so an `id` that isn't the

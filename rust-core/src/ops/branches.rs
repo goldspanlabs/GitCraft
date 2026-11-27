@@ -3,13 +3,24 @@ use crate::{
     validation::{
         format_ref_display, ref_exists, resolve_commit, validate_ref_arg, validate_remote_arg,
     },
-    worktree, GitCraftError, HeadMove, HeadPosition, MergeType, RepoSession, ResetMode,
+    worktree, BranchConfigEntry, GitCraftError, HeadMove, HeadPosition, MergeType, RefMove,
+    RepoSession, ResetMode,
 };
 
 impl RepoSession {
-    pub fn checkout_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
+    pub fn checkout_branch(&self, branch_name: String) -> Result<Option<HeadMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {
+            let before = self.head_position();
+            // Only record undo when tracked index/worktree state is clean; otherwise checkout can
+            // absorb staged or modified files into the destination branch in ways a reverse
+            // checkout would lose.
+            let has_tracked_changes = git_cli::run(
+                &self.path,
+                &["status", "--porcelain", "--untracked-files=no"],
+            )
+            .map(|out| !out.trim().is_empty())
+            .unwrap_or(true);
             let remote_ref = format!("refs/remotes/{branch_name}");
             let local_ref = format!("refs/heads/{branch_name}");
             if ref_exists(&self.path, &remote_ref) && !ref_exists(&self.path, &local_ref) {
@@ -18,13 +29,19 @@ impl RepoSession {
                 let local_name = branch_name
                     .split_once('/')
                     .map_or(branch_name.as_str(), |(_, n)| n);
-                return if ref_exists(&self.path, &format!("refs/heads/{local_name}")) {
-                    git_cli::mutate(&self.path, &["checkout", local_name, "--"])
+                if ref_exists(&self.path, &format!("refs/heads/{local_name}")) {
+                    git_cli::mutate(&self.path, &["checkout", local_name, "--"])?;
                 } else {
-                    git_cli::mutate(&self.path, &["checkout", "--track", &branch_name])
-                };
+                    git_cli::mutate(&self.path, &["checkout", "--track", &branch_name])?;
+                }
+            } else {
+                git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])?;
             }
-            git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])
+            if has_tracked_changes {
+                return Ok(None);
+            }
+            let after = self.head_position();
+            Ok(Self::head_move_if_changed(before, after))
         })
     }
 
@@ -33,24 +50,53 @@ impl RepoSession {
         branch_name: String,
         start_point: Option<String>,
         checkout: bool,
-    ) -> Result<(), GitCraftError> {
+    ) -> Result<Option<RefMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         let start_point = start_point.as_deref().map(validate_ref_arg).transpose()?;
-        let mut args = if checkout {
-            vec!["checkout", "-b", &branch_name]
-        } else {
-            vec!["branch", &branch_name]
-        };
-        if let Some(ref sp) = start_point {
-            args.push(sp.as_str());
-        }
-        self.mutate(&args)
+        self.with_mutation_lock(|| {
+            let mut args = if checkout {
+                vec!["checkout", "-b", &branch_name]
+            } else {
+                vec!["branch", &branch_name]
+            };
+            if let Some(ref sp) = start_point {
+                args.push(sp.as_str());
+            }
+            git_cli::mutate(&self.path, &args)?;
+            if checkout {
+                return Ok(None);
+            }
+            let full_ref = format!("refs/heads/{branch_name}");
+            let after_oid = self.ref_oid(full_ref.clone());
+            let branch_config = self.read_branch_config(&branch_name);
+            Ok(after_oid.map(|oid| RefMove {
+                full_ref,
+                before_oid: None,
+                after_oid: Some(oid),
+                branch_config,
+            }))
+        })
     }
 
-    pub fn delete_branch(&self, branch_name: String, force: bool) -> Result<(), GitCraftError> {
+    pub fn delete_branch(
+        &self,
+        branch_name: String,
+        force: bool,
+    ) -> Result<Option<RefMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         let flag = if force { "-D" } else { "-d" };
-        self.mutate(&["branch", flag, &branch_name])
+        self.with_mutation_lock(|| {
+            let full_ref = format!("refs/heads/{branch_name}");
+            let before_oid = self.ref_oid(full_ref.clone());
+            let branch_config = self.read_branch_config(&branch_name);
+            git_cli::mutate(&self.path, &["branch", flag, &branch_name])?;
+            Ok(before_oid.map(|oid| RefMove {
+                full_ref,
+                before_oid: Some(oid),
+                after_oid: None,
+                branch_config,
+            }))
+        })
     }
 
     /// Deletes `remote/branch` on its remote with `git push <remote> --delete <branch>`.
@@ -67,7 +113,10 @@ impl RepoSession {
 
     /// Fast-forwards a non-checked-out local branch to its upstream remote-tracking ref
     /// without touching the working tree or hitting the network.
-    pub fn fast_forward_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
+    pub fn fast_forward_branch(
+        &self,
+        branch_name: String,
+    ) -> Result<Option<RefMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {
             let local_ref = format!("refs/heads/{branch_name}");
@@ -145,11 +194,17 @@ impl RepoSession {
                     &upstream_oid,
                     &local_oid,
                 ],
-            )
+            )?;
+            Ok(Some(RefMove {
+                full_ref: local_ref,
+                before_oid: Some(local_oid),
+                after_oid: Some(upstream_oid),
+                branch_config: Vec::new(),
+            }))
         })
     }
 
-    pub fn merge_branch(&self, branch_name: String) -> Result<(), GitCraftError> {
+    pub fn merge_branch(&self, branch_name: String) -> Result<Option<HeadMove>, GitCraftError> {
         self.merge_commit(branch_name, MergeType::Default)
     }
 
@@ -158,7 +213,11 @@ impl RepoSession {
     }
 
     /// Merges `commit` into the checked-out branch, joined as `merge_type` says.
-    pub fn merge_commit(&self, commit: String, merge_type: MergeType) -> Result<(), GitCraftError> {
+    pub fn merge_commit(
+        &self,
+        commit: String,
+        merge_type: MergeType,
+    ) -> Result<Option<HeadMove>, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
         self.with_mutation_lock(|| {
             // `git merge` quietly does nothing (and exits 0) when the commit is already
@@ -174,6 +233,7 @@ impl RepoSession {
                     "{label} is already in the current branch's history, so there is nothing to merge"
                 )));
             }
+            let before = self.head_position();
             let mut args = vec!["merge"];
             match merge_type {
                 MergeType::Default => {}
@@ -182,7 +242,9 @@ impl RepoSession {
                 MergeType::Squash => args.push("--squash"),
             }
             args.push(commit.as_str());
-            git_cli::mutate(&self.path, &args)
+            git_cli::mutate(&self.path, &args)?;
+            let after = self.head_position();
+            Ok(Self::head_move_if_changed(before, after))
         })
     }
 
@@ -226,9 +288,9 @@ impl RepoSession {
     }
 
     /// Rebases the checked-out branch onto `commit`.
-    pub fn rebase_onto(&self, commit: String) -> Result<(), GitCraftError> {
+    pub fn rebase_onto(&self, commit: String) -> Result<Option<HeadMove>, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
-        self.mutate(&["rebase", &commit])
+        self.mutate_tracking_head(&["rebase", &commit])
     }
 
     pub fn abort_rebase(&self) -> Result<(), GitCraftError> {
@@ -252,17 +314,27 @@ impl RepoSession {
         self.mutate_tracking_head(&["reset", reset_flag(mode), &commit])
     }
 
+    fn head_move_if_changed(
+        before: Option<HeadPosition>,
+        after: Option<HeadPosition>,
+    ) -> Option<HeadMove> {
+        match (before, after) {
+            (Some(before), Some(after)) if before != after => Some(HeadMove { before, after }),
+            _ => None,
+        }
+    }
+
     /// Runs the mutating git command `args` under the mutation lock and reports how it moved
     /// HEAD. Both positions are read under the same lock, so nothing else can slip in between.
-    fn mutate_tracking_head(&self, args: &[&str]) -> Result<Option<HeadMove>, GitCraftError> {
+    pub(crate) fn mutate_tracking_head(
+        &self,
+        args: &[&str],
+    ) -> Result<Option<HeadMove>, GitCraftError> {
         self.with_mutation_lock(|| {
             let before = self.head_position();
             git_cli::mutate(&self.path, args)?;
             let after = self.head_position();
-            Ok(match (before, after) {
-                (Some(before), Some(after)) if before != after => Some(HeadMove { before, after }),
-                _ => None,
-            })
+            Ok(Self::head_move_if_changed(before, after))
         })
     }
 
@@ -306,6 +378,160 @@ impl RepoSession {
             }
             git_cli::mutate(&self.path, &["reset", reset_flag(mode), &target])
         })
+    }
+
+    /// Undoes a checkout by switching back to `target`, only while HEAD is still at `expected`
+    /// and (when `target` is a branch) that branch still points to `target.oid`.
+    pub fn undo_checkout(
+        &self,
+        expected: HeadPosition,
+        target: HeadPosition,
+    ) -> Result<(), GitCraftError> {
+        self.with_mutation_lock(|| {
+            if self.head_position().as_ref() != Some(&expected) {
+                return Err(GitCraftError::message(
+                    "HEAD has changed since then, so there's nothing to undo.",
+                ));
+            }
+            if let Some(branch_ref) = target.branch.as_deref() {
+                if self.ref_oid(branch_ref.to_owned()).as_deref() != Some(target.oid.as_str()) {
+                    return Err(GitCraftError::message(
+                        "The target branch has changed since then, so there's nothing to undo.",
+                    ));
+                }
+                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
+                let branch = validate_ref_arg(branch)?;
+                git_cli::mutate(&self.path, &["checkout", &branch, "--"])
+            } else {
+                let oid = validate_ref_arg(&target.oid)?;
+                git_cli::mutate(&self.path, &["checkout", "--detach", &oid, "--"])
+            }
+        })
+    }
+
+    /// Resolves `full_ref` (e.g. `refs/heads/main` or `refs/tags/v1.0`) to its direct object OID,
+    /// or `None` if it does not exist.
+    pub fn ref_oid(&self, full_ref: String) -> Option<String> {
+        let full_ref = validate_ref_arg(&full_ref).ok()?;
+        git_cli::run(&self.path, &["rev-parse", "--verify", "-q", &full_ref])
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Undoes a ref creation, deletion, or update on `full_ref`, atomically verifying it still
+    /// points to `expected_oid` (or is absent when `expected_oid` is `None`).
+    pub fn undo_ref_move(
+        &self,
+        expected_oid: Option<String>,
+        full_ref: String,
+        target_oid: Option<String>,
+        branch_config: Vec<BranchConfigEntry>,
+    ) -> Result<(), GitCraftError> {
+        let full_ref = validate_ref_arg(&full_ref)?;
+        let expected_oid = expected_oid.as_deref().map(validate_ref_arg).transpose()?;
+        let target_oid = target_oid.as_deref().map(validate_ref_arg).transpose()?;
+        self.with_mutation_lock(|| {
+            if self.ref_oid(full_ref.clone()) != expected_oid {
+                return Err(GitCraftError::message(
+                    "The ref has changed since then, so there's nothing to undo.",
+                ));
+            }
+            if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                if self.head_position().and_then(|h| h.branch).as_deref() == Some(full_ref.as_str())
+                {
+                    return Err(GitCraftError::message(
+                        "Cannot modify the currently checked-out branch.",
+                    ));
+                }
+                let worktrees = worktree::list_entries(&self.path)?;
+                if worktrees
+                    .iter()
+                    .any(|wt| wt.branch.as_deref() == Some(branch_name))
+                {
+                    return Err(GitCraftError::message(format!(
+                        "Cannot modify '{branch_name}' while it is checked out in another worktree."
+                    )));
+                }
+            }
+            let old_arg = expected_oid.as_deref().unwrap_or("");
+            if let Some(oid) = target_oid {
+                git_cli::mutate(&self.path, &["update-ref", &full_ref, &oid, old_arg])?;
+                if expected_oid.is_none() {
+                    if let Err(err) = self.restore_branch_config(&branch_config) {
+                        let _ = git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref, &oid]);
+                        if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                            let _ = self.remove_branch_config(branch_name);
+                        }
+                        return Err(err);
+                    }
+                }
+                Ok(())
+            } else {
+                let old_oid = expected_oid
+                    .as_deref()
+                    .ok_or_else(|| GitCraftError::message("The ref has already been deleted."))?;
+                let has_branch_config = full_ref
+                    .strip_prefix("refs/heads/")
+                    .is_some_and(|b| !self.read_branch_config(b).is_empty());
+                git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref, old_oid])?;
+                if has_branch_config {
+                    if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                        if let Err(err) = self.remove_branch_config(branch_name) {
+                            let _ = git_cli::mutate(
+                                &self.path,
+                                &["update-ref", &full_ref, old_oid, ""],
+                            );
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(())
+            }
+        })
+    }
+
+    fn read_branch_config(&self, branch_name: &str) -> Vec<BranchConfigEntry> {
+        let Ok(output) = git_cli::run(&self.path, &["config", "--local", "--null", "--list"])
+        else {
+            return Vec::new();
+        };
+        let prefix = format!("branch.{branch_name}.");
+        output
+            .split('\0')
+            .filter_map(|entry| {
+                if entry.is_empty() {
+                    return None;
+                }
+                // Valueless entries (e.g. bare `rebase` in `[branch "x"]`) have no `\n` and
+                // mean `true` in Git config.
+                let (key, value) = entry.split_once('\n').unwrap_or((entry, "true"));
+                key.strip_prefix(&prefix)
+                    .filter(|var| !var.contains('.'))
+                    .map(|_| BranchConfigEntry {
+                        key: key.to_owned(),
+                        value: value.to_owned(),
+                    })
+            })
+            .collect()
+    }
+
+    fn restore_branch_config(&self, entries: &[BranchConfigEntry]) -> Result<(), GitCraftError> {
+        for entry in entries {
+            git_cli::mutate(
+                &self.path,
+                &["config", "--local", "--add", &entry.key, &entry.value],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn remove_branch_config(&self, branch_name: &str) -> Result<(), GitCraftError> {
+        let section = format!("branch.{branch_name}");
+        git_cli::mutate(
+            &self.path,
+            &["config", "--local", "--remove-section", &section],
+        )
     }
 
     /// Applies `commit`'s changes on top of the checked-out branch. Returns how HEAD moved.

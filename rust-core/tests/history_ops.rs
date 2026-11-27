@@ -540,3 +540,260 @@ fn checking_out_a_remote_branch_switches_to_the_existing_local_one_without_movin
     assert_eq!(current_branch(dir.path()), "main");
     assert_eq!(head(dir.path()), local_tip);
 }
+
+#[test]
+fn undo_checkout_switches_back_and_refuses_when_head_moved() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap().unwrap();
+    assert_eq!(current_branch(dir.path()), "feature");
+
+    session
+        .undo_checkout(moved.after.clone(), moved.before.clone())
+        .unwrap();
+    assert_eq!(current_branch(dir.path()), "main");
+
+    // Once HEAD moved again, the stale undo must refuse.
+    assert!(session.undo_checkout(moved.after, moved.before).is_err());
+}
+
+#[test]
+fn undo_checkout_refuses_when_target_branch_moved() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap().unwrap();
+    // Advance `main` externally without leaving `feature` at a different commit.
+    let new_commit = commit_file(dir.path(), "other.txt", "new\n", "advance");
+    run_git(dir.path(), &["reset", "--hard", &moved.after.oid]);
+    run_git(dir.path(), &["branch", "-f", "main", &new_commit]);
+
+    assert_eq!(session.head_position().as_ref(), Some(&moved.after));
+    let err = session
+        .undo_checkout(moved.after, moved.before)
+        .unwrap_err();
+    assert!(err.to_string().contains("target branch"));
+    assert_eq!(current_branch(dir.path()), "feature");
+}
+
+#[test]
+fn checkout_with_staged_file_matching_destination_records_no_undo() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["checkout", "-qb", "feature"]);
+    commit_file(dir.path(), "shared.txt", "same\n", "add shared");
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+
+    write(dir.path(), "shared.txt", "same\n");
+    run_git(dir.path(), &["add", "shared.txt"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap();
+    assert!(moved.is_none());
+    assert_eq!(current_branch(dir.path()), "feature");
+}
+
+#[test]
+fn undo_ref_move_restores_deleted_branch_config_and_annotated_tag() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let tip = head(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    run_git(dir.path(), &["config", "branch.feature.remote", "origin"]);
+    run_git(
+        dir.path(),
+        &["config", "branch.feature.merge", "refs/heads/feature"],
+    );
+
+    let deleted_branch = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+    assert!(session.ref_oid("refs/heads/feature".into()).is_none());
+    session
+        .undo_ref_move(
+            deleted_branch.after_oid,
+            deleted_branch.full_ref.clone(),
+            deleted_branch.before_oid.clone(),
+            deleted_branch.branch_config.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+    assert_eq!(
+        run_git(dir.path(), &["config", "--get", "branch.feature.remote"]).trim(),
+        "origin"
+    );
+    assert_eq!(
+        run_git(dir.path(), &["config", "--get", "branch.feature.merge"]).trim(),
+        "refs/heads/feature"
+    );
+
+    let created_tag = session
+        .create_tag("v1.0".into(), None, Some("Release 1.0".into()), false)
+        .unwrap()
+        .unwrap();
+    let tag_oid = created_tag.after_oid.clone().unwrap();
+    let deleted_tag = session.delete_tag("v1.0".into(), false).unwrap().unwrap();
+    assert_eq!(deleted_tag.before_oid.as_deref(), Some(tag_oid.as_str()));
+    assert!(session.ref_oid("refs/tags/v1.0".into()).is_none());
+
+    session
+        .undo_ref_move(
+            deleted_tag.after_oid,
+            deleted_tag.full_ref,
+            deleted_tag.before_oid,
+            deleted_tag.branch_config,
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/tags/v1.0".into()).as_deref(),
+        Some(tag_oid.as_str())
+    );
+    let tag_msg = run_git(dir.path(), &["tag", "-l", "-n1", "v1.0"]);
+    assert!(tag_msg.contains("Release 1.0"));
+}
+
+#[test]
+fn undo_ref_move_refuses_when_branch_checked_out_in_sibling_worktree() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let created = session
+        .create_branch("wt-branch".into(), None, false)
+        .unwrap()
+        .unwrap();
+
+    let wt_dir = tempfile::tempdir().unwrap();
+    let wt_path = wt_dir.path().join("sibling");
+    run_git(
+        dir.path(),
+        &["worktree", "add", wt_path.to_str().unwrap(), "wt-branch"],
+    );
+
+    assert!(session
+        .undo_ref_move(
+            created.after_oid,
+            created.full_ref,
+            created.before_oid,
+            created.branch_config,
+        )
+        .is_err());
+    assert!(session.ref_oid("refs/heads/wt-branch".into()).is_some());
+}
+
+#[test]
+fn delete_branch_undo_does_not_duplicate_dotted_sibling_branch_config() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "release"]);
+    run_git(dir.path(), &["branch", "release.next"]);
+    run_git(
+        dir.path(),
+        &["config", "branch.release.next.remote", "origin"],
+    );
+
+    let deleted = session
+        .delete_branch("release".into(), false)
+        .unwrap()
+        .unwrap();
+    assert!(deleted.branch_config.is_empty());
+
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref,
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    let values = run_git(
+        dir.path(),
+        &["config", "--get-all", "branch.release.next.remote"],
+    );
+    assert_eq!(values.lines().collect::<Vec<_>>(), ["origin"]);
+}
+
+#[test]
+fn undo_ref_move_rolls_back_ref_when_config_is_locked() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let tip = head(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    run_git(dir.path(), &["config", "branch.feature.remote", "origin"]);
+
+    let deleted = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+
+    let config_lock = dir.path().join(".git/config.lock");
+    fs::write(&config_lock, "").unwrap();
+    assert!(session
+        .undo_ref_move(
+            deleted.after_oid.clone(),
+            deleted.full_ref.clone(),
+            deleted.before_oid.clone(),
+            deleted.branch_config.clone(),
+        )
+        .is_err());
+    assert!(session.ref_oid("refs/heads/feature".into()).is_none());
+
+    fs::remove_file(&config_lock).unwrap();
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref.clone(),
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+
+    fs::write(&config_lock, "").unwrap();
+    assert!(session
+        .undo_ref_move(Some(tip.clone()), deleted.full_ref, None, Vec::new())
+        .is_err());
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+}
+
+#[test]
+fn delete_branch_undo_preserves_valueless_boolean_config() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    let config_path = dir.path().join(".git/config");
+    let mut config = fs::read_to_string(&config_path).unwrap();
+    config.push_str("\n[branch \"feature\"]\n\trebase\n");
+    fs::write(&config_path, config).unwrap();
+
+    let deleted = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleted.branch_config.len(), 1);
+    assert_eq!(deleted.branch_config[0].key, "branch.feature.rebase");
+    assert_eq!(deleted.branch_config[0].value, "true");
+
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref,
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    assert_eq!(
+        run_git(dir.path(), &["config", "--bool", "branch.feature.rebase"]).trim(),
+        "true"
+    );
+}

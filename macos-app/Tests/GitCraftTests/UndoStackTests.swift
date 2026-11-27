@@ -610,4 +610,180 @@ final class UndoStackTests: XCTestCase {
         XCTAssertEqual(tab.undoStack.first?.actionName, "Step 3")
         XCTAssertEqual(tab.latestUndo?.actionName, "Step \(RepoTab.maxUndoSteps + 2)")
     }
+
+    @MainActor
+    func testCommitAndAmendCanBeUndoneAndRedone() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let start = try rev("main")
+
+        try write("note.txt", "hello\n")
+        tab.stagePath("note.txt")
+        try await waitFor("note.txt to be staged") { tab.stagedFiles.count == 1 && !tab.isBusy }
+
+        tab.commitSummary = "Add note"
+        tab.commitChanges()
+        try await waitFor("the commit to be recorded") {
+            tab.latestUndo?.actionName == "Commit" && !tab.isBusy
+        }
+        let committed = try rev("main")
+        XCTAssertNotEqual(committed, start)
+
+        tab.undo()
+        try await waitFor("the commit to be undone") {
+            try self.rev("main") == start && !tab.isBusy
+        }
+        XCTAssertTrue(try porcelain().contains("A  note.txt"), "soft reset keeps the file staged")
+
+        tab.redo()
+        try await waitFor("the commit to be redone") {
+            try self.rev("main") == committed && !tab.isBusy
+        }
+
+        // Amend the commit, then undo back to the pre-amend commit.
+        tab.amendCommit = true
+        tab.commitSummary = "Add note (amended)"
+        tab.commitChanges()
+        try await waitFor("the amend to be recorded") {
+            tab.latestUndo?.actionName == "Amend" && !tab.isBusy
+        }
+        XCTAssertNotEqual(try rev("main"), committed)
+
+        tab.undo()
+        try await waitFor("the amend to be undone") {
+            try self.rev("main") == committed && !tab.isBusy
+        }
+    }
+
+    @MainActor
+    func testMergeAndRebaseCanBeUndoneAndRedone() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let start = try rev("main")
+
+        tab.mergeBranch("other")
+        try await waitFor("the merge to be recorded") {
+            tab.latestUndo?.actionName == "Merge" && !tab.isBusy
+        }
+        let merged = try rev("main")
+        XCTAssertNotEqual(merged, start)
+
+        tab.undo()
+        try await waitFor("the merge to be undone") {
+            try self.rev("main") == start && !tab.isBusy
+        }
+
+        tab.redo()
+        try await waitFor("the merge to be redone") {
+            try self.rev("main") == merged && !tab.isBusy
+        }
+
+        // Rebase onto a new branch commit.
+        tab.undo()
+        try await waitFor("reset before rebase") {
+            try self.rev("main") == start && !tab.isBusy
+        }
+        try write("main.txt", "main\n")
+        try git(["add", "main.txt"], in: repo)
+        try git(["commit", "-q", "-m", "main work"], in: repo)
+        let beforeRebase = try rev("main")
+        tab.refresh()
+        try await waitFor("stale undo pruned after external commit") { tab.undoStack.isEmpty }
+
+        tab.rebaseOnto(try rev("other"))
+        try await waitFor("the rebase to be recorded") {
+            tab.latestUndo?.actionName == "Rebase" && !tab.isBusy
+        }
+        let rebased = try rev("main")
+        XCTAssertNotEqual(rebased, beforeRebase)
+
+        tab.undo()
+        try await waitFor("the rebase to be undone") {
+            try self.rev("main") == beforeRebase && !tab.isBusy
+        }
+    }
+
+    @MainActor
+    func testCheckoutBranchAndTagCanBeUndoneAndRedone() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let mainTip = try rev("main")
+
+        // Checkout another branch, undo, redo.
+        tab.checkoutBranch("other")
+        try await waitFor("checkout to be recorded") {
+            tab.latestUndo?.actionName == "Checkout" && tab.currentBranch == "other" && !tab.isBusy
+        }
+
+        tab.undo()
+        try await waitFor("checkout to be undone") {
+            tab.currentBranch == "main" && !tab.isBusy
+        }
+
+        tab.redo()
+        try await waitFor("checkout to be redone") {
+            tab.currentBranch == "other" && !tab.isBusy
+        }
+
+        tab.undo()
+        try await waitFor("back on main") {
+            tab.currentBranch == "main" && !tab.isBusy
+        }
+
+        // Create and delete a branch.
+        tab.createBranch(name: "temp-branch", startPoint: nil, checkout: false)
+        try await waitFor("create branch to be recorded") {
+            tab.latestUndo?.actionName == "Create Branch" && !tab.isBusy
+        }
+        XCTAssertEqual(tab.session.refOid(fullRef: "refs/heads/temp-branch"), mainTip)
+
+        tab.undo()
+        try await waitFor("create branch to be undone") {
+            tab.session.refOid(fullRef: "refs/heads/temp-branch") == nil && !tab.isBusy
+        }
+
+        tab.redo()
+        try await waitFor("create branch to be redone") {
+            tab.session.refOid(fullRef: "refs/heads/temp-branch") == mainTip && !tab.isBusy
+        }
+
+        tab.deleteBranch("temp-branch", force: false)
+        try await waitFor("delete branch to be recorded") {
+            tab.latestUndo?.actionName == "Delete Branch" && !tab.isBusy
+        }
+        XCTAssertNil(tab.session.refOid(fullRef: "refs/heads/temp-branch"))
+
+        tab.undo()
+        try await waitFor("delete branch to be undone") {
+            tab.session.refOid(fullRef: "refs/heads/temp-branch") == mainTip && !tab.isBusy
+        }
+
+        // Create and delete a local annotated tag.
+        tab.createTag(name: "v1.0", target: nil, message: "Release 1.0", pushToRemote: false)
+        try await waitFor("create tag to be recorded") {
+            tab.latestUndo?.actionName == "Create Tag" && !tab.isBusy
+        }
+        XCTAssertNotNil(tab.session.refOid(fullRef: "refs/tags/v1.0"))
+
+        tab.undo()
+        try await waitFor("create tag to be undone") {
+            tab.session.refOid(fullRef: "refs/tags/v1.0") == nil && !tab.isBusy
+        }
+
+        tab.redo()
+        try await waitFor("create tag to be redone") {
+            tab.session.refOid(fullRef: "refs/tags/v1.0") != nil && !tab.isBusy
+        }
+
+        tab.deleteTag("v1.0", deleteRemote: false)
+        try await waitFor("delete tag to be recorded") {
+            tab.latestUndo?.actionName == "Delete Tag" && !tab.isBusy
+        }
+        XCTAssertNil(tab.session.refOid(fullRef: "refs/tags/v1.0"))
+
+        tab.undo()
+        try await waitFor("delete tag to be undone") {
+            tab.session.refOid(fullRef: "refs/tags/v1.0") != nil && !tab.isBusy
+        }
+    }
 }

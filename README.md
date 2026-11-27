@@ -33,7 +33,8 @@
 
 ## Features
 
-- **Undo & Redo for history actions:** Take back or redo resets, cherry-picks, reverts, and squashes (`⌘Z` / `⇧⌘Z`) with safety checks if the repository moved on.
+- **Basic Features:** Everyday Git workflows alongside merge, rebase, cherry-pick, revert, reset, squash, stashes, and tags.
+- **Undo & Redo for most local Git actions:** Undo or redo changes (`⌘Z` / `⇧⌘Z`), including commits, merges, rebases, resets, cherry-picks, and branch or tag updates.
 - **First-class Git worktrees:** Create, lock, prune, and switch between linked worktrees with live dirty counts across sibling checkouts.
 - **Markdown preview with rich diffs:** Toggle between raw diff and rendered Markdown in-place when inspecting `.md` files, with inline added/removed block highlights and relative image support.
 
