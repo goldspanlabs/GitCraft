@@ -91,7 +91,12 @@ struct RepoDetailView: View {
                         isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
-                        onSelectCommits: { tab.selectCommitsFromTable($0) },
+                        onSelectCommits: { commits in
+                            if !commits.isEmpty {
+                                isBottomExpandedToMax = false
+                            }
+                            tab.selectCommitsFromTable(commits)
+                        },
                         onCopyOid: { tab.copyOid($0) },
                         onCopyOids: { tab.copyOids($0) },
                         squashCheck: tab.squashCheck,
@@ -125,11 +130,9 @@ struct RepoDetailView: View {
                             }
                         },
                         onClickWorkingChanges: {
-                            withAnimation(BottomPanelDefaults.animation) {
-                                isBottomCollapsed = false
-                                isBottomMaximized = false
-                                isBottomExpandedToMax = true
-                            }
+                            isBottomCollapsed = false
+                            isBottomMaximized = false
+                            isBottomExpandedToMax = true
                         }
                     )
 
@@ -183,16 +186,12 @@ struct RepoDetailView: View {
             .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
             .onChange(of: tab.selectedCommit?.oidHex) { _, newValue in
                 if newValue != nil, isBottomExpandedToMax {
-                    withAnimation(BottomPanelDefaults.animation) {
-                        isBottomExpandedToMax = false
-                    }
+                    isBottomExpandedToMax = false
                 }
             }
             .onChange(of: tab.selectedCommits.isEmpty) { _, isEmpty in
                 if !isEmpty, isBottomExpandedToMax {
-                    withAnimation(BottomPanelDefaults.animation) {
-                        isBottomExpandedToMax = false
-                    }
+                    isBottomExpandedToMax = false
                 }
             }
         }
