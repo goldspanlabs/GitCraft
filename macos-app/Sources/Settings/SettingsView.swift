@@ -103,6 +103,16 @@ struct SettingsView: View {
             } header: {
                 Text("Updates")
             }
+
+            if let licensesURL = Bundle.main.url(forResource: "THIRD_PARTY_LICENSES", withExtension: "txt") {
+                Section {
+                    Button("Open Source Licenses…") {
+                        NSWorkspace.shared.open(licensesURL)
+                    }
+                } header: {
+                    Text("About")
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollDisabled(true)

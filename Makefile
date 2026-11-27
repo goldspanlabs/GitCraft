@@ -72,6 +72,7 @@ bundle: swift
 	fi
 	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Light-1024.png $(APP)/Contents/Resources/AppIcon-Light.png
 	cp $(APP_DIR)/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png $(APP)/Contents/Resources/AppIcon-Dark.png
+	python3 scripts/generate_licenses.py --manifest-path $(RUST_DIR)/Cargo.toml --output $(APP)/Contents/Resources/THIRD_PARTY_LICENSES.txt
 	codesign --force --deep --sign - $(APP)
 
 dmg: bundle
