@@ -17,8 +17,8 @@ enum FileTree {
         var folders: [String: Folder] = [:]
         var files: [(name: String, change: FileChange)] = []
 
-        mutating func insert(_ change: FileChange, parts: ArraySlice<Substring>) {
-            guard let first = parts.first.map(String.init) else { return }
+        mutating func insert(_ change: FileChange, parts: ArraySlice<String>) {
+            guard let first = parts.first else { return }
             if parts.count == 1 {
                 files.append((first, change))
             } else {
@@ -32,7 +32,10 @@ enum FileTree {
     static func rows(from changes: [FileChange], collapsedFolderPaths: Set<String>) -> [FlatFileRow] {
         var root = Folder()
         for change in changes {
-            root.insert(change, parts: ArraySlice(change.path.split(separator: "/")))
+            var parts = change.path.split(separator: "/").map(String.init)
+            // Git reports an untracked folder as one entry ending in a slash. It stays on the name.
+            if change.path.hasSuffix("/"), !parts.isEmpty { parts[parts.count - 1] += "/" }
+            root.insert(change, parts: ArraySlice(parts))
         }
 
         var rows: [FlatFileRow] = []
@@ -72,19 +75,25 @@ enum FileTree {
         return rows
     }
 
-    /// The file an up (`delta` < 0) or down (`delta` > 0) arrow press should select, or nil when
-    /// there is no visible file that way. With nothing selected, down picks the first file and
-    /// up the last. A selection inside a collapsed folder still counts from where it sits.
-    static func filePath(
-        movingFrom selected: String?,
-        by delta: Int,
-        in changes: [FileChange],
-        collapsedFolderPaths: Set<String>
-    ) -> String? {
-        let all = filePaths(in: rows(from: changes, collapsedFolderPaths: []))
-        let visible = Set(filePaths(in: rows(from: changes, collapsedFolderPaths: collapsedFolderPaths)))
-        let candidates: [String]
-        if let selected, let index = all.firstIndex(of: selected) {
+    /// One tree on screen: its changes and which of its folders are closed.
+    struct List {
+        let changes: [FileChange]
+        let collapsedFolderPaths: Set<String>
+    }
+
+    /// The file an up (`delta` < 0) or down (`delta` > 0) arrow press should select, running
+    /// through the lists top to bottom, or nil when there is no visible file that way. With
+    /// nothing selected, down picks the first file and up the last. A selection inside a
+    /// collapsed folder still counts from where it sits.
+    static func file(
+        movingBy delta: Int,
+        through lists: [List],
+        from isSelected: (FileChange) -> Bool
+    ) -> FileChange? {
+        let all = lists.flatMap { files(in: $0.changes) }
+        let visible = Set(lists.flatMap { files(in: $0.changes, collapsedFolderPaths: $0.collapsedFolderPaths) })
+        let candidates: [FileChange]
+        if let index = all.firstIndex(where: isSelected) {
             candidates = delta > 0 ? Array(all[(index + 1)...]) : all[..<index].reversed()
         } else {
             candidates = delta > 0 ? all : all.reversed()
@@ -92,9 +101,10 @@ enum FileTree {
         return candidates.first { visible.contains($0) }
     }
 
-    private static func filePaths(in rows: [FlatFileRow]) -> [String] {
-        rows.compactMap { row in
-            if case let .file(change, _) = row.kind { return change.path }
+    /// The files shown, top to bottom.
+    static func files(in changes: [FileChange], collapsedFolderPaths: Set<String> = []) -> [FileChange] {
+        rows(from: changes, collapsedFolderPaths: collapsedFolderPaths).compactMap { row in
+            if case let .file(change, _) = row.kind { return change }
             return nil
         }
     }

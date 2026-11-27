@@ -80,6 +80,45 @@ final class WorkingSelectionTests: XCTestCase {
     }
 
     @MainActor
+    func testArrowsFollowTheTreeOrderOfEachList() throws {
+        // As trees, folders come first: src/b before a.
+        let tab = try makeTab(staged: ["a", "src/b"], unstaged: ["c", "src/d"])
+        defer { tab.stopWatcher() }
+        tab.selectedFilePath = nil
+
+        for (path, staged) in [("src/b", true), ("a", true), ("src/d", false), ("c", false)] {
+            tab.moveWorkingFileSelection(by: 1)
+            assertSelected(tab, path, staged: staged)
+        }
+    }
+
+    @MainActor
+    func testArrowsSkipFilesInAFolderCollapsedInThatList() throws {
+        let tab = try makeTab(staged: ["a", "src/b"], unstaged: ["c", "src/d"])
+        defer { tab.stopWatcher() }
+        tab.selectWorkingFile(tab.stagedFiles[0])
+
+        // Collapsing src in the staged list leaves the unstaged src open.
+        tab.moveWorkingFileSelection(by: -1, collapsedStagedFolders: ["src"])
+        assertSelected(tab, "a", staged: true)
+        tab.moveWorkingFileSelection(by: 1, collapsedStagedFolders: ["src"])
+        assertSelected(tab, "src/d", staged: false)
+
+        tab.selectWorkingFile(tab.unstagedFiles[0])
+        tab.moveWorkingFileSelection(by: -1, collapsedUnstagedFolders: ["src"])
+        assertSelected(tab, "a", staged: true)
+    }
+
+    @MainActor
+    func testTheDefaultSelectionIsTheTopUnstagedRow() throws {
+        let tab = try makeTab(staged: [], unstaged: ["a", "src/b"])
+        defer { tab.stopWatcher() }
+        tab.selectedFilePath = nil
+        tab.loadWorkingDiffSelection()
+        assertSelected(tab, "src/b", staged: false)
+    }
+
+    @MainActor
     private func makeTab(staged: [String], unstaged: [String]) throws -> RepoTab {
         let tab = try RepoTab(url: root)
         tab.stagedFiles = staged.map { change($0, staged: true) }
