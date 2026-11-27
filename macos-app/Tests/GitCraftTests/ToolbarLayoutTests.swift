@@ -51,4 +51,56 @@ final class ToolbarLayoutTests: XCTestCase {
             }
         }
     }
+
+    @MainActor
+    func testFilterCollapsesToAButtonOnNarrowWindowsUnlessInUse() throws {
+        _ = NSApplication.shared
+        let root = temporaryFolderURL("gitcraft-toolbar")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try makeTestRepository(at: root.appendingPathComponent("repo", isDirectory: true))
+        let workspace = WorkspaceState()
+        XCTAssertTrue(workspace.openRepository(at: URL(fileURLWithPath: RepoTab.canonicalPath(for: repo.path))))
+        let window = try XCTUnwrap(NSApp.windows.first {
+            ($0.windowController as? RepoWindowController)?.tab.repoPath.hasSuffix(root.lastPathComponent + "/repo") == true
+        })
+        defer { window.close() }
+        let controller = try XCTUnwrap(window.windowController as? RepoWindowController)
+        let split = try XCTUnwrap(window.contentViewController as? NSSplitViewController)
+        split.splitViewItems[0].isCollapsed = true
+        let search = try XCTUnwrap(window.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first)
+        let field = search.searchField
+
+        func settle(width: Double? = nil) {
+            if let width { window.setFrame(NSRect(x: 0, y: 0, width: width, height: 700), display: true) }
+            for _ in 0 ..< 2 {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+                window.update()
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        settle(width: 1040)
+        XCTAssertTrue(field.isHidden, "narrow window")
+        settle(width: 1400)
+        XCTAssertFalse(field.isHidden, "wide window")
+        settle(width: 1040)
+        XCTAssertTrue(field.isHidden, "narrow again")
+
+        controller.focusSearchField()
+        settle()
+        XCTAssertFalse(field.isHidden, "searching")
+        XCTAssertGreaterThan(field.frame.width, 200, "searching")
+        XCTAssertNotNil(field.currentEditor(), "expanding keeps the cursor in the field")
+
+        window.makeFirstResponder(nil)
+        settle()
+        XCTAssertTrue(field.isHidden, "left empty")
+
+        controller.focusSearchField()
+        settle()
+        field.stringValue = "initial"
+        window.makeFirstResponder(nil)
+        settle()
+        XCTAssertFalse(field.isHidden, "a filter in effect stays visible")
+    }
 }
