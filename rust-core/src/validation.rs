@@ -45,6 +45,30 @@ pub(crate) fn ref_exists(repo: &Path, full_ref: &str) -> bool {
     git_cli::run(repo, &["show-ref", "--verify", "-q", full_ref]).is_ok()
 }
 
+/// True when git tracks `path` (a literal path relative to the repository root).
+pub(crate) fn is_tracked(repo: &Path, path: &str) -> bool {
+    git_cli::run(
+        repo,
+        &[
+            "--literal-pathspecs",
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            path,
+        ],
+    )
+    .is_ok()
+}
+
+/// The full SHA of the commit `rev` names.
+pub(crate) fn resolve_commit(repo: &Path, rev: &str) -> Result<String, GitCraftError> {
+    let output = git_cli::run(
+        repo,
+        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+    )?;
+    Ok(output.trim().to_owned())
+}
+
 /// True when HEAD resolves to a commit (false in a repository with no commits yet).
 pub(crate) fn has_head(repo: &Path) -> bool {
     git_cli::run(repo, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok()
@@ -80,6 +104,15 @@ pub(crate) fn validate_ref_arg(value: &str) -> Result<String, GitCraftError> {
     validate_cli_arg(value, "name must not be empty", |v| {
         format!("invalid name \"{v}\": it must not start with \"-\"")
     })
+}
+
+/// Like [`validate_ref_arg`] for an optional value. A blank value counts as none.
+pub(crate) fn validate_optional_ref_arg(
+    value: Option<&str>,
+) -> Result<Option<String>, GitCraftError> {
+    trim_optional_text(value)
+        .map(|v| validate_ref_arg(&v))
+        .transpose()
 }
 
 /// Trims a remote name/URL and rejects empty values or ones git would parse as options.

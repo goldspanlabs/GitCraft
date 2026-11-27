@@ -1,6 +1,6 @@
 use crate::{
     git_cli,
-    validation::{trim_optional_text, validate_ref_arg},
+    validation::{trim_optional_text, validate_optional_ref_arg},
     worktree, GitCraftError, RepoSession, WorktreeInfo,
 };
 
@@ -36,12 +36,8 @@ impl RepoSession {
         if path.is_empty() {
             return Err(GitCraftError::message("worktree path cannot be empty"));
         }
-        let branch_name = trim_optional_text(branch_name.as_deref())
-            .map(|b| validate_ref_arg(&b))
-            .transpose()?;
-        let start_point = trim_optional_text(start_point.as_deref())
-            .map(|s| validate_ref_arg(&s))
-            .transpose()?;
+        let branch_name = validate_optional_ref_arg(branch_name.as_deref())?;
+        let start_point = validate_optional_ref_arg(start_point.as_deref())?;
 
         if detach && branch_name.is_some() {
             return Err(GitCraftError::message(
@@ -67,8 +63,7 @@ impl RepoSession {
             if let Some(ref start) = start_point {
                 args.push(start.as_str());
             }
-            git_cli::mutate(&self.path, &args)?;
-            Ok(())
+            git_cli::mutate(&self.path, &args)
         })
     }
 
@@ -99,8 +94,7 @@ impl RepoSession {
             }
             args.push("--");
             args.push(path.as_str());
-            git_cli::mutate(&common_dir, &args)?;
-            Ok(())
+            git_cli::mutate(&common_dir, &args)
         })
     }
 
@@ -115,16 +109,14 @@ impl RepoSession {
                 args.push(r.as_str());
             }
             args.push(path.as_str());
-            git_cli::mutate(&self.path, &args)?;
-            Ok(())
+            git_cli::mutate(&self.path, &args)
         })
     }
 
     pub fn unlock_worktree(&self, path: String) -> Result<(), GitCraftError> {
         self.with_mutation_lock(|| {
             self.require_listed_worktree(&path)?;
-            git_cli::mutate(&self.path, &["worktree", "unlock", path.as_str()])?;
-            Ok(())
+            git_cli::mutate(&self.path, &["worktree", "unlock", path.as_str()])
         })
     }
 

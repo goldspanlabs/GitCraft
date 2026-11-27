@@ -726,20 +726,12 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
     func refreshStatus() {
-        let session = self.session
-        Task {
-            do {
-                let status = try await Task.detached { try session.status() }.value
-                guard self.session === session else { return }
-                applyStatus(status)
-                if selectedCommit == nil {
-                    loadWorkingDiffSelection()
-                }
-            } catch {
-                guard self.session === session else { return }
-                showError(error)
+        loadInBackground({ try $0.status() }, apply: { [self] status in
+            applyStatus(status)
+            if selectedCommit == nil {
+                loadWorkingDiffSelection()
             }
-        }
+        })
     }
 
     /// Re-reads worktree metadata and per-checkout dirty counts independently so a slow
@@ -868,6 +860,28 @@ final class RepoTab: ObservableObject, Identifiable {
                 guard self.session === session else { return }
                 // A failure after the history arrived leaves it showing as loaded.
                 if historyState == .loading { historyState = .failed }
+                showError(error)
+            }
+        }
+    }
+
+    /// Runs the read-only `work` off the main thread and hands its result to `apply`. A result
+    /// or error that arrives after the tab has moved to another checkout is dropped. On an
+    /// error, `onFailure` runs before the error is shown.
+    func loadInBackground<Value: Sendable>(
+        _ work: @escaping @Sendable (RepoSession) throws -> Value,
+        apply: @escaping @MainActor (Value) -> Void,
+        onFailure: (@MainActor (Error) -> Void)? = nil
+    ) {
+        let session = self.session
+        Task {
+            do {
+                let value = try await Task.detached { try work(session) }.value
+                guard self.session === session else { return }
+                apply(value)
+            } catch {
+                guard self.session === session else { return }
+                onFailure?(error)
                 showError(error)
             }
         }
