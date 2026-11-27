@@ -695,3 +695,52 @@ fn delete_branch_undo_does_not_duplicate_dotted_sibling_branch_config() {
     );
     assert_eq!(values.lines().collect::<Vec<_>>(), ["origin"]);
 }
+
+#[test]
+fn undo_ref_move_rolls_back_ref_when_config_is_locked() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    let tip = head(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    run_git(dir.path(), &["config", "branch.feature.remote", "origin"]);
+
+    let deleted = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+
+    let config_lock = dir.path().join(".git/config.lock");
+    fs::write(&config_lock, "").unwrap();
+    assert!(session
+        .undo_ref_move(
+            deleted.after_oid.clone(),
+            deleted.full_ref.clone(),
+            deleted.before_oid.clone(),
+            deleted.branch_config.clone(),
+        )
+        .is_err());
+    assert!(session.ref_oid("refs/heads/feature".into()).is_none());
+
+    fs::remove_file(&config_lock).unwrap();
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref.clone(),
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+
+    fs::write(&config_lock, "").unwrap();
+    assert!(session
+        .undo_ref_move(Some(tip.clone()), deleted.full_ref, None, Vec::new())
+        .is_err());
+    assert_eq!(
+        session.ref_oid("refs/heads/feature".into()).as_deref(),
+        Some(tip.as_str())
+    );
+}

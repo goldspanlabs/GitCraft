@@ -446,16 +446,33 @@ impl RepoSession {
             if let Some(oid) = target_oid {
                 git_cli::mutate(&self.path, &["update-ref", &full_ref, &oid, old_arg])?;
                 if expected_oid.is_none() {
-                    self.restore_branch_config(&branch_config)?;
+                    if let Err(err) = self.restore_branch_config(&branch_config) {
+                        let _ = git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref, &oid]);
+                        if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                            let _ = self.remove_branch_config(branch_name);
+                        }
+                        return Err(err);
+                    }
                 }
                 Ok(())
             } else {
                 let old_oid = expected_oid
                     .as_deref()
                     .ok_or_else(|| GitCraftError::message("The ref has already been deleted."))?;
+                let has_branch_config = full_ref
+                    .strip_prefix("refs/heads/")
+                    .is_some_and(|b| !self.read_branch_config(b).is_empty());
                 git_cli::mutate(&self.path, &["update-ref", "-d", &full_ref, old_oid])?;
-                if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
-                    self.remove_branch_config(branch_name);
+                if has_branch_config {
+                    if let Some(branch_name) = full_ref.strip_prefix("refs/heads/") {
+                        if let Err(err) = self.remove_branch_config(branch_name) {
+                            let _ = git_cli::mutate(
+                                &self.path,
+                                &["update-ref", &full_ref, old_oid, ""],
+                            );
+                            return Err(err);
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -495,12 +512,12 @@ impl RepoSession {
         Ok(())
     }
 
-    fn remove_branch_config(&self, branch_name: &str) {
+    fn remove_branch_config(&self, branch_name: &str) -> Result<(), GitCraftError> {
         let section = format!("branch.{branch_name}");
-        let _ = git_cli::run_status(
+        git_cli::mutate(
             &self.path,
             &["config", "--local", "--remove-section", &section],
-        );
+        )
     }
 
     /// Applies `commit`'s changes on top of the checked-out branch. Returns how HEAD moved.
