@@ -418,7 +418,7 @@ extension RepoTab {
             guard generation == markdownPreviewGeneration, isCurrent() else { return }
             loadedMarkdownPreviewKey = nil
             publish(.unavailable(error.localizedDescription), to: \.markdownPreviewState)
-        })
+        }, reportsError: false)
     }
 
     private var isPreviewLoaded: Bool {

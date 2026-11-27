@@ -800,12 +800,14 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Runs the read-only `work` off the main thread and hands its result to `apply`. A result
     /// or error that arrives after the tab has moved to another checkout is dropped. On an
-    /// error, `onFailure` runs before the error is shown. `always` runs last in every case,
+    /// error, `onFailure` runs before the error is shown (unless `reportsError` is false, for failures
+    /// the caller presents inline). `always` runs last in every case,
     /// including when the result is dropped.
     func loadInBackground<Value: Sendable>(
         _ work: @escaping @Sendable (RepoSession) throws -> Value,
         apply: @escaping @MainActor (Value) -> Void,
         onFailure: (@MainActor (Error) -> Void)? = nil,
+        reportsError: Bool = true,
         always: (@MainActor () -> Void)? = nil
     ) {
         let session = self.session
@@ -818,7 +820,7 @@ final class RepoTab: ObservableObject, Identifiable {
             } catch {
                 guard self.session === session else { return }
                 onFailure?(error)
-                showError(error)
+                if reportsError { showError(error) }
             }
         }
     }

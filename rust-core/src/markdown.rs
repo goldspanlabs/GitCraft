@@ -35,10 +35,8 @@ pub fn render_diff_html(old_markdown: Option<&str>, new_markdown: Option<&str>) 
 }
 
 fn markdown_options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_HEADING_ATTRIBUTES
+    // GitHub does not support `{#id}` heading attributes, so they are deliberately not enabled.
+    Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS
 }
 
 struct PendingHeading<'a> {
@@ -69,10 +67,10 @@ fn assign_heading_ids<'a>(parser: impl Iterator<Item = Event<'a>>) -> Vec<Event<
                         None => {
                             let text = collect_plain_text(&pending.inner);
                             let base = github_slug(&text);
-                            if base.is_empty() {
-                                None
-                            } else if used_ids.insert(base.clone()) {
-                                Some(CowStr::Boxed(base.into_boxed_str()))
+                            if used_ids.insert(base.clone()) {
+                                // GitHub gives an empty slug no usable id the first time,
+                                // then `-1`, `-2`, ...
+                                (!base.is_empty()).then(|| CowStr::Boxed(base.into_boxed_str()))
                             } else {
                                 let suffix = next_suffix.entry(base.clone()).or_insert(1);
                                 let candidate = loop {
@@ -179,7 +177,11 @@ fn render_blocks(markdown: &str) -> Vec<String> {
                 }
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
-                html_depth = update_html_depth(html_depth, raw);
+                // Only block-level HTML can start a container that spans several Markdown
+                // blocks (e.g. `<details>`), but inline HTML may still close an open one.
+                if matches!(event, Event::Html(_)) || html_depth > 0 {
+                    html_depth = update_html_depth(html_depth, raw);
+                }
                 current.push(event);
                 if depth == 0 && html_depth == 0 {
                     blocks.push(events_to_html(std::mem::take(&mut current)));
@@ -220,15 +222,18 @@ fn update_html_depth(mut depth: usize, raw: &str) -> usize {
         if tag_inner.is_empty() || tag_inner.starts_with('!') || tag_inner.starts_with('?') {
             continue;
         }
-        if tag_inner.starts_with('/') {
-            depth = depth.saturating_sub(1);
+        if let Some(closing) = tag_inner.strip_prefix('/') {
+            let name = closing.trim().to_ascii_lowercase();
+            if is_container_html_tag(&name) {
+                depth = depth.saturating_sub(1);
+            }
         } else if !tag_inner.ends_with('/') {
             let tag_name = tag_inner
                 .split(|c: char| c.is_whitespace() || c == '/')
                 .next()
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if !is_void_html_tag(&tag_name) {
+            if is_container_html_tag(&tag_name) {
                 depth += 1;
             }
         }
@@ -236,23 +241,36 @@ fn update_html_depth(mut depth: usize, raw: &str) -> usize {
     depth
 }
 
-fn is_void_html_tag(tag: &str) -> bool {
+/// Block containers whose content may be separated by blank lines and so span several
+/// Markdown blocks. Void, inline and optional-end-tag elements (`<p>`, `<li>`, `<td>`, `<b>`, ...)
+/// are deliberately excluded: an unclosed one must not swallow the rest of the document.
+fn is_container_html_tag(tag: &str) -> bool {
     matches!(
         tag,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
+        "details"
+            | "div"
+            | "table"
+            | "blockquote"
+            | "ul"
+            | "ol"
+            | "dl"
+            | "section"
+            | "article"
+            | "aside"
+            | "nav"
+            | "header"
+            | "footer"
+            | "figure"
+            | "center"
+            | "pre"
+            | "main"
+            | "address"
+            | "form"
+            | "fieldset"
+            | "picture"
+            | "video"
+            | "audio"
+            | "svg"
     )
 }
 
@@ -283,7 +301,7 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
 }
 
 /// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
-/// regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
+/// and renames heading `id`s to `data-old-id` (so no anchor can target a deleted copy), regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
 fn tag_deleted_assets(html: &str) -> String {
     let bytes = html.as_bytes();
     let len = bytes.len();
@@ -325,6 +343,10 @@ fn tag_deleted_assets(html: &str) -> String {
             i += 1;
         }
         out.push_str(&html[tag_start..i]);
+        let is_heading = matches!(
+            html[tag_start + 1..i].to_ascii_lowercase().as_str(),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        );
 
         // Scan attributes until the closing `>` of this opening tag.
         while i < len {
@@ -358,7 +380,8 @@ fn tag_deleted_assets(html: &str) -> String {
                 i += 1;
             }
             let attr_name = &html[name_start..i];
-            out.push_str(attr_name);
+            let renames_id = is_heading && attr_name.eq_ignore_ascii_case("id");
+            out.push_str(if renames_id { "data-old-id" } else { attr_name });
 
             // Optional whitespace before `=`.
             let pre_eq = i;
@@ -466,13 +489,42 @@ fn append_old_side_param(url: &str) -> String {
 
 const MAX_LCS_BLOCKS: usize = 1500;
 
-fn diff_blocks_html(old: &[String], new: &[String]) -> String {
-    if old.len() > MAX_LCS_BLOCKS || new.len() > MAX_LCS_BLOCKS {
-        let mut out = wrap_all(old, "diff-deleted", true);
-        out.push_str(&wrap_all(new, "diff-added", false));
-        return out;
-    }
+const LARGE_DIFF_NOTICE: &str = "<div class=\"diff-notice\">This change is too large to align block by block, so the changed region is shown as removed and re-added.</div>\n";
 
+fn diff_blocks_html(old: &[String], new: &[String]) -> String {
+    // Unchanged leading and trailing blocks need no alignment, which keeps the quadratic
+    // step below limited to the region that actually changed.
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let max_suffix = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let old_mid = &old[prefix..old.len() - suffix];
+    let new_mid = &new[prefix..new.len() - suffix];
+
+    let mut out = String::new();
+    for block in &new[..prefix] {
+        out.push_str(block);
+    }
+    if old_mid.len() > MAX_LCS_BLOCKS || new_mid.len() > MAX_LCS_BLOCKS {
+        out.push_str(LARGE_DIFF_NOTICE);
+        out.push_str(&wrap_all(old_mid, "diff-deleted", true));
+        out.push_str(&wrap_all(new_mid, "diff-added", false));
+    } else {
+        lcs_diff_blocks(old_mid, new_mid, &mut out);
+    }
+    for block in &new[new.len() - suffix..] {
+        out.push_str(block);
+    }
+    out
+}
+
+fn lcs_diff_blocks(old: &[String], new: &[String], out: &mut String) {
     let n = old.len();
     let m = new.len();
     let mut dp = vec![0usize; (n + 1) * (m + 1)];
@@ -488,7 +540,6 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
         }
     }
 
-    let mut out = String::new();
     let mut i = 0;
     let mut j = 0;
     while i < n && j < m {
@@ -497,22 +548,21 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
             i += 1;
             j += 1;
         } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
-            push_diff_block(&mut out, "diff-deleted", &old[i], true);
+            push_diff_block(out, "diff-deleted", &old[i], true);
             i += 1;
         } else {
-            push_diff_block(&mut out, "diff-added", &new[j], false);
+            push_diff_block(out, "diff-added", &new[j], false);
             j += 1;
         }
     }
     while i < n {
-        push_diff_block(&mut out, "diff-deleted", &old[i], true);
+        push_diff_block(out, "diff-deleted", &old[i], true);
         i += 1;
     }
     while j < m {
-        push_diff_block(&mut out, "diff-added", &new[j], false);
+        push_diff_block(out, "diff-added", &new[j], false);
         j += 1;
     }
-    out
 }
 
 #[cfg(test)]
@@ -604,13 +654,105 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_inline_or_optional_tags_do_not_merge_later_blocks() {
+        let md = "<p align=center>\n\nOne <b>bold\n\nTwo\n\nThree\n";
+        let html = render_diff_html(None, Some(md));
+        assert!(html.matches("diff-added").count() >= 3);
+    }
+
+    #[test]
+    fn heading_braces_are_kept_and_empty_slugs_dedupe() {
+        let html = render_html("## Config {#id}\n\n## !!!\n\n## ???\n");
+        assert!(html.contains("<h2 id=\"config-id\">Config {#id}</h2>"));
+        assert!(html.contains("<h2>!!!</h2>"));
+        assert!(html.contains("<h2 id=\"-1\">???</h2>"));
+    }
+
+    #[test]
+    fn deleted_blocks_prefix_heading_ids() {
+        let html = render_diff_html(Some("# Gone\n"), None);
+        assert!(html.contains("<h1 data-old-id=\"gone\">"));
+    }
+
+    #[test]
+    fn large_docs_with_a_small_change_still_diff_per_block() {
+        let para = |i: usize| format!("Paragraph {i}.\n\n");
+        let old: String = (0..3000).map(para).collect();
+        let new = old.replace("Paragraph 1500.", "Changed 1500.");
+        let html = render_diff_html(Some(&old), Some(&new));
+        assert!(!html.contains("diff-notice"));
+        assert_eq!(html.matches("diff-deleted").count(), 1);
+        assert_eq!(html.matches("diff-added").count(), 1);
+    }
+
+    #[test]
+    fn huge_rewrites_show_a_notice_instead_of_silently_degrading() {
+        let old: String = (0..2000).map(|i| format!("Old {i}.\n\n")).collect();
+        let new: String = (0..2000).map(|i| format!("New {i}.\n\n")).collect();
+        let html = render_diff_html(Some(&old), Some(&new));
+        assert!(html.contains("diff-notice"));
+        assert_eq!(html.matches("diff-deleted").count(), 2000);
+    }
+
+    #[test]
+    fn deleted_heading_ids_never_collide_with_current_ids() {
+        let html = render_diff_html(Some("# Title\n"), Some("# Old Title\n"));
+        assert!(html.contains("<h1 data-old-id=\"title\">Title</h1>"));
+        assert!(html.contains("<h1 id=\"old-title\">Old Title</h1>"));
+
+        let raw = "<h2 id=\"section\">Current</h2>\n";
+        let html = render_diff_html(Some("# Section\n"), Some(raw));
+        assert_eq!(html.matches(" id=\"section\"").count(), 1, "{html}");
+    }
+
+    #[test]
+    fn deleted_raw_html_heading_ids_are_renamed() {
+        let old = "<h2 class=\"t\" id='section'>A</h2>\n\n<H3 ID=other>B</H3>\n";
+        let html = render_diff_html(Some(old), None);
+        assert!(html.contains("data-old-id='section'"), "{html}");
+        assert!(html.contains("data-old-id=other"), "{html}");
+        assert!(!html.contains(" id="), "{html}");
+        assert!(!html.contains("ID="), "{html}");
+    }
+
+    #[test]
+    fn media_containers_stay_together_across_blank_lines() {
+        let md = "<picture>\n\n<source srcset=\"a.png\">\n\n<img src=\"b.png\">\n\n</picture>\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 1, "{html}");
+    }
+
+    #[test]
+    fn svg_stays_together_across_blank_lines() {
+        let md = "<svg width=\"10\" height=\"10\">\n\n<rect width=\"5\" height=\"5\"/>\n\n</svg>\n\nAfter.\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 2, "{html}");
+        assert!(html.contains("<rect"), "{html}");
+    }
+
+    #[test]
+    fn inline_html_can_close_an_open_container() {
+        let md = "<div>\n\ntext </div>\n\n# Later\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 2, "{html}");
+    }
+
+    #[test]
+    fn main_and_form_containers_stay_together() {
+        let md = "<main>\n\nInner paragraph.\n\n</main>\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 1, "{html}");
+    }
+
+    #[test]
     fn diff_html_handles_new_and_deleted_files() {
         let added = render_diff_html(None, Some("# Fresh\n"));
         assert!(added
             .contains("<div class=\"diff-block diff-added\"><h1 id=\"fresh\">Fresh</h1>\n</div>"));
 
         let deleted = render_diff_html(Some("# Gone\n"), None);
-        assert!(deleted
-            .contains("<div class=\"diff-block diff-deleted\"><h1 id=\"gone\">Gone</h1>\n</div>"));
+        assert!(deleted.contains(
+            "<div class=\"diff-block diff-deleted\"><h1 data-old-id=\"gone\">Gone</h1>\n</div>"
+        ));
     }
 }

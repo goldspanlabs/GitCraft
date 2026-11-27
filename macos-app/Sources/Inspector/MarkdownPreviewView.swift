@@ -121,6 +121,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         <head>
         <meta charset="utf-8">
         <meta name="color-scheme" content="light dark">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src gitcraft-repo: data:; media-src gitcraft-repo:; style-src 'unsafe-inline'">
         <style>
           :root {
             color-scheme: light dark;
@@ -253,6 +254,15 @@ struct MarkdownPreviewView: NSViewRepresentable {
             background: var(--diff-del-bg);
             border-left-color: var(--diff-del-border);
             opacity: 0.85;
+          }
+          .diff-notice {
+            margin: 0 0 16px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--fg-muted);
+            font-size: 12px;
           }
         </style>
         </head>
