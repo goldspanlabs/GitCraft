@@ -112,14 +112,17 @@ struct CommitInspectorView: View {
 
     /// Moves the selected changed file one visible row up or down, stopping at the ends.
     private func moveFileSelection(by delta: Int) {
-        // At the first or last file there is nowhere to go; skip the diff reload.
-        guard let path = FileTree.filePath(
-            movingFrom: tab.selectedFilePath,
-            by: delta,
-            in: tab.commitDetail?.files ?? [],
+        let list = FileTree.List(
+            changes: tab.commitDetail?.files ?? [],
             collapsedFolderPaths: collapsedFolderPaths
+        )
+        // At the first or last file there is nowhere to go; skip the diff reload.
+        guard let file = FileTree.file(
+            movingBy: delta,
+            through: [list],
+            from: { $0.path == tab.selectedFilePath }
         ) else { return }
-        tab.selectCommitFile(path)
+        tab.selectCommitFile(file.path)
     }
 
     var body: some View {
@@ -343,86 +346,31 @@ private struct CommitFileList: View {
     var edgeInset: CGFloat = 10
     let onSelect: (String) -> Void
 
-    private static let indent: CGFloat = 14
-    private static let chevronWidth: CGFloat = 10
-
-    private var rows: [FlatFileRow] {
-        FileTree.rows(from: tab.commitDetail?.files ?? [], collapsedFolderPaths: collapsedFolderPaths)
-    }
-
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 2) {
-            ForEach(rows) { row in
-                Group {
-                    switch row.kind {
-                    case let .folder(name, folderPath, isExpanded):
-                        folderRow(name: name, path: folderPath, isExpanded: isExpanded, depth: row.depth)
-                    case let .file(change, name):
-                        // The row's id is its path, which lets the list scroll to the selected file.
-                        fileRow(change, name: name, depth: row.depth)
-                    }
-                }
-                .padding(.horizontal, edgeInset)
+            FileTreeRows(
+                changes: tab.commitDetail?.files ?? [],
+                collapsedFolderPaths: $collapsedFolderPaths,
+                edgeInset: edgeInset
+            ) { change, name, depth in
+                fileRow(change, name: name, depth: depth)
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private func folderRow(name: String, path: String, isExpanded: Bool, depth: Int) -> some View {
-        Button {
-            if isExpanded {
-                collapsedFolderPaths.insert(path)
-            } else {
-                collapsedFolderPaths.remove(path)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: Self.chevronWidth)
-                PhosphorIcon(glyph: .folder, size: 14)
-                    .foregroundStyle(.secondary)
-                Text(name)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-            }
-            .padding(.leading, CGFloat(depth) * Self.indent)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(path)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 
     private func fileRow(_ file: FileChange, name: String, depth: Int) -> some View {
         Button {
             onSelect(file.path)
         } label: {
-            HStack(spacing: 6) {
-                // Stands in for a folder's chevron, so badges line up with sibling folder icons.
-                Color.clear.frame(width: Self.chevronWidth, height: 1)
-                StatusBadge(status: file.status)
-                Text(name)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
+            FileTreeFileLabel(
+                change: file,
+                name: name,
+                depth: depth,
+                isSelected: selectsPath && tab.selectedFilePath == file.path
+            ) {
+                EmptyView()
             }
-            .padding(.leading, CGFloat(depth) * Self.indent)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                selectsPath && tab.selectedFilePath == file.path
-                    ? Color.accentColor.opacity(0.18)
-                    : Color.clear
-            )
-            .cornerRadius(4)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(file.path)

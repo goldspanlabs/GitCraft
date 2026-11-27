@@ -22,12 +22,11 @@ final class FileTreeTests: XCTestCase {
         by delta: Int,
         collapsed: Set<String> = []
     ) -> String? {
-        FileTree.filePath(
-            movingFrom: selected,
-            by: delta,
-            in: files(paths),
-            collapsedFolderPaths: collapsed
-        )
+        FileTree.file(
+            movingBy: delta,
+            through: [FileTree.List(changes: files(paths), collapsedFolderPaths: collapsed)],
+            from: { $0.path == selected }
+        )?.path
     }
 
     func testFoldersNestAndSortAboveFiles() {

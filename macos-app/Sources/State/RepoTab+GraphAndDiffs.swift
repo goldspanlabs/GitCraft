@@ -244,21 +244,24 @@ extension RepoTab {
         loadWorkingDiff(path: file.path, staged: file.staged)
     }
 
-    /// Moves the selected working file by `delta` rows through the staged list and then the
-    /// unstaged one, stopping at the first and last row.
-    func moveWorkingFileSelection(by delta: Int) {
-        let files = stagedFiles + unstagedFiles
-        guard !files.isEmpty else { return }
-        let current = files.firstIndex { $0.path == selectedFilePath && $0.staged == selectedFileStaged }
-        let next: Int
-        if let current {
-            next = min(max(current + delta, 0), files.count - 1)
-            // At either end another press changes nothing; skip the diff reload.
-            if next == current { return }
-        } else {
-            next = delta > 0 ? 0 : files.count - 1
-        }
-        selectWorkingFile(files[next])
+    /// Moves the selected working file one row up (`delta` < 0) or down through the staged tree
+    /// and then the unstaged one, skipping files in collapsed folders and stopping at the ends.
+    func moveWorkingFileSelection(
+        by delta: Int,
+        collapsedStagedFolders: Set<String> = [],
+        collapsedUnstagedFolders: Set<String> = []
+    ) {
+        let lists = [
+            FileTree.List(changes: stagedFiles, collapsedFolderPaths: collapsedStagedFolders),
+            FileTree.List(changes: unstagedFiles, collapsedFolderPaths: collapsedUnstagedFolders),
+        ]
+        // At either end there is no next file; skip the diff reload.
+        guard let file = FileTree.file(
+            movingBy: delta,
+            through: lists,
+            from: { $0.path == selectedFilePath && $0.staged == selectedFileStaged }
+        ) else { return }
+        selectWorkingFile(file)
     }
 
     func selectCommitFile(_ path: String?) {
@@ -284,10 +287,8 @@ extension RepoTab {
                 return
             }
         }
-        if let first = unstagedFiles.first {
+        if let first = FileTree.files(in: unstagedFiles).first ?? FileTree.files(in: stagedFiles).first {
             selectWorkingFile(first)
-        } else if let firstStaged = stagedFiles.first {
-            selectWorkingFile(firstStaged)
         } else {
             publish(nil, to: \.selectedFilePath)
             publish([], to: \.diffRows)
