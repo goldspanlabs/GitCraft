@@ -133,10 +133,20 @@ class WorkspaceWindowController: NSWindowController {
 @MainActor
 final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
-    /// Width of the repository / branch text: a fraction of the window width, clamped to this range.
+    /// Width of the repository / branch text: a fraction of the window width, clamped to this range,
+    /// and narrower still (down to the minimum) when it would push the action buttons off centre.
     private static let titleTextWidthRange: ClosedRange<CGFloat> = 200...360
     private static let titleTextWidthFraction: CGFloat = 0.2
+    private static let titleTextMinimumWidth: CGFloat = 60
+    /// Everything in the title block besides the text: edge insets, spacing and the spinner slot.
+    private static let titleChromeWidth: CGFloat = 48
+    /// Space the toolbar keeps between the title block and the action buttons.
+    private static let titleActionsGap: CGFloat = 8
     private var titleWidthConstraints: [NSLayoutConstraint] = []
+    private weak var titleRow: NSView?
+    private weak var actionsView: NSView?
+    private let sidebarItem: NSSplitViewItem
+    private var sidebarResizes: AnyCancellable?
     private let dot = TabStatusDot()
     private let spinner: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
@@ -183,6 +193,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         sidebarItem.maximumThickness = 340
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(NSSplitViewItem(viewController: detail))
+        self.sidebarItem = sidebarItem
 
         let window = NSWindow(contentViewController: split)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
@@ -199,8 +210,15 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         let toolbar = NSToolbar(identifier: "GitCraft.repoToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
+        toolbar.centeredItemIdentifiers = [.repoActions]
         window.toolbar = toolbar
         window.titleVisibility = .hidden
+
+        // The title block starts at the sidebar's edge, so its room changes with the sidebar.
+        sidebarResizes = NotificationCenter.default
+            .publisher(for: NSSplitView.didResizeSubviewsNotification, object: split.splitView)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateTitleWidth() }
 
         changes = tab.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -270,12 +288,30 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         return size.width >= 1040 && size.height >= 680 ? size : fallback
     }
 
-    /// Scales the title block with the window, so it is the same for every name at a given width.
+    /// Scales the title block with the window, so it is the same for every name at a given width,
+    /// and keeps it short of the centred action buttons.
     private func updateTitleWidth() {
         let windowWidth = window?.frame.width ?? 0
-        let width = min(max(windowWidth * Self.titleTextWidthFraction, Self.titleTextWidthRange.lowerBound),
+        var width = min(max(windowWidth * Self.titleTextWidthFraction, Self.titleTextWidthRange.lowerBound),
                         Self.titleTextWidthRange.upperBound)
-        for constraint in titleWidthConstraints { constraint.constant = width }
+        if let row = titleRow, row.window != nil, let actions = actionsView {
+            let leading = row.convert(row.bounds, to: nil).minX
+            // AppKit centres the buttons over what's right of the sidebar, or the whole
+            // window when the sidebar is hidden.
+            let sidebar = sidebarItem.viewController.view
+            let sidebarEdge = sidebarItem.isCollapsed ? 0 : sidebar.convert(sidebar.bounds, to: nil).maxX
+            let actionsLeading = (sidebarEdge + windowWidth - actions.fittingSize.width) / 2
+            let room = actionsLeading - leading - Self.titleActionsGap - Self.titleChromeWidth
+            width = max(min(width, room.rounded(.down)), Self.titleTextMinimumWidth)
+        }
+        for constraint in titleWidthConstraints where constraint.constant != width {
+            constraint.constant = width
+        }
+    }
+
+    /// Catches the first toolbar layout, which neither a window nor a sidebar resize reports.
+    func windowDidUpdate(_: Notification) {
+        updateTitleWidth()
     }
 
     func windowDidResize(_ notification: Notification) {
@@ -327,24 +363,21 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             row.alignment = .centerY
             row.spacing = 16
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
-            // Fixed width (not a maximum) so the action buttons don't shift with the name length.
+            // Fixed width (not a maximum) so the title block doesn't change with the name length.
             // Low compression resistance lets long names truncate in the middle, like the sidebar.
-            // The width is a high-priority (not required) target so it gives way when the
-            // window is narrow; the action buttons are never squeezed.
             titleWidthConstraints = [titleLabel, subtitleLabel].map { label in
                 label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
                 let constraint = label.widthAnchor.constraint(equalToConstant: Self.titleTextWidthRange.lowerBound)
-                constraint.priority = .defaultHigh
                 constraint.isActive = true
                 return constraint
             }
+            titleRow = row
             updateTitleWidth()
 
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = row
             item.isBordered = false
             item.label = "Repository"
-            item.visibilityPriority = .standard
             return item
         case .repoActions:
             let item = NSToolbarItem(itemIdentifier: identifier)
@@ -355,12 +388,10 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             item.view = hosting
             item.isBordered = false
             item.label = "Actions"
-            // Keep the actions visible as long as possible; the title and filter give way first.
-            item.visibilityPriority = .high
+            actionsView = hosting
             return item
         case .repoSearch:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
-            item.visibilityPriority = .low
             item.searchField.placeholderString = "Filter commits"
             item.searchField.stringValue = tab.searchQuery
             item.searchField.delegate = self
