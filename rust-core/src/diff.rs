@@ -149,6 +149,40 @@ pub fn commit_file_content(
     git_object_text(repo, &format!("{oid_hex}:{path}"))
 }
 
+/// Reads both the old and new versions of a working-tree or staged file for rich diffing.
+pub fn working_file_content_pair(
+    repo: &Path,
+    path: &str,
+    staged: bool,
+) -> Result<crate::FileContentPair, crate::GitCraftError> {
+    let old_content = if staged {
+        git_object_text(repo, &format!("HEAD:{path}"))?
+    } else if is_tracked(repo, path) {
+        git_object_text(repo, &format!(":{path}"))?
+    } else {
+        None
+    };
+    let new_content = working_file_content(repo, path, staged)?;
+    Ok(crate::FileContentPair {
+        old_content,
+        new_content,
+    })
+}
+
+/// Reads both the parent and commit versions of a file for rich diffing.
+pub fn commit_file_content_pair(
+    repo: &Path,
+    oid_hex: &str,
+    path: &str,
+) -> Result<crate::FileContentPair, crate::GitCraftError> {
+    let old_content = git_object_text(repo, &format!("{oid_hex}^1:{path}"))?;
+    let new_content = commit_file_content(repo, oid_hex, path)?;
+    Ok(crate::FileContentPair {
+        old_content,
+        new_content,
+    })
+}
+
 fn git_object_text(repo: &Path, spec: &str) -> Result<Option<String>, crate::GitCraftError> {
     let output = git_cli::run_status(repo, &["cat-file", "-p", spec])?;
     if !output.status.success() {

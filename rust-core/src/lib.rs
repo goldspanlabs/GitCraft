@@ -31,6 +31,14 @@ pub fn render_markdown_html(markdown: String) -> String {
     markdown::render_html(&markdown)
 }
 
+/// Renders a block-level rich diff between two Markdown versions as an HTML fragment.
+pub fn render_markdown_diff_html(
+    old_markdown: Option<String>,
+    new_markdown: Option<String>,
+) -> String {
+    markdown::render_diff_html(old_markdown.as_deref(), new_markdown.as_deref())
+}
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -248,6 +256,22 @@ impl RepoSession {
         staged: bool,
     ) -> Result<Option<String>, GitCraftError> {
         diff::working_file_content(&self.path, &path, staged)
+    }
+
+    pub fn get_commit_file_versions(
+        &self,
+        oid_hex: String,
+        path: String,
+    ) -> Result<FileContentPair, GitCraftError> {
+        diff::commit_file_content_pair(&self.path, &oid_hex, &path)
+    }
+
+    pub fn get_working_file_versions(
+        &self,
+        path: String,
+        staged: bool,
+    ) -> Result<FileContentPair, GitCraftError> {
+        diff::working_file_content_pair(&self.path, &path, staged)
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {

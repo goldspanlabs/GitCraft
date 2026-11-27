@@ -1883,3 +1883,47 @@ fn commit_file_content_reads_historical_blob_and_handles_deleted_files() {
         None
     );
 }
+
+#[test]
+fn file_versions_return_before_and_after_for_working_and_commit_diffs() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "doc.md", "v1\n");
+    run_git(dir.path(), &["add", "doc.md"]);
+    run_git(dir.path(), &["commit", "-m", "add doc"]);
+    let add_oid = rev(dir.path(), "HEAD");
+
+    write(dir.path(), "doc.md", "v2\n");
+    run_git(dir.path(), &["add", "doc.md"]);
+    run_git(dir.path(), &["commit", "-m", "update doc"]);
+    let edit_oid = rev(dir.path(), "HEAD");
+
+    let add_pair = session
+        .get_commit_file_versions(add_oid, "doc.md".into())
+        .unwrap();
+    assert_eq!(add_pair.old_content, None);
+    assert_eq!(add_pair.new_content.as_deref(), Some("v1\n"));
+
+    let edit_pair = session
+        .get_commit_file_versions(edit_oid, "doc.md".into())
+        .unwrap();
+    assert_eq!(edit_pair.old_content.as_deref(), Some("v1\n"));
+    assert_eq!(edit_pair.new_content.as_deref(), Some("v2\n"));
+
+    write(dir.path(), "doc.md", "v3-staged\n");
+    session.stage("doc.md".into()).unwrap();
+    write(dir.path(), "doc.md", "v4-unstaged\n");
+
+    let staged_pair = session
+        .get_working_file_versions("doc.md".into(), true)
+        .unwrap();
+    assert_eq!(staged_pair.old_content.as_deref(), Some("v2\n"));
+    assert_eq!(staged_pair.new_content.as_deref(), Some("v3-staged\n"));
+
+    let unstaged_pair = session
+        .get_working_file_versions("doc.md".into(), false)
+        .unwrap();
+    assert_eq!(unstaged_pair.old_content.as_deref(), Some("v3-staged\n"));
+    assert_eq!(unstaged_pair.new_content.as_deref(), Some("v4-unstaged\n"));
+}

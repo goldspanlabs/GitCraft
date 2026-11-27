@@ -290,3 +290,9 @@ pub struct RepoStatus {
     pub is_reverting: bool,
     pub has_conflicts: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileContentPair {
+    pub old_content: Option<String>,
+    pub new_content: Option<String>,
+}

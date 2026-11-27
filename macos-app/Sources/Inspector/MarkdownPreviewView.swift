@@ -93,6 +93,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
             --border: #d0d7de;
             --surface: #f6f8fa;
             --link: #0969da;
+            --diff-add-bg: rgba(46, 160, 67, 0.14);
+            --diff-add-border: #1a7f37;
+            --diff-del-bg: rgba(248, 81, 73, 0.14);
+            --diff-del-border: #cf222e;
           }
           @media (prefers-color-scheme: dark) {
             :root {
@@ -101,6 +105,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
               --border: #30363d;
               --surface: #161b22;
               --link: #58a6ff;
+              --diff-add-bg: rgba(46, 160, 67, 0.18);
+              --diff-add-border: #3fb950;
+              --diff-del-bg: rgba(248, 81, 73, 0.18);
+              --diff-del-border: #f85149;
             }
           }
           html, body {
@@ -191,6 +199,24 @@ struct MarkdownPreviewView: NSViewRepresentable {
           img {
             max-width: 100%;
             height: auto;
+          }
+          .diff-block {
+            padding: 6px 12px;
+            margin: 6px -12px;
+            border-left: 3px solid transparent;
+            border-radius: 4px;
+          }
+          .diff-block > :last-child {
+            margin-bottom: 0;
+          }
+          .diff-added {
+            background: var(--diff-add-bg);
+            border-left-color: var(--diff-add-border);
+          }
+          .diff-deleted {
+            background: var(--diff-del-bg);
+            border-left-color: var(--diff-del-border);
+            opacity: 0.85;
           }
         </style>
         </head>
