@@ -28,9 +28,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.schemeHandler.repoRootURL = repoRootPath.map {
-            URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-        }
+        context.coordinator.schemeHandler.setRepoRootPath(repoRootPath)
         let baseURL = Self.baseURL(for: filePath)
         guard context.coordinator.loadedHTML != html || context.coordinator.loadedBaseURL != baseURL else {
             return
@@ -54,10 +52,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         fileprivate let schemeHandler: RepoAssetSchemeHandler
 
         init(repoRootPath: String?) {
-            let rootURL = repoRootPath.map {
-                URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-            }
-            self.schemeHandler = RepoAssetSchemeHandler(repoRootURL: rootURL)
+            self.schemeHandler = RepoAssetSchemeHandler(repoRootPath: repoRootPath)
         }
 
         func webView(
@@ -249,24 +244,36 @@ struct MarkdownPreviewView: NSViewRepresentable {
 /// without running into file:// origin restrictions.
 fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "gitcraft-repo"
-    var repoRootURL: URL?
+    private var resolvedRootURL: URL?
+    private var resolvedRootPrefix: String = ""
 
-    init(repoRootURL: URL?) {
-        self.repoRootURL = repoRootURL
+    init(repoRootPath: String?) {
+        super.init()
+        setRepoRootPath(repoRootPath)
+    }
+
+    func setRepoRootPath(_ path: String?) {
+        let normalized = path.map {
+            URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+        }
+        resolvedRootURL = normalized
+        if let normalized {
+            resolvedRootPrefix = normalized.path.hasSuffix("/") ? normalized.path : normalized.path + "/"
+        } else {
+            resolvedRootPrefix = ""
+        }
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let rootURL = repoRootURL,
+        guard let rootURL = resolvedRootURL,
               let requestURL = urlSchemeTask.request.url else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
 
-        let resolvedRoot = rootURL.resolvingSymlinksInPath().standardizedFileURL
         let relativePath = requestURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let targetURL = resolvedRoot.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
-        let rootPath = resolvedRoot.path.hasSuffix("/") ? resolvedRoot.path : resolvedRoot.path + "/"
-        guard targetURL.path.hasPrefix(rootPath),
+        let targetURL = rootURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+        guard targetURL.path.hasPrefix(resolvedRootPrefix),
               let data = try? Data(contentsOf: targetURL) else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return

@@ -110,14 +110,16 @@ const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
 /// Reads a working-tree or staged file's full UTF-8 text for previewing.
 /// Returns `Ok(None)` if the file does not exist (e.g. deleted).
 pub fn working_file_content(
-    repo: &Path,
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
     path: &str,
     staged: bool,
 ) -> Result<Option<String>, crate::GitCraftError> {
     if staged {
-        return git_object_text(repo, &format!(":{path}"));
+        let repo = sync_repo.to_thread_local();
+        return index_blob_text(&repo, path);
     }
-    let full_path = repo.join(path);
+    let full_path = repo_path.join(path);
     let Ok(meta) = std::fs::symlink_metadata(&full_path) else {
         return Ok(None);
     };
@@ -146,27 +148,32 @@ pub fn working_file_content(
 /// Reads a file's full UTF-8 text at a specific commit for previewing.
 /// Returns `Ok(None)` if the file does not exist at that commit (e.g. deleted).
 pub fn commit_file_content(
-    repo: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
     oid_hex: &str,
     path: &str,
 ) -> Result<Option<String>, crate::GitCraftError> {
-    git_object_text(repo, &format!("{oid_hex}:{path}"))
+    let oid =
+        gix::ObjectId::from_hex(oid_hex.as_bytes()).map_err(crate::GitCraftError::from_display)?;
+    let repo = sync_repo.to_thread_local();
+    commit_tree_blob_text(&repo, oid, path)
 }
 
 /// Reads both the old and new versions of a working-tree or staged file for rich diffing.
 pub fn working_file_content_pair(
-    repo: &Path,
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
     path: &str,
     staged: bool,
 ) -> Result<crate::FileContentPair, crate::GitCraftError> {
+    let repo = sync_repo.to_thread_local();
     let old_content = if staged {
-        git_object_text(repo, &format!("HEAD:{path}"))?
-    } else if is_tracked(repo, path) {
-        git_object_text(repo, &format!(":{path}"))?
+        head_blob_text(&repo, path)?
+    } else if is_tracked(repo_path, path) {
+        index_blob_text(&repo, path)?
     } else {
         None
     };
-    let new_content = working_file_content(repo, path, staged)?;
+    let new_content = working_file_content(repo_path, sync_repo, path, staged)?;
     Ok(crate::FileContentPair {
         old_content,
         new_content,
@@ -175,47 +182,96 @@ pub fn working_file_content_pair(
 
 /// Reads both the parent and commit versions of a file for rich diffing.
 pub fn commit_file_content_pair(
-    repo: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
     oid_hex: &str,
     path: &str,
 ) -> Result<crate::FileContentPair, crate::GitCraftError> {
-    let old_content = git_object_text(repo, &format!("{oid_hex}^1:{path}"))?;
-    let new_content = commit_file_content(repo, oid_hex, path)?;
+    let oid =
+        gix::ObjectId::from_hex(oid_hex.as_bytes()).map_err(crate::GitCraftError::from_display)?;
+    let repo = sync_repo.to_thread_local();
+    let parent_id = repo
+        .find_commit(oid)
+        .ok()
+        .and_then(|c| c.parent_ids().next())
+        .map(|p| p.detach());
+    let old_content = match parent_id {
+        Some(pid) => commit_tree_blob_text(&repo, pid, path)?,
+        None => None,
+    };
+    let new_content = commit_tree_blob_text(&repo, oid, path)?;
     Ok(crate::FileContentPair {
         old_content,
         new_content,
     })
 }
 
-fn git_object_text(repo: &Path, spec: &str) -> Result<Option<String>, crate::GitCraftError> {
-    let size_out = git_cli::run_status(repo, &["cat-file", "-s", spec])?;
-    if !size_out.status.success() {
+fn index_blob_text(
+    repo: &gix::Repository,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(index) = repo.index() else {
         return Ok(None);
-    }
-    if let Ok(size) = size_out.stdout.trim().parse::<usize>() {
-        if size > MAX_PREVIEW_BYTES {
-            return Err(crate::GitCraftError::message(format!(
-                "File is too large to preview ({size} bytes)"
-            )));
-        }
-    }
-    let output = git_cli::run_status(repo, &["cat-file", "-p", spec])?;
-    if !output.status.success() {
+    };
+    let Some(entry) = index.entry_by_path(path.into()) else {
         return Ok(None);
-    }
-    let bytes = output.stdout.as_bytes();
-    if bytes.len() > MAX_PREVIEW_BYTES {
+    };
+    odb_blob_text(repo, entry.id)
+}
+
+fn head_blob_text(
+    repo: &gix::Repository,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(head_id) = repo.head_id() else {
+        return Ok(None);
+    };
+    commit_tree_blob_text(repo, head_id.detach(), path)
+}
+
+fn commit_tree_blob_text(
+    repo: &gix::Repository,
+    commit_id: gix::ObjectId,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(commit) = repo.find_commit(commit_id) else {
+        return Ok(None);
+    };
+    let Ok(tree) = commit.tree() else {
+        return Ok(None);
+    };
+    let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+        return Ok(None);
+    };
+    odb_blob_text(repo, entry.oid().into())
+}
+
+fn odb_blob_text(
+    repo: &gix::Repository,
+    oid: gix::ObjectId,
+) -> Result<Option<String>, crate::GitCraftError> {
+    use gix::prelude::HeaderExt;
+    let header = repo
+        .objects
+        .header(oid)
+        .map_err(crate::GitCraftError::from_display)?;
+    if header.size() > MAX_PREVIEW_BYTES as u64 {
         return Err(crate::GitCraftError::message(format!(
             "File is too large to preview ({} bytes)",
-            bytes.len()
+            header.size()
         )));
     }
-    if bytes.contains(&0) {
+    let obj = repo
+        .find_object(oid)
+        .map_err(crate::GitCraftError::from_display)?;
+    if obj.kind != gix::object::Kind::Blob {
+        return Ok(None);
+    }
+    if obj.data.contains(&0) {
         return Err(crate::GitCraftError::message(
             "Binary file cannot be previewed",
         ));
     }
-    Ok(Some(output.stdout))
+    Ok(Some(String::from_utf8_lossy(&obj.data).into_owned()))
 }
 
 #[cfg(test)]

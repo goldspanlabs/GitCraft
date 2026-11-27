@@ -247,7 +247,7 @@ impl RepoSession {
         oid_hex: String,
         path: String,
     ) -> Result<Option<String>, GitCraftError> {
-        diff::commit_file_content(&self.path, &oid_hex, &path)
+        diff::commit_file_content(&self.sync_repo, &oid_hex, &path)
     }
 
     pub fn get_working_file_content(
@@ -255,7 +255,7 @@ impl RepoSession {
         path: String,
         staged: bool,
     ) -> Result<Option<String>, GitCraftError> {
-        diff::working_file_content(&self.path, &path, staged)
+        diff::working_file_content(&self.path, &self.sync_repo, &path, staged)
     }
 
     pub fn get_commit_file_versions(
@@ -263,7 +263,7 @@ impl RepoSession {
         oid_hex: String,
         path: String,
     ) -> Result<FileContentPair, GitCraftError> {
-        diff::commit_file_content_pair(&self.path, &oid_hex, &path)
+        diff::commit_file_content_pair(&self.sync_repo, &oid_hex, &path)
     }
 
     pub fn get_working_file_versions(
@@ -271,7 +271,7 @@ impl RepoSession {
         path: String,
         staged: bool,
     ) -> Result<FileContentPair, GitCraftError> {
-        diff::working_file_content_pair(&self.path, &path, staged)
+        diff::working_file_content_pair(&self.path, &self.sync_repo, &path, staged)
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {

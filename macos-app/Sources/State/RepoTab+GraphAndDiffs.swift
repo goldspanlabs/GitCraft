@@ -342,36 +342,11 @@ extension RepoTab {
     }
 
     private func loadWorkingMarkdownPreview(path: String, staged: Bool) {
-        let key = "working:\(staged):\(path)"
-        markdownPreviewGeneration &+= 1
-        let generation = markdownPreviewGeneration
-        if loadedMarkdownPreviewKey != key || !isPreviewLoaded {
-            loadedMarkdownPreviewKey = key
-            publish(.loading, to: \.markdownPreviewState)
-        }
-        loadInBackground({ session -> MarkdownPreviewState in
-            let pair = try session.getWorkingFileVersions(path: path, staged: staged)
-            guard pair.oldContent != nil || pair.newContent != nil else {
-                return .deleted
-            }
-            return .loaded(renderMarkdownDiffHtml(oldMarkdown: pair.oldContent, newMarkdown: pair.newContent))
-        }, apply: { [self] state in
-            if generation == markdownPreviewGeneration
-                && selectedCommit == nil
-                && selectedFilePath == path
-                && selectedFileStaged == staged {
-                loadedMarkdownPreviewKey = key
-                publish(state, to: \.markdownPreviewState)
-            }
-        }, onFailure: { [self] error in
-            if generation == markdownPreviewGeneration
-                && selectedCommit == nil
-                && selectedFilePath == path
-                && selectedFileStaged == staged {
-                loadedMarkdownPreviewKey = nil
-                publish(.unavailable(error.localizedDescription), to: \.markdownPreviewState)
-            }
-        })
+        loadMarkdownPreview(
+            key: "working:\(staged):\(path)",
+            isCurrent: { self.selectedCommit == nil && self.selectedFilePath == path && self.selectedFileStaged == staged },
+            fetch: { try $0.getWorkingFileVersions(path: path, staged: staged) }
+        )
     }
 
     private func loadCommitDetails(_ commit: CommitRow) {
@@ -411,33 +386,38 @@ extension RepoTab {
     }
 
     private func loadCommitMarkdownPreview(oidHex: String, path: String) {
-        let key = "commit:\(oidHex):\(path)"
+        loadMarkdownPreview(
+            key: "commit:\(oidHex):\(path)",
+            isCurrent: { self.selectedCommit?.oidHex == oidHex && self.selectedFilePath == path },
+            fetch: { try $0.getCommitFileVersions(oidHex: oidHex, path: path) }
+        )
+    }
+
+    private func loadMarkdownPreview(
+        key: String,
+        isCurrent: @escaping () -> Bool,
+        fetch: @escaping (RepoSession) throws -> FileContentPair
+    ) {
         markdownPreviewGeneration &+= 1
         let generation = markdownPreviewGeneration
         if loadedMarkdownPreviewKey != key || !isPreviewLoaded {
             loadedMarkdownPreviewKey = key
-            markdownPreviewState = .loading
+            publish(.loading, to: \.markdownPreviewState)
         }
         loadInBackground({ session -> MarkdownPreviewState in
-            let pair = try session.getCommitFileVersions(oidHex: oidHex, path: path)
+            let pair = try fetch(session)
             guard pair.oldContent != nil || pair.newContent != nil else {
                 return .deleted
             }
             return .loaded(renderMarkdownDiffHtml(oldMarkdown: pair.oldContent, newMarkdown: pair.newContent))
         }, apply: { [self] state in
-            if generation == markdownPreviewGeneration
-                && selectedCommit?.oidHex == oidHex
-                && selectedFilePath == path {
-                loadedMarkdownPreviewKey = key
-                markdownPreviewState = state
-            }
+            guard generation == markdownPreviewGeneration, isCurrent() else { return }
+            loadedMarkdownPreviewKey = key
+            publish(state, to: \.markdownPreviewState)
         }, onFailure: { [self] error in
-            if generation == markdownPreviewGeneration
-                && selectedCommit?.oidHex == oidHex
-                && selectedFilePath == path {
-                loadedMarkdownPreviewKey = nil
-                markdownPreviewState = .unavailable(error.localizedDescription)
-            }
+            guard generation == markdownPreviewGeneration, isCurrent() else { return }
+            loadedMarkdownPreviewKey = nil
+            publish(.unavailable(error.localizedDescription), to: \.markdownPreviewState)
         })
     }
 
