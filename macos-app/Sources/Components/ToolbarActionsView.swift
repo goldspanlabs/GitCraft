@@ -8,7 +8,8 @@ struct RepoToolbarActionsView: View {
     @ObservedObject var tab: RepoTab
 
     var body: some View {
-        HStack(spacing: 10) {
+        // Two groups, remote actions and local ones, with the only divider between them.
+        HStack(spacing: 0) {
             HStack(spacing: 0) {
                 Button {
                     tab.runRemote(.fetch)
@@ -21,8 +22,6 @@ struct RepoToolbarActionsView: View {
                 .disabled(tab.isBusy)
                 .help("Fetch from remote (⇧⌘F)")
 
-                TopBarSeparator()
-
                 Button {
                     tab.runRemote(.pull)
                 } label: {
@@ -33,8 +32,6 @@ struct RepoToolbarActionsView: View {
                 .buttonStyle(.plain)
                 .disabled(tab.isBusy)
                 .help("Pull from remote (⇧⌘P)")
-
-                TopBarSeparator()
 
                 Button {
                     tab.runRemote(.push)
@@ -47,6 +44,9 @@ struct RepoToolbarActionsView: View {
                 .disabled(tab.isBusy)
                 .help("Push to remote (⇧⌘U)")
             }
+
+            TopBarSeparator()
+                .padding(.horizontal, 8)
 
             TopBarStashItem(tab: tab)
 
