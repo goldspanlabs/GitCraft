@@ -270,10 +270,7 @@ private struct TagRowView: View {
             PhosphorIcon(glyph: .tag)
                 .foregroundStyle(.orange)
                 .frame(width: 16, alignment: .center)
-            Text(tag.name)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(tag.name)
+            MiddleTruncatedText(tag.name)
             Spacer()
         }
         .contentShape(Rectangle())
@@ -572,11 +569,8 @@ private struct BranchRowContainer<Trailing: View>: View {
                 // VoiceOver (and UI tests) read the same note the tooltip shows.
                 .accessibilityLabel(glyphHelp.isEmpty ? "Branch" : glyphHelp)
 
-            Text(displayName)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                // `displayName` can be just the last path segment, so show the full branch name.
-                .help(branch.name)
+            // `displayName` can be just the last path segment, so the tooltip shows the full branch name.
+            MiddleTruncatedText(displayName, tooltip: branch.name)
 
             Spacer()
 

@@ -161,11 +161,8 @@ struct NewWorktreeSheet: View {
                             HStack(spacing: 5) {
                                 PhosphorIcon(glyph: .branch)
                                     .foregroundStyle(.secondary)
-                                Text(startPointDisplay)
+                                MiddleTruncatedText(startPointDisplay)
                                     .font(.system(size: 13))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .help(startPointDisplay)
                             }
                         }
                     }
@@ -182,11 +179,8 @@ struct NewWorktreeSheet: View {
                             HStack(spacing: 5) {
                                 PhosphorIcon(glyph: .branch)
                                     .foregroundStyle(.secondary)
-                                Text(name)
+                                MiddleTruncatedText(name)
                                     .font(.system(size: 13))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .help(name)
                             }
                         } else {
                             Picker("", selection: $existingBranch) {

@@ -37,3 +37,23 @@ extension View {
         }
     }
 }
+
+/// A name that may not fit: one line, cut in the middle so the start and end stay visible,
+/// with the full text in a tooltip. Use `tooltip` when the full name differs from what is shown,
+/// for example a branch row that shows only the last path segment.
+struct MiddleTruncatedText: View {
+    private let text: String
+    private let tooltip: String
+
+    init(_ text: String, tooltip: String? = nil) {
+        self.text = text
+        self.tooltip = tooltip ?? text
+    }
+
+    var body: some View {
+        Text(text)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(tooltip)
+    }
+}
