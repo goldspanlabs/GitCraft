@@ -2028,3 +2028,24 @@ fn commit_file_versions_follow_renames() {
     );
     assert!(pair.new_content.unwrap().contains("line 2"));
 }
+
+#[test]
+fn commit_file_versions_do_not_follow_moves_to_another_directory() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+    std::fs::create_dir_all(dir.path().join("guide")).unwrap();
+    write(dir.path(), "docs/a.md", "# T\n\none\ntwo\nthree\nfour\n");
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "add"]);
+    run_git(dir.path(), &["mv", "docs/a.md", "guide/a.md"]);
+    run_git(dir.path(), &["commit", "-m", "move"]);
+    let oid = rev(dir.path(), "HEAD");
+
+    let pair = session
+        .get_commit_file_versions(oid, "guide/a.md".into())
+        .unwrap();
+    assert_eq!(pair.old_content, None);
+    assert!(pair.new_content.is_some());
+}

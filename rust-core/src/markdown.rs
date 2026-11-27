@@ -177,8 +177,9 @@ fn render_blocks(markdown: &str) -> Vec<String> {
                 }
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
-                // Only block-level HTML can span several Markdown blocks (e.g. `<details>`).
-                if matches!(event, Event::Html(_)) {
+                // Only block-level HTML can start a container that spans several Markdown
+                // blocks (e.g. `<details>`), but inline HTML may still close an open one.
+                if matches!(event, Event::Html(_)) || html_depth > 0 {
                     html_depth = update_html_depth(html_depth, raw);
                 }
                 current.push(event);
@@ -262,6 +263,10 @@ fn is_container_html_tag(tag: &str) -> bool {
             | "figure"
             | "center"
             | "pre"
+            | "main"
+            | "address"
+            | "form"
+            | "fieldset"
     )
 }
 
@@ -284,25 +289,19 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
     out.push_str(class_name);
     out.push_str("\">");
     if is_deleted {
-        out.push_str(&prefix_heading_ids(&tag_deleted_assets(block)));
+        out.push_str(&tag_deleted_assets(block));
     } else {
         out.push_str(block);
     }
     out.push_str("</div>\n");
 }
 
-/// Gives headings in deleted blocks their own id namespace so anchors keep targeting the
-/// current document rather than the removed copy.
-fn prefix_heading_ids(html: &str) -> String {
-    let mut out = html.to_owned();
-    for level in 1..=6 {
-        out = out.replace(&format!("<h{level} id=\""), &format!("<h{level} id=\"old-"));
-    }
-    out
-}
+/// Id prefix for headings in deleted blocks. Generated slugs never contain `:`, so these ids
+/// cannot collide with the current document's and anchors keep targeting the current copy.
+const DELETED_ID_PREFIX: &str = "old:";
 
 /// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
-/// regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
+/// and prefixes heading `id`s, regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
 fn tag_deleted_assets(html: &str) -> String {
     let bytes = html.as_bytes();
     let len = bytes.len();
@@ -344,6 +343,10 @@ fn tag_deleted_assets(html: &str) -> String {
             i += 1;
         }
         out.push_str(&html[tag_start..i]);
+        let is_heading = matches!(
+            html[tag_start + 1..i].to_ascii_lowercase().as_str(),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        );
 
         // Scan attributes until the closing `>` of this opening tag.
         while i < len {
@@ -422,7 +425,9 @@ fn tag_deleted_assets(html: &str) -> String {
                 (&html[val_start..i], None)
             };
 
-            let rewritten = if is_srcset {
+            let rewritten = if is_heading && attr_name.eq_ignore_ascii_case("id") {
+                format!("{DELETED_ID_PREFIX}{val}")
+            } else if is_srcset {
                 rewrite_srcset(val)
             } else if is_src {
                 append_old_side_param(val)
@@ -667,7 +672,7 @@ mod tests {
     #[test]
     fn deleted_blocks_prefix_heading_ids() {
         let html = render_diff_html(Some("# Gone\n"), None);
-        assert!(html.contains("<h1 id=\"old-gone\">"));
+        assert!(html.contains("<h1 id=\"old:gone\">"));
     }
 
     #[test]
@@ -691,6 +696,35 @@ mod tests {
     }
 
     #[test]
+    fn deleted_heading_ids_cannot_collide_with_current_slugs() {
+        let html = render_diff_html(Some("# Title\n"), Some("# Old Title\n"));
+        assert!(html.contains("<h1 id=\"old:title\">Title</h1>"));
+        assert!(html.contains("<h1 id=\"old-title\">Old Title</h1>"));
+    }
+
+    #[test]
+    fn deleted_raw_html_heading_ids_are_prefixed() {
+        let old = "<h2 class=\"t\" id='section'>A</h2>\n\n<H3 ID=other>B</H3>\n";
+        let html = render_diff_html(Some(old), None);
+        assert!(html.contains("id='old:section'"), "{html}");
+        assert!(html.contains("ID=old:other"), "{html}");
+    }
+
+    #[test]
+    fn inline_html_can_close_an_open_container() {
+        let md = "<div>\n\ntext </div>\n\n# Later\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 2, "{html}");
+    }
+
+    #[test]
+    fn main_and_form_containers_stay_together() {
+        let md = "<main>\n\nInner paragraph.\n\n</main>\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 1, "{html}");
+    }
+
+    #[test]
     fn diff_html_handles_new_and_deleted_files() {
         let added = render_diff_html(None, Some("# Fresh\n"));
         assert!(added
@@ -698,7 +732,7 @@ mod tests {
 
         let deleted = render_diff_html(Some("# Gone\n"), None);
         assert!(deleted.contains(
-            "<div class=\"diff-block diff-deleted\"><h1 id=\"old-gone\">Gone</h1>\n</div>"
+            "<div class=\"diff-block diff-deleted\"><h1 id=\"old:gone\">Gone</h1>\n</div>"
         ));
     }
 }

@@ -211,7 +211,7 @@ pub fn commit_file_content_pair(
             let mut old = commit_tree_blob_text(&repo, pid, path)?;
             if old.is_none() && new_content.is_some() {
                 // The file may have been renamed or moved in this commit.
-                if let Some(old_path) = renamed_from(repo_path, pid, oid, path) {
+                if let Some(old_path) = renamed_from(repo_path, pid, oid, path)? {
                     old = commit_tree_blob_text(&repo, pid, &old_path)?;
                 }
             }
@@ -225,13 +225,16 @@ pub fn commit_file_content_pair(
     })
 }
 
-/// The path `path` had in `parent` when `commit` renamed it (rename detection), if any.
+/// The path `path` had in `parent` when `commit` renamed it within the same directory
+/// (rename detection). Moves to another directory are not followed: the preview resolves
+/// relative assets of deleted blocks against the new path, which would pick the wrong files.
+/// `Ok(None)` means the lookup succeeded and found no such rename.
 fn renamed_from(
     repo_path: &Path,
     parent: gix::ObjectId,
     commit: gix::ObjectId,
     path: &str,
-) -> Option<String> {
+) -> Result<Option<String>, crate::GitCraftError> {
     let out = git_cli::run(
         repo_path,
         &[
@@ -244,17 +247,15 @@ fn renamed_from(
             &parent.to_string(),
             &commit.to_string(),
         ],
-    )
-    .ok()?;
+    )?;
     let mut fields = out.split('\0').filter(|f| !f.is_empty());
-    while let Some(status) = fields.next() {
-        let old = fields.next()?;
-        let new = fields.next()?;
+    while let (Some(status), Some(old), Some(new)) = (fields.next(), fields.next(), fields.next()) {
         if status.starts_with('R') && new == path {
-            return Some(old.to_owned());
+            let same_dir = Path::new(old).parent() == Path::new(new).parent();
+            return Ok(same_dir.then(|| old.to_owned()));
         }
     }
-    None
+    Ok(None)
 }
 
 fn index_blob_text(
