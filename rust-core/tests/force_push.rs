@@ -423,3 +423,31 @@ fn follows_a_configured_push_refspec() {
 
     assert_eq!(fixture.plan().destination_ref, "refs/heads/deploy");
 }
+
+#[test]
+fn pushes_the_confirmed_commit_rather_than_the_branch_name() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = pushed();
+    fixture.amend("C amended");
+    // The pre-push hook is told what git was asked to push.
+    let seen = fixture.path().join(".git/pushed-refs");
+    let hook = fixture.path().join(".git/hooks/pre-push");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, format!("#!/bin/sh\ncat > '{}'\n", seen.display())).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    run_git(fixture.path(), &["config", "core.hooksPath", ".git/hooks"]);
+    let confirmed = head(fixture.path());
+
+    let result = open(fixture.path()).force_push(fixture.plan()).unwrap();
+
+    // A branch name could move between the check and git reading it; a commit ID can't.
+    let line = std::fs::read_to_string(seen).unwrap();
+    assert!(
+        line.starts_with(&format!("{confirmed} {confirmed} ")),
+        "{line}"
+    );
+    assert!(result.forced && result.included_branch);
+    assert_eq!(result.branch, "main");
+    assert_eq!(fixture.remote_tip("main"), confirmed);
+}

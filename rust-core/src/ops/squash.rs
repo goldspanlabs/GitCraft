@@ -78,6 +78,11 @@ impl RepoSession {
                 return Err(GitCraftError::message(BRANCH_MOVED));
             }
             let (head, chain) = self.squash_chain(&oids)?;
+            // The chain reads HEAD again: it must still be what was confirmed, which also pins
+            // the branch update below to that commit.
+            if head != expected {
+                return Err(GitCraftError::message(BRANCH_MOVED));
+            }
             let Some(branch) = head.branch.as_deref() else {
                 return Err(GitCraftError::message(BRANCH_MOVED));
             };

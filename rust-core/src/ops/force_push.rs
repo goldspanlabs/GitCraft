@@ -91,12 +91,14 @@ impl RepoSession {
                 return Err(GitCraftError::message(HEAD_MOVED));
             }
             let lease = format!("--force-with-lease={destination_ref}:{expected}");
-            let refspec = format!("refs/heads/{branch}:{destination_ref}");
+            // The commit that was confirmed, not the branch name: something outside the app
+            // could move the branch before git reads it.
+            let refspec = format!("{}:{destination_ref}", plan.head.oid);
             let output = git_cli::mutate_status(
                 &self.path,
                 &["push", "--porcelain", &lease, &remote, &refspec],
             )?;
-            let status = PorcelainRef::find(&output.stdout, &branch);
+            let status = PorcelainRef::find_destination(&output.stdout, &destination_ref);
             if !output.status.success() {
                 let rejection = status.filter(|s| s.flag == '!').map(|s| s.summary);
                 if rejection

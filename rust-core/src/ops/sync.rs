@@ -213,6 +213,14 @@ impl PorcelainRef {
             .find(|r| r.from == wanted)
     }
 
+    /// The line updating the remote ref `destination`, for a push whose source isn't a branch.
+    pub(super) fn find_destination(output: &str, destination: &str) -> Option<Self> {
+        output
+            .lines()
+            .filter_map(Self::parse)
+            .find(|r| r.to == destination)
+    }
+
     fn parse(line: &str) -> Option<Self> {
         let mut fields = line.splitn(3, '\t');
         let flag = fields.next()?.chars().next()?;
