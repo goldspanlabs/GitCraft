@@ -44,6 +44,12 @@ natively for macOS on a fast Rust engine, so opening large repositories, scrolli
 of thousands of commits, searching history, and switching between multiple tabs stay instant and
 light on memory.
 
+On a 65,000-commit repository:
+
+- **Instant startup:** Opens the repository and loads branches in under a millisecond.
+- **Fast history:** Loads the commit graph in ~3 ms and scrolls smoothly all the way down.
+- **Light on RAM:** Indexes the entire 65K-commit history in ~1.5 MB, keeping multi-tab memory low.
+
 ## Install
 
 ### Homebrew
