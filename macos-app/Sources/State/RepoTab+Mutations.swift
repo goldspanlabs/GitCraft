@@ -157,8 +157,8 @@ extension RepoTab {
             self?.skipHooks = false
             if pushAfter {
                 if headWasPushed.value {
-                    self?.toast = Toast(
-                        message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
+                    self?.showToast(
+                        "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
                     )
                 } else {
                     // Hop to the next run-loop turn so this mutation finishes (and clears
@@ -401,7 +401,7 @@ extension RepoTab {
             )
         }, onSuccess: { [weak self] in
             guard let text = message.value else { return }
-            self?.toast = Toast(message: text, isSuccess: true)
+            self?.showToast(text, isSuccess: true)
         })
     }
 

@@ -134,22 +134,21 @@ struct RepoDetailView: View {
                         .id(error)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    if let toast = tab.toast {
+                    ForEach(tab.toasts) { toast in
                         ToastView(
                             message: toast.message,
                             tint: toast.isSuccess ? .green : .yellow,
                             icon: toast.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
                             autoDismissAfter: 4
                         ) {
-                            tab.toast = nil
+                            tab.dismissToast(toast.id)
                         }
-                        .id(toast.id)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
                 .padding(.top, 10)
             }
-            .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
+            .animation(.easeOut(duration: 0.2), value: tab.toasts.map(\.id))
             .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
         }
         .modifier(RepoSheets(tab: tab))

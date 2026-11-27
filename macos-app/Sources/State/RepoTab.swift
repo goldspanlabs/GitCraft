@@ -70,8 +70,12 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var busyLabel: String?
     @Published var errorMessage: String?
 
-    /// A brief note over the commit graph: a finished action, or a no-op result, which isn't a failure.
-    @Published var toast: Toast?
+    /// Brief notes over the commit graph, oldest first: finished actions, or no-op results,
+    /// which aren't failures. Each clears itself; see `showToast`.
+    @Published private(set) var toasts: [Toast] = []
+
+    /// The most notes on screen at once; a new one past this pushes out the oldest.
+    static let maxToasts = 3
 
     @Published var pendingConfirmation: DestructiveAction?
     @Published var activeSheet: ActiveSheet?
@@ -221,10 +225,24 @@ final class RepoTab: ObservableObject, Identifiable {
         self.repoPath = listed.first?.path ?? canonical
     }
 
+    /// Adds a note below any already showing. The same text again moves that note to the
+    /// bottom and restarts its timer, rather than showing it twice.
+    func showToast(_ message: String, isSuccess: Bool = false) {
+        toasts.removeAll { $0.message == message }
+        toasts.append(Toast(message: message, isSuccess: isSuccess))
+        if toasts.count > Self.maxToasts {
+            toasts.removeFirst(toasts.count - Self.maxToasts)
+        }
+    }
+
+    func dismissToast(_ id: UUID) {
+        toasts.removeAll { $0.id == id }
+    }
+
     /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
     func showError(_ error: Error) {
         if error.isWarning {
-            toast = Toast(message: error.displayMessage)
+            showToast(error.displayMessage)
         } else {
             errorMessage = error.displayMessage
         }
@@ -441,7 +459,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 }
                 self.switchCheckout(to: fallback, using: next)
                 let target = fallback.folderName
-                self.toast = Toast(message: "\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
+                self.showToast("\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
             }
         }
     }
