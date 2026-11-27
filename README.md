@@ -4,10 +4,7 @@
 
 # GitCraft
 
-**A fast, native Git client for macOS. Free and open source, with no subscription.**
-
-Everything you'd pay a yearly fee for in Tower or Fork now in a
-lightweight app you never have to pay for.
+**A fast, lean, native Git client for macOS. Free and open source, with no subscription.**
 
 [**Download for macOS**](https://github.com/goldspanlabs/gitcraft/releases/latest)
 &nbsp;·&nbsp; [Features](#features) &nbsp;·&nbsp; [Install](#install) &nbsp;·&nbsp; [Build from source](#build-from-source)
