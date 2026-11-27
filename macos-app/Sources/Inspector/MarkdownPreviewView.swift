@@ -29,7 +29,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.schemeHandler.repoRootURL = repoRootPath.map {
-            URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL
+            URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
         }
         let baseURL = Self.baseURL(for: filePath)
         guard context.coordinator.loadedHTML != html || context.coordinator.loadedBaseURL != baseURL else {
@@ -55,7 +55,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         init(repoRootPath: String?) {
             let rootURL = repoRootPath.map {
-                URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL
+                URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
             }
             self.schemeHandler = RepoAssetSchemeHandler(repoRootURL: rootURL)
         }
@@ -65,16 +65,33 @@ struct MarkdownPreviewView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            // Allow the initial loadHTMLString; open clicked external links in the browser.
-            if navigationAction.navigationType == .linkActivated,
-               let url = navigationAction.request.url,
-               let scheme = url.scheme?.lowercased(),
-               scheme == "http" || scheme == "https" {
-                NSWorkspace.shared.open(url)
+            guard navigationAction.targetFrame?.isMainFrame == true,
+                  let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
                 return
             }
-            decisionHandler(.allow)
+
+            if navigationAction.navigationType == .linkActivated {
+                if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                    NSWorkspace.shared.open(url)
+                    decisionHandler(.cancel)
+                    return
+                }
+                if url.scheme == RepoAssetSchemeHandler.scheme, url.fragment != nil {
+                    decisionHandler(.allow)
+                    return
+                }
+                decisionHandler(.cancel)
+                return
+            }
+
+            // Allow only the initial loadHTMLString document (baseURL or about:blank).
+            if navigationAction.navigationType == .other,
+               url.scheme == RepoAssetSchemeHandler.scheme || url.absoluteString == "about:blank" {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
         }
     }
 
@@ -245,9 +262,10 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
+        let resolvedRoot = rootURL.resolvingSymlinksInPath().standardizedFileURL
         let relativePath = requestURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let targetURL = rootURL.appendingPathComponent(relativePath).standardizedFileURL
-        let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+        let targetURL = resolvedRoot.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+        let rootPath = resolvedRoot.path.hasSuffix("/") ? resolvedRoot.path : resolvedRoot.path + "/"
         guard targetURL.path.hasPrefix(rootPath),
               let data = try? Data(contentsOf: targetURL) else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))

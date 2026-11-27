@@ -118,9 +118,13 @@ pub fn working_file_content(
         return git_object_text(repo, &format!(":{path}"));
     }
     let full_path = repo.join(path);
-    let Ok(meta) = std::fs::metadata(&full_path) else {
+    let Ok(meta) = std::fs::symlink_metadata(&full_path) else {
         return Ok(None);
     };
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&full_path)?;
+        return Ok(Some(target.to_string_lossy().into_owned()));
+    }
     if !meta.is_file() {
         return Ok(None);
     }
@@ -184,6 +188,17 @@ pub fn commit_file_content_pair(
 }
 
 fn git_object_text(repo: &Path, spec: &str) -> Result<Option<String>, crate::GitCraftError> {
+    let size_out = git_cli::run_status(repo, &["cat-file", "-s", spec])?;
+    if !size_out.status.success() {
+        return Ok(None);
+    }
+    if let Ok(size) = size_out.stdout.trim().parse::<usize>() {
+        if size > MAX_PREVIEW_BYTES {
+            return Err(crate::GitCraftError::message(format!(
+                "File is too large to preview ({size} bytes)"
+            )));
+        }
+    }
     let output = git_cli::run_status(repo, &["cat-file", "-p", spec])?;
     if !output.status.success() {
         return Ok(None);

@@ -562,6 +562,7 @@ private struct DiffHeaderBar: View {
                 .buttonStyle(.plain)
                 .fixedSize()
                 .help(isMarkdownPreview ? "Show diff" : "Preview Markdown")
+                .accessibilityValue(isMarkdownPreview ? "On" : "Off")
                 .accessibilityIdentifier("markdown-preview-toggle")
             }
             Spacer()

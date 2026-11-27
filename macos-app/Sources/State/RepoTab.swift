@@ -84,6 +84,8 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var selectedFileStaged = false
     @Published var isMarkdownPreview = false
     @Published var markdownPreviewState: MarkdownPreviewState = .idle
+    var markdownPreviewGeneration: UInt64 = 0
+    var loadedMarkdownPreviewKey: String?
     @Published var scrollRequest: ScrollRequest?
     @Published var isBusy = false {
         didSet { if !isBusy { busyLabel = nil } }
