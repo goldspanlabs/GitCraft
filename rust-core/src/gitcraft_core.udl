@@ -159,6 +159,13 @@ dictionary HeadPosition {
   string? branch;
 };
 
+dictionary PushResult {
+  string branch;
+  string destination;
+  u32 commits;
+  boolean published;
+};
+
 dictionary HeadMove {
   HeadPosition before;
   HeadPosition after;
@@ -382,7 +389,7 @@ interface RepoSession {
   void continue_revert();
 
   [Throws=GitCraftError]
-  void push();
+  PushResult push();
 
   boolean take_dirty();
   boolean take_graph_dirty();

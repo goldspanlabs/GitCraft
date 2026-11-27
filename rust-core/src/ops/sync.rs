@@ -1,7 +1,7 @@
 use crate::{
     git_cli,
     validation::{resolve_default_remote, validate_remote_arg},
-    GitCraftError, PullStrategy, RemoteInfo, RepoSession,
+    GitCraftError, PullStrategy, PushResult, RemoteInfo, RepoSession,
 };
 
 impl RepoSession {
@@ -105,27 +105,87 @@ impl RepoSession {
         })
     }
 
-    pub fn push(&self) -> Result<(), GitCraftError> {
+    /// Pushes the checked-out branch, publishing it (and setting its upstream) on its first
+    /// push. Reports what went where, measured against the branch's real push destination
+    /// (`@{push}`), which may be a different remote from the one it pulls from.
+    pub fn push(&self) -> Result<PushResult, GitCraftError> {
         self.with_mutation_lock(|| {
+            let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
+                .map(|b| b.trim().to_owned())
+                .ok()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| {
+                    GitCraftError::message("HEAD is detached; check out a branch to push")
+                })?;
             let has_upstream = git_cli::run(
                 &self.path,
                 &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
             )
             .is_ok();
+
+            // Where this push lands, if that remote-tracking branch already exists, and how
+            // many commits it is missing.
+            let existing = self.push_destination_ref();
+            let commits = existing
+                .as_ref()
+                .map(|dest| {
+                    git_cli::run(
+                        &self.path,
+                        &["rev-list", "--count", &format!("{dest}..HEAD")],
+                    )
+                    .ok()
+                    .and_then(|n| n.trim().parse().ok())
+                    .unwrap_or(0)
+                })
+                .unwrap_or(0);
+
             if has_upstream {
-                git_cli::mutate(&self.path, &["push"])
+                git_cli::mutate(&self.path, &["push"])?;
             } else {
                 // First push of this branch: publish it and set its upstream.
-                let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
-                    .map(|b| b.trim().to_owned())
-                    .ok()
-                    .filter(|b| !b.is_empty())
-                    .ok_or_else(|| {
-                        GitCraftError::message("HEAD is detached; check out a branch to push")
-                    })?;
                 let remote = resolve_default_remote(&self.path);
-                git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])
+                git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])?;
             }
+
+            let destination = match &existing {
+                Some(dest) => dest.trim_start_matches("refs/remotes/").to_owned(),
+                None => format!("{}/{}", self.push_remote(&branch), branch),
+            };
+            Ok(PushResult {
+                branch,
+                destination,
+                commits,
+                published: existing.is_none(),
+            })
         })
+    }
+
+    /// The full remote-tracking ref the checked-out branch pushes to, when it exists.
+    fn push_destination_ref(&self) -> Option<String> {
+        let name = git_cli::run(
+            &self.path,
+            &["rev-parse", "--symbolic-full-name", "@{push}"],
+        )
+        .ok()
+        .map(|n| n.trim().to_owned())
+        .filter(|n| n.starts_with("refs/remotes/"))?;
+        git_cli::run(&self.path, &["rev-parse", "--verify", "-q", &name])
+            .ok()
+            .map(|_| name)
+    }
+
+    /// The remote `branch` pushes to, as git chooses it: the branch's `pushRemote`, then
+    /// `remote.pushDefault`, then the remote it pulls from, then the default remote.
+    fn push_remote(&self, branch: &str) -> String {
+        let config = |key: String| {
+            git_cli::run(&self.path, &["config", "--get", &key])
+                .ok()
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        };
+        config(format!("branch.{branch}.pushRemote"))
+            .or_else(|| config("remote.pushDefault".to_owned()))
+            .or_else(|| config(format!("branch.{branch}.remote")))
+            .unwrap_or_else(|| resolve_default_remote(&self.path))
     }
 }

@@ -123,7 +123,9 @@ extension RepoTab {
             self.pushRedo(UndoEntry(actionName: entry.actionName, step: entry.step.inverse))
             self.showToast("Undid \(entry.actionName). \(entry.step.doneMessage)", isSuccess: true)
         }, onRefused: { [weak self] in
-            self?.forgetUndo(entry.id)
+            // `reset --keep` refuses over a local edit without moving HEAD; that step works
+            // again once the edit is stashed, so only a step that no longer applies goes.
+            self?.dropIfStale(entry) { [weak self] in self?.forgetUndo(entry.id) }
         })
     }
 
@@ -138,20 +140,31 @@ extension RepoTab {
                 message: "Redid \(entry.actionName). \(entry.step.doneMessage)"
             )
         }, onRefused: { [weak self] in
-            self?.redoStack.removeAll { $0.id == entry.id }
+            self?.dropIfStale(entry) { [weak self] in self?.redoStack.removeAll { $0.id == entry.id } }
         })
     }
 
     /// Clears a stack once its latest step no longer applies: something that can't be undone
     /// happened since (a commit, a checkout, a change made outside the app), and the older
     /// steps sit behind it. Called after each refresh.
+    ///
+    /// Skipped while an action runs: it may have moved HEAD without having recorded its step
+    /// yet, which would make the previous step look stale. Its own refresh checks afterwards.
     func pruneUndoStack() {
+        guard !isBusy else { return }
         prune(latestUndo) { [weak self] in
             guard let self else { return }
             self.undoStack.map(\.id).forEach(self.dismissToasts(forUndo:))
             self.undoStack.removeAll()
         }
         prune(latestRedo) { [weak self] in self?.redoStack.removeAll() }
+    }
+
+    /// Forgets every step and its notes, for example when the tab switches checkout.
+    func clearUndoHistory() {
+        undoStack.map(\.id).forEach(dismissToasts(forUndo:))
+        undoStack.removeAll()
+        redoStack.removeAll()
     }
 
     // MARK: Private
@@ -197,14 +210,24 @@ extension RepoTab {
     /// still the latest by then.
     private func prune(_ latest: UndoEntry?, clear: @escaping @MainActor () -> Void) {
         guard let latest else { return }
-        let step = SendableBox(latest.step)
+        dropIfStale(latest, requireLatest: true, drop: clear)
+    }
+
+    /// Checks `entry` off the main thread and calls `drop` if it no longer applies. With
+    /// `requireLatest`, only while it is still the latest step by then. Never while an action
+    /// runs (see `pruneUndoStack`).
+    private func dropIfStale(
+        _ entry: UndoEntry,
+        requireLatest: Bool = false,
+        drop: @escaping @MainActor () -> Void
+    ) {
+        let step = SendableBox(entry.step)
         loadInBackground({ session in
             step.value.stillApplies(in: session)
         }, apply: { [weak self] applies in
-            guard let self, !applies,
-                  self.latestUndo?.id == latest.id || self.latestRedo?.id == latest.id
-            else { return }
-            clear()
+            guard let self, !applies, !self.isBusy else { return }
+            if requireLatest, self.latestUndo?.id != entry.id, self.latestRedo?.id != entry.id { return }
+            drop()
         })
     }
 

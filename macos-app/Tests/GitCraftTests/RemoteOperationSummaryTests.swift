@@ -24,7 +24,7 @@ final class RemoteOperationSummaryTests: XCTestCase {
     }
 
     private func message(_ op: RemoteOperation, before: [BranchInfo], after: [BranchInfo]) -> String {
-        RemoteOperation.successMessage(for: op, before: before, after: after, remote: "origin")
+        RemoteOperation.successMessage(for: op, before: before, after: after)
     }
 
     func testBusyLabels() {
@@ -53,20 +53,26 @@ final class RemoteOperationSummaryTests: XCTestCase {
         XCTAssertEqual(message(.pull, before: before, after: before), "\"main\" is already up to date.")
     }
 
-    func testPushCountsTheCommitsSent() {
-        let before = [branch("main", head: true, ahead: 2), branch("origin/main", remote: true)]
-        let after = [branch("main", head: true), branch("origin/main", remote: true)]
-        XCTAssertEqual(message(.push, before: before, after: after), "Pushed 2 commits from \"main\".")
+    private func push(_ branch: String, to destination: String, commits: UInt32, published: Bool) -> String {
+        RemoteOperation.pushMessage(PushResult(branch: branch, destination: destination, commits: commits, published: published))
+    }
+
+    func testPushCountsTheCommitsSentToTheRealDestination() {
+        XCTAssertEqual(push("main", to: "origin/main", commits: 2, published: false), "Pushed 2 commits to origin/main.")
+        XCTAssertEqual(push("main", to: "fork/main", commits: 1, published: false), "Pushed 1 commit to fork/main.")
     }
 
     func testPushWithNothingToSend() {
-        let branches = [branch("main", head: true), branch("origin/main", remote: true)]
-        XCTAssertEqual(message(.push, before: branches, after: branches), "Nothing to push. \"main\" is up to date.")
+        XCTAssertEqual(
+            push("main", to: "origin/main", commits: 0, published: false),
+            "Nothing to push. origin/main already has \"main\"."
+        )
     }
 
     func testFirstPushPublishesTheBranch() {
-        let before = [branch("feature", head: true), branch("origin/main", remote: true)]
-        let after = before + [branch("origin/feature", remote: true)]
-        XCTAssertEqual(message(.push, before: before, after: after), "Published \"feature\" to origin.")
+        XCTAssertEqual(
+            push("feature", to: "origin/feature", commits: 0, published: true),
+            "Published \"feature\" to origin/feature."
+        )
     }
 }

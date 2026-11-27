@@ -239,6 +239,19 @@ pub struct HeadPosition {
     pub branch: Option<String>,
 }
 
+/// What a push did, measured against where it actually went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PushResult {
+    /// The branch that was pushed.
+    pub branch: String,
+    /// The remote-tracking name of the destination, such as `origin/main`.
+    pub destination: String,
+    /// Commits the destination didn't have before. Zero when there was nothing to push.
+    pub commits: u32,
+    /// True when the destination branch didn't exist yet, so the push created it.
+    pub published: bool,
+}
+
 /// How an action moved HEAD, so it can be undone by moving HEAD back.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadMove {

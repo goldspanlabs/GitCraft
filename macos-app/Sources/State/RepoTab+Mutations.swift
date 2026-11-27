@@ -404,20 +404,21 @@ extension RepoTab {
     func runRemote(_ operation: RemoteOperation) {
         let pullStrategy = PullStrategyPreference.current.core
         let includeTags = GitPreferences.fetchIncludesTags
-        let remote = defaultRemoteName
         let message = SendableBox<String?>(nil)
         performMutation(busyLabel: operation.busyLabel, { session in
+            if operation == .push {
+                message.value = RemoteOperation.pushMessage(try session.push())
+                return
+            }
             // Read the branches on both sides, so the note says what actually changed.
             let before = (try? session.listBranches()) ?? []
             switch operation {
             case .fetch: try session.fetch(includeTags: includeTags)
             case .pull: try session.pull(strategy: pullStrategy)
-            case .push: try session.push()
+            case .push: break
             }
             let after = (try? session.listBranches()) ?? []
-            message.value = RemoteOperation.successMessage(
-                for: operation, before: before, after: after, remote: remote
-            )
+            message.value = RemoteOperation.successMessage(for: operation, before: before, after: after)
         }, onSuccess: { [weak self] in
             guard let text = message.value else { return }
             self?.showToast(text, isSuccess: true)

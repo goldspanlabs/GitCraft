@@ -591,6 +591,9 @@ final class RepoTab: ObservableObject, Identifiable {
         worktreesRefreshPending = false
         session = next
         activeCheckoutPath = canonical
+        // Steps name a commit and branch, not a checkout, so they mustn't follow the tab to
+        // another worktree that happens to be at the same place.
+        clearUndoHistory()
         graphGeneration += 1
         currentBranch = worktrees.first(where: { $0.path == canonical })?.branch ?? ""
         isMerging = false

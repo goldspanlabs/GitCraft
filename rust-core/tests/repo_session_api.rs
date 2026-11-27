@@ -998,6 +998,55 @@ fn first_push_publishes_the_branch_and_sets_its_upstream() {
 }
 
 #[test]
+fn push_reports_what_it_sent_and_where() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+
+    let first = session.push().unwrap();
+    assert_eq!(first.branch, "main");
+    assert_eq!(first.destination, "origin/main");
+    assert!(first.published, "the first push creates the remote branch");
+
+    write(dir.path(), "a.txt", "one\n");
+    run_git(dir.path(), &["commit", "-qam", "one"]);
+    write(dir.path(), "a.txt", "two\n");
+    run_git(dir.path(), &["commit", "-qam", "two"]);
+    let second = session.push().unwrap();
+    assert_eq!((second.commits, second.published), (2, false));
+    assert_eq!(second.destination, "origin/main");
+
+    let nothing = session.push().unwrap();
+    assert_eq!((nothing.commits, nothing.published), (0, false));
+}
+
+#[test]
+fn push_measures_against_a_separate_push_remote() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+
+    // Pull from origin, push to a fork that doesn't have the branch yet.
+    let fork = tempfile::tempdir().unwrap();
+    run_git(fork.path(), &["init", "-q", "--bare", "-b", "main"]);
+    run_git(
+        dir.path(),
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    run_git(dir.path(), &["config", "branch.main.pushRemote", "fork"]);
+    run_git(dir.path(), &["config", "push.default", "current"]);
+
+    let to_fork = session.push().unwrap();
+    assert_eq!(to_fork.destination, "fork/main");
+    assert!(to_fork.published, "fork had no main, whatever origin has");
+
+    write(dir.path(), "a.txt", "for the fork\n");
+    run_git(dir.path(), &["commit", "-qam", "fork change"]);
+    let again = session.push().unwrap();
+    assert_eq!(again.destination, "fork/main");
+    assert_eq!((again.commits, again.published), (1, false));
+}
+
+#[test]
 fn pull_of_diverged_branches_falls_back_to_a_merge() {
     let (dir, origin) = repo_with_bare_origin();
     let session = open(dir.path());

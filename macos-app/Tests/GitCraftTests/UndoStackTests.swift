@@ -267,7 +267,8 @@ final class UndoStackTests: XCTestCase {
         let tab = try RepoTab(url: repo)
         // Let the first load finish (it prunes the stack once), and stop the watcher, so
         // nothing prunes the stale step before the undo runs.
-        try await waitFor("the first load") { !tab.branches.isEmpty }
+        tab.refresh()
+        try await waitFor("the first load") { !tab.branches.isEmpty && !tab.isBusy }
         tab.stopWatcher()
         let main = try rev("main")
 
@@ -279,9 +280,10 @@ final class UndoStackTests: XCTestCase {
         tab.recordUndo(actionName: "Cherry Pick", step: .moveHead(stale, mode: .keep), message: "Cherry-picked.")
         tab.undo()
         try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+        // Checked after the refusal, off the main thread, so it goes a moment later.
+        try await waitFor("the stale step to go") { tab.undoStack.isEmpty }
 
         XCTAssertEqual(try rev("main"), main, "the refused undo leaves the branch alone")
-        XCTAssertTrue(tab.undoStack.isEmpty, "a step that can't be undone leaves the stack")
         XCTAssertFalse(tab.toasts.contains { $0.action != nil }, "and its note goes too")
         XCTAssertTrue(tab.errorMessage?.contains("nothing to undo") == true, tab.errorMessage ?? "")
     }
@@ -313,6 +315,76 @@ final class UndoStackTests: XCTestCase {
             tab.toasts.last?.message,
             "Undid Cherry Pick. \"main\" is back at \(before.shortOid)."
         )
+    }
+
+    @MainActor
+    func testAnUndoRefusedOverALocalEditIsKeptForLater() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let before = try rev("main")
+
+        try await cherryPickOther(tab)
+        let picked = try rev("main")
+        // An edit on top of the picked file: `reset --keep` won't overwrite it.
+        try write("picked.txt", "edited after the pick\n")
+        tab.undo()
+        try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+        // Give the after-refusal check time to run; it must keep the step.
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        XCTAssertEqual(try rev("main"), picked, "nothing moved")
+        XCTAssertEqual(tab.undoStack.count, 1, "the step still applies, so it stays")
+        XCTAssertEqual(try read("picked.txt"), "edited after the pick\n")
+
+        // Once the edit is out of the way, the same Undo works.
+        try git(["checkout", "--", "picked.txt"], in: repo)
+        tab.errorMessage = nil
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == before && tab.undoStack.isEmpty && !tab.isBusy }
+    }
+
+    @MainActor
+    func testSwitchingCheckoutClearsUndoHistory() async throws {
+        let linked = root.appendingPathComponent("linked", isDirectory: true)
+        try git(["worktree", "add", "-q", "-b", "linked", linked.path], in: repo)
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        try await cherryPickOther(tab)
+        XCTAssertNotNil(tab.latestUndo)
+
+        let target = try XCTUnwrap(tab.worktrees.first { !$0.isMain && !$0.isPrunable })
+        tab.switchCheckout(to: target.path)
+        XCTAssertEqual(tab.activeCheckoutPath, target.path)
+
+        XCTAssertTrue(tab.undoStack.isEmpty, "steps don't follow the tab to another checkout")
+        XCTAssertTrue(tab.redoStack.isEmpty)
+        XCTAssertFalse(tab.toasts.contains { $0.action != nil })
+    }
+
+    @MainActor
+    func testPruningWaitsWhileAnActionRuns() async throws {
+        let tab = try RepoTab(url: repo)
+        tab.refresh()
+        try await waitFor("the first load") { !tab.branches.isEmpty && !tab.isBusy }
+        tab.stopWatcher()
+        let main = try rev("main")
+        // Stale on purpose: HEAD isn't at its "after".
+        let stale = HeadMove(
+            before: HeadPosition(oid: main, branch: "refs/heads/main"),
+            after: HeadPosition(oid: try rev("other"), branch: "refs/heads/main")
+        )
+        tab.recordUndo(actionName: "Cherry Pick", step: .moveHead(stale, mode: .keep), message: "Cherry-picked.")
+
+        // While busy, an action may have moved HEAD without having recorded its step yet.
+        tab.isBusy = true
+        tab.pruneUndoStack()
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(tab.undoStack.count, 1, "nothing is pruned mid-action")
+
+        tab.isBusy = false
+        tab.pruneUndoStack()
+        try await waitFor("the prune") { tab.undoStack.isEmpty }
     }
 
     // MARK: Redo
@@ -382,7 +454,8 @@ final class UndoStackTests: XCTestCase {
     @MainActor
     func testAStaleRedoIsRefusedAndDropped() async throws {
         let tab = try RepoTab(url: repo)
-        try await waitFor("the first load") { !tab.branches.isEmpty }
+        tab.refresh()
+        try await waitFor("the first load") { !tab.branches.isEmpty && !tab.isBusy }
         tab.stopWatcher()
         let main = try rev("main")
 
@@ -394,9 +467,9 @@ final class UndoStackTests: XCTestCase {
         tab.redoStack.append(RepoTab.UndoEntry(actionName: "Cherry Pick", step: .moveHead(stale, mode: .keep)))
         tab.redo()
         try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+        try await waitFor("the stale step to go") { tab.redoStack.isEmpty }
 
         XCTAssertEqual(try rev("main"), main)
-        XCTAssertTrue(tab.redoStack.isEmpty)
     }
 
     func testAnInverseRunsTheSameMoveBackwards() {
