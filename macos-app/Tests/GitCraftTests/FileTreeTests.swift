@@ -22,12 +22,11 @@ final class FileTreeTests: XCTestCase {
         by delta: Int,
         collapsed: Set<String> = []
     ) -> String? {
-        FileTree.filePath(
-            movingFrom: selected,
-            by: delta,
-            in: files(paths),
-            collapsedFolderPaths: collapsed
-        )
+        FileTree.file(
+            movingBy: delta,
+            through: [FileTree.List(changes: files(paths), collapsedFolderPaths: collapsed)],
+            from: { $0.path == selected }
+        )?.path
     }
 
     func testFoldersNestAndSortAboveFiles() {
@@ -42,6 +41,10 @@ final class FileTreeTests: XCTestCase {
                 "0 file:README.md",
             ]
         )
+    }
+
+    func testAnUntrackedFolderKeepsItsSlashSoItDoesNotReadAsAFile() {
+        XCTAssertEqual(describe(["src/new/"]), ["0 folder:src", "1 file:new/"])
     }
 
     func testSingleChildFolderChainsShareOneRow() {

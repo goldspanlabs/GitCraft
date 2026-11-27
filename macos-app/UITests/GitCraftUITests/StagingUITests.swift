@@ -64,6 +64,52 @@ final class StagingUITests: XCTestCase {
         XCTAssertTrue(untrackedStatus.hasPrefix("??"), "the untracked file is untracked again, got \(untrackedStatus)")
     }
 
+    func testAFolderCheckboxStagesItsNestedChangesWithoutOpeningOrClosingTheFolder() throws {
+        let fixture = try FixtureRepository.make()
+        let inside = ["src/deep/two.txt", "src/one.txt"]
+        func write(_ text: String, to path: String) throws {
+            try text.write(toFile: fixture.mainPath + "/" + path, atomically: true, encoding: .utf8)
+        }
+        try FileManager.default.createDirectory(
+            atPath: fixture.mainPath + "/src/deep", withIntermediateDirectories: true
+        )
+        for path in inside { try write("committed\n", to: path) }
+        try fixture.git(["add", "src"])
+        try fixture.git(["commit", "-m", "add src"])
+        for path in inside + ["README.md"] { try write("changed\n", to: path) }
+        try launch(fixture: fixture)
+
+        let stageFolder = app.checkBoxes["unstaged-folder:src"]
+        XCTAssertTrue(stageFolder.waitForExistence(timeout: 60))
+        let unstagedFile = element("unstaged-file:src/one.txt")
+        XCTAssertTrue(unstagedFile.waitForExistence(timeout: 10), "folders start open")
+        // Just right of the checkbox is the folder's icon and name, which close it.
+        stageFolder.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: 24, dy: 0))
+            .click()
+        XCTAssertTrue(unstagedFile.waitForNonExistence(timeout: 10), "the folder closes")
+
+        stageFolder.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 20) { (try? self.fixture.stagedFiles().sorted()) == inside },
+            "everything in src is staged, and nothing else"
+        )
+        XCTAssertTrue(try fixture.isModified("README.md"), "the file outside keeps its edit")
+        let stagedFile = element("staged-file:src/one.txt")
+        XCTAssertTrue(stagedFile.waitForExistence(timeout: 20), "the staged folder is open")
+
+        app.checkBoxes["staged-folder:src"].click()
+
+        XCTAssertTrue(waitUntil(timeout: 20) { (try? self.fixture.stagedFiles()) == [] }, "nothing is staged")
+        XCTAssertTrue(stageFolder.waitForExistence(timeout: 20), "src moves back")
+        XCTAssertFalse(unstagedFile.exists, "and is still closed")
+
+        stageFolder.click()
+
+        XCTAssertTrue(stagedFile.waitForExistence(timeout: 20), "unchecking didn't close the staged folder")
+    }
+
     // MARK: Amend
 
     func testAmendReplacesTheLastCommitInsteadOfAddingOne() throws {

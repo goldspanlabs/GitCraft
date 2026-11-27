@@ -46,6 +46,9 @@ private struct WorkingChangesInspectorView: View {
     @AppStorage(GitPreferences.autoStageOnCommitKey) private var autoStageOnCommit = true
     /// Set by clicking a file, so the arrow keys move through the file lists.
     @FocusState private var fileListFocused: Bool
+    /// Each list's folders open and close on their own. They start expanded.
+    @State private var collapsedStagedFolders: Set<String> = []
+    @State private var collapsedUnstagedFolders: Set<String> = []
 
     private var canCommit: Bool {
         tab.canCommit(autoStage: autoStageOnCommit)
@@ -162,20 +165,25 @@ private struct WorkingChangesInspectorView: View {
                     ScrollView {
                         // Lazy, and flat down to the file rows, so thousands of changed files
                         // only cost the ones on screen.
-                        LazyVStack(alignment: .leading, spacing: 4) {
+                        LazyVStack(alignment: .leading, spacing: 2) {
                             WorkingFileSection(
                                 title: "STAGED CHANGES",
                                 files: tab.stagedFiles,
+                                staged: true,
+                                collapsedFolderPaths: $collapsedStagedFolders,
                                 actionTitle: "Unstage All",
                                 emptyMessage: "No staged changes",
-                                onAction: { tab.unstageAll() }
-                            ) { file in
+                                onAction: { tab.unstageAll() },
+                                onToggleFolder: { tab.unstagePath($0) }
+                            ) { file, name, depth in
                                 WorkingFileRow(
                                     file: file,
+                                    name: name,
+                                    depth: depth,
                                     isSelected: tab.selectedFilePath == file.path && tab.selectedFileStaged,
                                     isStaged: true,
                                     onSelect: { select(file) },
-                                    onToggleStaged: { tab.unstageFile(file.path) }
+                                    onToggleStaged: { tab.unstagePath(file.path) }
                                 )
                             }
 
@@ -185,19 +193,24 @@ private struct WorkingChangesInspectorView: View {
                             WorkingFileSection(
                                 title: "UNSTAGED CHANGES",
                                 files: tab.unstagedFiles,
+                                staged: false,
+                                collapsedFolderPaths: $collapsedUnstagedFolders,
                                 actionTitle: "Stage All",
                                 emptyMessage: "Working tree clean",
-                                onAction: { tab.stageAll() }
-                            ) { file in
+                                onAction: { tab.stageAll() },
+                                onToggleFolder: { tab.stagePath($0) }
+                            ) { file, name, depth in
                                 WorkingFileRow(
                                     file: file,
+                                    name: name,
+                                    depth: depth,
                                     isSelected: tab.selectedFilePath == file.path && !tab.selectedFileStaged,
                                     isStaged: false,
                                     onSelect: { select(file) },
-                                    onToggleStaged: { tab.stageFile(file.path) }
+                                    onToggleStaged: { tab.stagePath(file.path) }
                                 )
                                 .contextMenu {
-                                    Button("Stage File") { tab.stageFile(file.path) }
+                                    Button("Stage File") { tab.stagePath(file.path) }
                                     if file.status == "?" {
                                         Divider()
                                         Button("Add to .gitignore") {
@@ -219,7 +232,13 @@ private struct WorkingChangesInspectorView: View {
                     .focusable()
                     .focused($fileListFocused)
                     .focusEffectDisabled()
-                    .arrowKeySelection { tab.moveWorkingFileSelection(by: $0) }
+                    .arrowKeySelection {
+                        tab.moveWorkingFileSelection(
+                            by: $0,
+                            collapsedStagedFolders: collapsedStagedFolders,
+                            collapsedUnstagedFolders: collapsedUnstagedFolders
+                        )
+                    }
                     .onChange(of: tab.selectedFilePath) { scrollToSelection(proxy) }
                     .onChange(of: tab.selectedFileStaged) { scrollToSelection(proxy) }
                 }
@@ -275,6 +294,10 @@ private struct WorkingChangesInspectorView: View {
                 previewStaged: tab.selectedFileStaged,
                 onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
+        }
+        .onChange(of: tab.activeCheckoutPath) {
+            collapsedStagedFolders = []
+            collapsedUnstagedFolders = []
         }
         .onAppear {
             if isCollapsed { isCollapsed = false }
@@ -351,17 +374,20 @@ private extension FileChange {
     static func listRowID(path: String, staged: Bool) -> String {
         "\(staged ? "staged" : "unstaged"):\(path)"
     }
-
-    var listRowID: String { Self.listRowID(path: path, staged: staged) }
 }
 
 private struct WorkingFileSection<RowContent: View>: View {
     let title: String
     let files: [FileChange]
+    let staged: Bool
+    @Binding var collapsedFolderPaths: Set<String>
     let actionTitle: String
     let emptyMessage: String
     let onAction: () -> Void
-    @ViewBuilder let row: (FileChange) -> RowContent
+    /// Stages or unstages everything in the folder at the path.
+    let onToggleFolder: (String) -> Void
+    /// Draws a file, given its name within its folder and its depth in the tree.
+    @ViewBuilder let row: (FileChange, String, Int) -> RowContent
 
     /// A header and rows for the enclosing lazy stack, not a stack of its own: that would
     /// build every row at once.
@@ -389,9 +415,18 @@ private struct WorkingFileSection<RowContent: View>: View {
                     .padding(.vertical, 4)
             } else {
                 // The row's id is what the list scrolls to, including rows not built yet.
-                ForEach(files, id: \.listRowID) { file in
-                    row(file)
-                }
+                FileTreeRows(
+                    changes: files,
+                    collapsedFolderPaths: $collapsedFolderPaths,
+                    idPrefix: FileChange.listRowID(path: "", staged: staged),
+                    folderControl: { path in
+                        StagingCheckbox(isStaged: staged, subject: "folder", path: path) {
+                            onToggleFolder(path)
+                        }
+                        .accessibilityIdentifier("\(staged ? "staged" : "unstaged")-folder:\(path)")
+                    },
+                    fileRow: row
+                )
             }
         }
     }
@@ -399,41 +434,42 @@ private struct WorkingFileSection<RowContent: View>: View {
 
 private struct WorkingFileRow: View {
     let file: FileChange
+    let name: String
+    let depth: Int
     let isSelected: Bool
-    /// Checked means staged; toggling stages or unstages the file.
     let isStaged: Bool
     let onSelect: () -> Void
     let onToggleStaged: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            Toggle(isOn: Binding(get: { isStaged }, set: { _ in onToggleStaged() })) {
-                EmptyView()
-            }
-            .toggleStyle(.checkbox)
-            .labelsHidden()
-            .help(isStaged ? "Unstage file" : "Stage file")
-            .accessibilityLabel(isStaged ? "Unstage \(file.path)" : "Stage \(file.path)")
-
-            StatusBadge(status: file.status)
-            Text(file.path)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.head)
-            Spacer()
+        FileTreeFileLabel(change: file, name: name, depth: depth, isSelected: isSelected) {
+            StagingCheckbox(isStaged: isStaged, subject: "file", path: file.path, onToggle: onToggleStaged)
         }
-        // The highlight's edges line up with the 10pt section headers above it.
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
-        .cornerRadius(4)
-        .contentShape(Rectangle())
+        .help(file.path)
         // One accessibility element per row, so UI tests can tell the file list apart from the
         // diff header, which shows the same path.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("\(isStaged ? "staged" : "unstaged")-file:\(file.path)")
         .onTapGesture(perform: onSelect)
-        .padding(.horizontal, 10)
+    }
+}
+
+/// Checked means staged; clicking stages or unstages what's at the path.
+private struct StagingCheckbox: View {
+    let isStaged: Bool
+    /// "file" or "folder", for the tooltip.
+    let subject: String
+    let path: String
+    let onToggle: () -> Void
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { isStaged }, set: { _ in onToggle() })) {
+            EmptyView()
+        }
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+        .help(isStaged ? "Unstage \(subject)" : "Stage \(subject)")
+        .accessibilityLabel(isStaged ? "Unstage \(path)" : "Stage \(path)")
     }
 }
 
