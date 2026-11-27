@@ -7,6 +7,9 @@ namespace gitcraft_core {
 
   [Throws=GitCraftError]
   void clone_repository(string url, string destination);
+
+  string render_markdown_html(string markdown);
+  string render_markdown_diff_html(string? old_markdown, string? new_markdown);
 };
 
 [Error]
@@ -193,6 +196,11 @@ dictionary RepoStatus {
   boolean has_conflicts;
 };
 
+dictionary FileContentPair {
+  string? old_content;
+  string? new_content;
+};
+
 interface RepoSession {
   [Throws=GitCraftError]
   constructor(string path);
@@ -218,6 +226,21 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   sequence<DiffRow> get_working_diff(string? path, boolean staged);
+
+  [Throws=GitCraftError]
+  string? get_commit_file_content(string oid_hex, string path);
+
+  [Throws=GitCraftError]
+  string? get_working_file_content(string path, boolean staged);
+
+  [Throws=GitCraftError]
+  FileContentPair get_commit_file_versions(string oid_hex, string path);
+
+  [Throws=GitCraftError]
+  FileContentPair get_working_file_versions(string path, boolean staged);
+
+  [Throws=GitCraftError]
+  bytes? get_repo_asset(string path, string? commit_oid, boolean staged, boolean old_side);
 
   [Throws=GitCraftError]
   sequence<BranchInfo> list_branches();

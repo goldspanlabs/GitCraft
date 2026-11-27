@@ -219,10 +219,18 @@ extension RepoTab {
             // load clears the marker so re-clicking the commit retries.
             selectedCommit = commit
             if loadedDetailOid == commit.oidHex { return }
+            isMarkdownPreview = false
+            markdownPreviewGeneration &+= 1
+            loadedMarkdownPreviewKey = nil
+            markdownPreviewState = .idle
             loadedDetailOid = commit.oidHex
             loadCommitDetails(commit)
         } else {
             guard selectedCommit != nil else { return }
+            isMarkdownPreview = false
+            markdownPreviewGeneration &+= 1
+            loadedMarkdownPreviewKey = nil
+            markdownPreviewState = .idle
             selectedCommit = nil
             loadedDetailOid = nil
             commitDetail = nil
@@ -283,7 +291,41 @@ extension RepoTab {
         } else {
             publish(nil, to: \.selectedFilePath)
             publish([], to: \.diffRows)
+            resetMarkdownPreviewState()
         }
+    }
+
+    nonisolated static func isMarkdownPath(_ path: String?) -> Bool {
+        guard let path else { return false }
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        return ext == "md" || ext == "markdown" || ext == "mdown" || ext == "mkd"
+    }
+
+    func toggleMarkdownPreview() {
+        isMarkdownPreview.toggle()
+        if isMarkdownPreview {
+            loadMarkdownPreviewForSelection()
+        } else {
+            markdownPreviewGeneration &+= 1
+        }
+    }
+
+    func loadMarkdownPreviewForSelection() {
+        guard let path = selectedFilePath, Self.isMarkdownPath(path) else {
+            resetMarkdownPreviewState()
+            return
+        }
+        if let oid = selectedCommit?.oidHex {
+            loadCommitMarkdownPreview(oidHex: oid, path: path)
+        } else {
+            loadWorkingMarkdownPreview(path: path, staged: selectedFileStaged)
+        }
+    }
+
+    private func resetMarkdownPreviewState() {
+        markdownPreviewGeneration &+= 1
+        loadedMarkdownPreviewKey = nil
+        publish(.idle, to: \.markdownPreviewState)
     }
 
     private func loadWorkingDiff(path: String, staged: Bool) {
@@ -292,6 +334,19 @@ extension RepoTab {
                 publish(Self.displayRows(rows), to: \.diffRows)
             }
         })
+        if isMarkdownPreview && Self.isMarkdownPath(path) {
+            loadWorkingMarkdownPreview(path: path, staged: staged)
+        } else {
+            resetMarkdownPreviewState()
+        }
+    }
+
+    private func loadWorkingMarkdownPreview(path: String, staged: Bool) {
+        loadMarkdownPreview(
+            key: "working:\(activeCheckoutPath):\(staged):\(path)",
+            isCurrent: { self.selectedCommit == nil && self.selectedFilePath == path && self.selectedFileStaged == staged },
+            fetch: { try $0.getWorkingFileVersions(path: path, staged: staged) }
+        )
     }
 
     private func loadCommitDetails(_ commit: CommitRow) {
@@ -323,5 +378,51 @@ extension RepoTab {
                 loadedDetailOid = nil
             }
         })
+        if isMarkdownPreview, let path, Self.isMarkdownPath(path) {
+            loadCommitMarkdownPreview(oidHex: oidHex, path: path)
+        } else {
+            resetMarkdownPreviewState()
+        }
+    }
+
+    private func loadCommitMarkdownPreview(oidHex: String, path: String) {
+        loadMarkdownPreview(
+            key: "commit:\(activeCheckoutPath):\(oidHex):\(path)",
+            isCurrent: { self.selectedCommit?.oidHex == oidHex && self.selectedFilePath == path },
+            fetch: { try $0.getCommitFileVersions(oidHex: oidHex, path: path) }
+        )
+    }
+
+    private func loadMarkdownPreview(
+        key: String,
+        isCurrent: @escaping () -> Bool,
+        fetch: @escaping (RepoSession) throws -> FileContentPair
+    ) {
+        markdownPreviewGeneration &+= 1
+        let generation = markdownPreviewGeneration
+        if loadedMarkdownPreviewKey != key || !isPreviewLoaded {
+            loadedMarkdownPreviewKey = key
+            publish(.loading, to: \.markdownPreviewState)
+        }
+        loadInBackground({ session -> MarkdownPreviewState in
+            let pair = try fetch(session)
+            guard pair.oldContent != nil || pair.newContent != nil else {
+                return .deleted
+            }
+            return .loaded(renderMarkdownDiffHtml(oldMarkdown: pair.oldContent, newMarkdown: pair.newContent))
+        }, apply: { [self] state in
+            guard generation == markdownPreviewGeneration, isCurrent() else { return }
+            loadedMarkdownPreviewKey = key
+            publish(state, to: \.markdownPreviewState)
+        }, onFailure: { [self] error in
+            guard generation == markdownPreviewGeneration, isCurrent() else { return }
+            loadedMarkdownPreviewKey = nil
+            publish(.unavailable(error.localizedDescription), to: \.markdownPreviewState)
+        })
+    }
+
+    private var isPreviewLoaded: Bool {
+        if case .loaded = markdownPreviewState { return true }
+        return false
     }
 }

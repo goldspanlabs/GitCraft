@@ -104,6 +104,305 @@ pub fn commit_diff(
     Ok(parse_with_ext(&raw, ext)?)
 }
 
+/// Maximum file size (1 MiB) allowed for full-file preview.
+const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
+
+/// Reads a working-tree or staged file's full UTF-8 text for previewing.
+/// Returns `Ok(None)` if the file does not exist (e.g. deleted).
+pub fn working_file_content(
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    path: &str,
+    staged: bool,
+) -> Result<Option<String>, crate::GitCraftError> {
+    if staged {
+        let repo = sync_repo.to_thread_local();
+        return index_blob_text(&repo, path);
+    }
+    let full_path = repo_path.join(path);
+    let Ok(meta) = std::fs::symlink_metadata(&full_path) else {
+        return Ok(None);
+    };
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&full_path)?;
+        return Ok(Some(target.to_string_lossy().into_owned()));
+    }
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    let Ok(canonical_root) = std::fs::canonicalize(repo_path) else {
+        return Ok(None);
+    };
+    let Ok(canonical_file) = std::fs::canonicalize(&full_path) else {
+        return Ok(None);
+    };
+    if !canonical_file.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+    if meta.len() as usize > MAX_PREVIEW_BYTES {
+        return Err(crate::GitCraftError::message(format!(
+            "File is too large to preview ({} bytes)",
+            meta.len()
+        )));
+    }
+    let bytes = std::fs::read(&canonical_file)?;
+    if bytes.contains(&0) {
+        return Err(crate::GitCraftError::message(
+            "Binary file cannot be previewed",
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// Reads a file's full UTF-8 text at a specific commit for previewing.
+/// Returns `Ok(None)` if the file does not exist at that commit (e.g. deleted).
+pub fn commit_file_content(
+    sync_repo: &gix::ThreadSafeRepository,
+    oid_hex: &str,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let oid =
+        gix::ObjectId::from_hex(oid_hex.as_bytes()).map_err(crate::GitCraftError::from_display)?;
+    let repo = sync_repo.to_thread_local();
+    commit_tree_blob_text(&repo, oid, path)
+}
+
+/// Reads both the old and new versions of a working-tree or staged file for rich diffing.
+pub fn working_file_content_pair(
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    path: &str,
+    staged: bool,
+) -> Result<crate::FileContentPair, crate::GitCraftError> {
+    let repo = sync_repo.to_thread_local();
+    let old_content = if staged {
+        head_blob_text(&repo, path)?
+    } else if is_tracked(repo_path, path) {
+        index_blob_text(&repo, path)?
+    } else {
+        None
+    };
+    let new_content = working_file_content(repo_path, sync_repo, path, staged)?;
+    Ok(crate::FileContentPair {
+        old_content,
+        new_content,
+    })
+}
+
+/// Reads both the parent and commit versions of a file for rich diffing.
+pub fn commit_file_content_pair(
+    sync_repo: &gix::ThreadSafeRepository,
+    oid_hex: &str,
+    path: &str,
+) -> Result<crate::FileContentPair, crate::GitCraftError> {
+    let oid =
+        gix::ObjectId::from_hex(oid_hex.as_bytes()).map_err(crate::GitCraftError::from_display)?;
+    let repo = sync_repo.to_thread_local();
+    let parent_id = repo
+        .find_commit(oid)
+        .ok()
+        .and_then(|c| c.parent_ids().next())
+        .map(|p| p.detach());
+    let old_content = match parent_id {
+        Some(pid) => commit_tree_blob_text(&repo, pid, path)?,
+        None => None,
+    };
+    let new_content = commit_tree_blob_text(&repo, oid, path)?;
+    Ok(crate::FileContentPair {
+        old_content,
+        new_content,
+    })
+}
+
+fn index_blob_text(
+    repo: &gix::Repository,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(index) = repo.index() else {
+        return Ok(None);
+    };
+    let Some(entry) = index.entry_by_path(path.into()) else {
+        return Ok(None);
+    };
+    odb_blob_text(repo, entry.id)
+}
+
+fn head_blob_text(
+    repo: &gix::Repository,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(head_id) = repo.head_id() else {
+        return Ok(None);
+    };
+    commit_tree_blob_text(repo, head_id.detach(), path)
+}
+
+fn commit_tree_blob_text(
+    repo: &gix::Repository,
+    commit_id: gix::ObjectId,
+    path: &str,
+) -> Result<Option<String>, crate::GitCraftError> {
+    let Ok(commit) = repo.find_commit(commit_id) else {
+        return Ok(None);
+    };
+    let Ok(tree) = commit.tree() else {
+        return Ok(None);
+    };
+    let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+        return Ok(None);
+    };
+    odb_blob_text(repo, entry.oid().into())
+}
+
+fn odb_blob_text(
+    repo: &gix::Repository,
+    oid: gix::ObjectId,
+) -> Result<Option<String>, crate::GitCraftError> {
+    use gix::prelude::HeaderExt;
+    let header = repo
+        .objects
+        .header(oid)
+        .map_err(crate::GitCraftError::from_display)?;
+    if header.size() > MAX_PREVIEW_BYTES as u64 {
+        return Err(crate::GitCraftError::message(format!(
+            "File is too large to preview ({} bytes)",
+            header.size()
+        )));
+    }
+    let obj = repo
+        .find_object(oid)
+        .map_err(crate::GitCraftError::from_display)?;
+    if obj.kind != gix::object::Kind::Blob {
+        return Ok(None);
+    }
+    if obj.data.contains(&0) {
+        return Err(crate::GitCraftError::message(
+            "Binary file cannot be previewed",
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&obj.data).into_owned()))
+}
+
+/// Maximum asset size (16 MiB) allowed when loading images/assets in Markdown preview.
+const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reads raw asset bytes from the matching diff side (commit tree or its parent, HEAD or index,
+/// or working tree) with symlink containment and a size cap.
+pub fn read_repo_asset(
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    path: &str,
+    commit_oid: Option<&str>,
+    staged: bool,
+    old_side: bool,
+) -> Result<Option<Vec<u8>>, crate::GitCraftError> {
+    if let Some(oid_hex) = commit_oid {
+        let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
+            .map_err(crate::GitCraftError::from_display)?;
+        let repo = sync_repo.to_thread_local();
+        let target_oid = if old_side {
+            let Some(parent_id) = repo
+                .find_commit(oid)
+                .ok()
+                .and_then(|c| c.parent_ids().next())
+                .map(|p| p.detach())
+            else {
+                return Ok(None);
+            };
+            parent_id
+        } else {
+            oid
+        };
+        let Ok(commit) = repo.find_commit(target_oid) else {
+            return Ok(None);
+        };
+        let Ok(tree) = commit.tree() else {
+            return Ok(None);
+        };
+        let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.oid().into());
+    }
+
+    if staged {
+        let repo = sync_repo.to_thread_local();
+        if old_side {
+            let Ok(head_id) = repo.head_id() else {
+                return Ok(None);
+            };
+            let Ok(commit) = repo.find_commit(head_id.detach()) else {
+                return Ok(None);
+            };
+            let Ok(tree) = commit.tree() else {
+                return Ok(None);
+            };
+            let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+                return Ok(None);
+            };
+            return odb_blob_bytes(&repo, entry.oid().into());
+        }
+        let Ok(index) = repo.index() else {
+            return Ok(None);
+        };
+        let Some(entry) = index.entry_by_path(path.into()) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.id);
+    }
+
+    if old_side {
+        if !is_tracked(repo_path, path) {
+            return Ok(None);
+        }
+        let repo = sync_repo.to_thread_local();
+        let Ok(index) = repo.index() else {
+            return Ok(None);
+        };
+        let Some(entry) = index.entry_by_path(path.into()) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.id);
+    }
+
+    let Ok(canonical_root) = std::fs::canonicalize(repo_path) else {
+        return Ok(None);
+    };
+    let Ok(canonical_file) = std::fs::canonicalize(repo_path.join(path)) else {
+        return Ok(None);
+    };
+    if !canonical_file.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+    let Ok(meta) = std::fs::metadata(&canonical_file) else {
+        return Ok(None);
+    };
+    if !meta.is_file() || meta.len() as usize > MAX_ASSET_BYTES {
+        return Ok(None);
+    }
+    Ok(Some(std::fs::read(&canonical_file)?))
+}
+
+fn odb_blob_bytes(
+    repo: &gix::Repository,
+    oid: gix::ObjectId,
+) -> Result<Option<Vec<u8>>, crate::GitCraftError> {
+    use gix::prelude::HeaderExt;
+    let Ok(header) = repo.objects.header(oid) else {
+        return Ok(None);
+    };
+    if header.size() > MAX_ASSET_BYTES as u64 {
+        return Ok(None);
+    }
+    let Ok(obj) = repo.find_object(oid) else {
+        return Ok(None);
+    };
+    if obj.kind != gix::object::Kind::Blob {
+        return Ok(None);
+    }
+    Ok(Some(obj.detach().data))
+}
+
 #[cfg(test)]
 pub fn parse(input: &str) -> io::Result<Vec<DiffRow>> {
     parse_with_ext(input, None)

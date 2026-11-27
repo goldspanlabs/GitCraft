@@ -1818,3 +1818,181 @@ fn merging_a_branch_that_is_already_merged_warns_and_makes_no_commit() {
     assert!(err.to_string().contains("nothing to merge"));
     assert_eq!(rev(dir.path(), "main"), main, "no empty merge commit");
 }
+
+// ------------------------------------------------------------ file content ---
+
+#[test]
+fn working_file_content_distinguishes_staged_unstaged_and_deleted() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "notes.md", "# Staged\n");
+    session.stage("notes.md".into()).unwrap();
+    write(dir.path(), "notes.md", "# Unstaged\n");
+
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), true)
+            .unwrap()
+            .as_deref(),
+        Some("# Staged\n")
+    );
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), false)
+            .unwrap()
+            .as_deref(),
+        Some("# Unstaged\n")
+    );
+
+    fs::remove_file(dir.path().join("notes.md")).unwrap();
+    assert_eq!(
+        session
+            .get_working_file_content("notes.md".into(), false)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn commit_file_content_reads_historical_blob_and_handles_deleted_files() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "readme.md", "# v1\n");
+    run_git(dir.path(), &["add", "readme.md"]);
+    run_git(dir.path(), &["commit", "-m", "add readme"]);
+    let add_oid = rev(dir.path(), "HEAD");
+
+    fs::remove_file(dir.path().join("readme.md")).unwrap();
+    run_git(dir.path(), &["add", "-A"]);
+    run_git(dir.path(), &["commit", "-m", "delete readme"]);
+    let del_oid = rev(dir.path(), "HEAD");
+
+    assert_eq!(
+        session
+            .get_commit_file_content(add_oid, "readme.md".into())
+            .unwrap()
+            .as_deref(),
+        Some("# v1\n")
+    );
+    assert_eq!(
+        session
+            .get_commit_file_content(del_oid, "readme.md".into())
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn file_versions_return_before_and_after_for_working_and_commit_diffs() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(dir.path(), "doc.md", "v1\n");
+    run_git(dir.path(), &["add", "doc.md"]);
+    run_git(dir.path(), &["commit", "-m", "add doc"]);
+    let add_oid = rev(dir.path(), "HEAD");
+
+    write(dir.path(), "doc.md", "v2\n");
+    run_git(dir.path(), &["add", "doc.md"]);
+    run_git(dir.path(), &["commit", "-m", "update doc"]);
+    let edit_oid = rev(dir.path(), "HEAD");
+
+    let add_pair = session
+        .get_commit_file_versions(add_oid, "doc.md".into())
+        .unwrap();
+    assert_eq!(add_pair.old_content, None);
+    assert_eq!(add_pair.new_content.as_deref(), Some("v1\n"));
+
+    let edit_pair = session
+        .get_commit_file_versions(edit_oid, "doc.md".into())
+        .unwrap();
+    assert_eq!(edit_pair.old_content.as_deref(), Some("v1\n"));
+    assert_eq!(edit_pair.new_content.as_deref(), Some("v2\n"));
+
+    write(dir.path(), "doc.md", "v3-staged\n");
+    session.stage("doc.md".into()).unwrap();
+    write(dir.path(), "doc.md", "v4-unstaged\n");
+
+    let staged_pair = session
+        .get_working_file_versions("doc.md".into(), true)
+        .unwrap();
+    assert_eq!(staged_pair.old_content.as_deref(), Some("v2\n"));
+    assert_eq!(staged_pair.new_content.as_deref(), Some("v3-staged\n"));
+
+    let unstaged_pair = session
+        .get_working_file_versions("doc.md".into(), false)
+        .unwrap();
+    assert_eq!(unstaged_pair.old_content.as_deref(), Some("v3-staged\n"));
+    assert_eq!(unstaged_pair.new_content.as_deref(), Some("v4-unstaged\n"));
+}
+
+#[test]
+fn repo_asset_reads_from_matching_commit_index_or_working_tree() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    fs::create_dir_all(dir.path().join("assets")).unwrap();
+    write(dir.path(), "assets/logo.png", "v1-bytes");
+    run_git(dir.path(), &["add", "assets/logo.png"]);
+    run_git(dir.path(), &["commit", "-m", "add logo"]);
+
+    write(dir.path(), "assets/logo.png", "v2-committed");
+    run_git(dir.path(), &["add", "assets/logo.png"]);
+    run_git(dir.path(), &["commit", "-m", "update logo"]);
+    let v2_oid = rev(dir.path(), "HEAD");
+
+    write(dir.path(), "assets/logo.png", "v3-staged");
+    session.stage("assets/logo.png".into()).unwrap();
+    write(dir.path(), "assets/logo.png", "v4-working");
+
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), Some(v2_oid.clone()), false, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v2-committed".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), Some(v2_oid), false, true)
+            .unwrap()
+            .as_deref(),
+        Some(b"v1-bytes".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, true, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v3-staged".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, true, true)
+            .unwrap()
+            .as_deref(),
+        Some(b"v2-committed".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, false, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v4-working".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, false, true)
+            .unwrap()
+            .as_deref(),
+        Some(b"v3-staged".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/missing.png".into(), None, false, false)
+            .unwrap(),
+        None
+    );
+}

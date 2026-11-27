@@ -4,6 +4,7 @@ mod diff;
 mod git_cli;
 mod graph;
 mod highlight;
+mod markdown;
 mod models;
 mod ops;
 mod status;
@@ -23,6 +24,19 @@ pub fn check_git_availability() -> GitAvailability {
 /// The oldest supported git version, such as `2.39`.
 pub fn minimum_git_version() -> String {
     git_cli::minimum_version()
+}
+
+/// Renders Markdown into an HTML fragment for previewing.
+pub fn render_markdown_html(markdown: String) -> String {
+    markdown::render_html(&markdown)
+}
+
+/// Renders a block-level rich diff between two Markdown versions as an HTML fragment.
+pub fn render_markdown_diff_html(
+    old_markdown: Option<String>,
+    new_markdown: Option<String>,
+) -> String {
+    markdown::render_diff_html(old_markdown.as_deref(), new_markdown.as_deref())
 }
 
 use std::{
@@ -226,6 +240,55 @@ impl RepoSession {
         staged: bool,
     ) -> Result<Vec<DiffRow>, GitCraftError> {
         diff::working_tree_file(&self.path, path.as_deref(), staged)
+    }
+
+    pub fn get_commit_file_content(
+        &self,
+        oid_hex: String,
+        path: String,
+    ) -> Result<Option<String>, GitCraftError> {
+        diff::commit_file_content(&self.sync_repo, &oid_hex, &path)
+    }
+
+    pub fn get_working_file_content(
+        &self,
+        path: String,
+        staged: bool,
+    ) -> Result<Option<String>, GitCraftError> {
+        diff::working_file_content(&self.path, &self.sync_repo, &path, staged)
+    }
+
+    pub fn get_commit_file_versions(
+        &self,
+        oid_hex: String,
+        path: String,
+    ) -> Result<FileContentPair, GitCraftError> {
+        diff::commit_file_content_pair(&self.sync_repo, &oid_hex, &path)
+    }
+
+    pub fn get_working_file_versions(
+        &self,
+        path: String,
+        staged: bool,
+    ) -> Result<FileContentPair, GitCraftError> {
+        diff::working_file_content_pair(&self.path, &self.sync_repo, &path, staged)
+    }
+
+    pub fn get_repo_asset(
+        &self,
+        path: String,
+        commit_oid: Option<String>,
+        staged: bool,
+        old_side: bool,
+    ) -> Result<Option<Vec<u8>>, GitCraftError> {
+        diff::read_repo_asset(
+            &self.path,
+            &self.sync_repo,
+            &path,
+            commit_oid.as_deref(),
+            staged,
+            old_side,
+        )
     }
 
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {

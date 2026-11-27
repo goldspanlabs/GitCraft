@@ -264,7 +264,14 @@ private struct WorkingChangesInspectorView: View {
                 diffRows: tab.diffRows,
                 emptyMessage: tab.totalChangesCount == 0
                     ? "Working tree is clean"
-                    : "Select a changed file to inspect its diff"
+                    : "Select a changed file to inspect its diff",
+                canPreviewMarkdown: RepoTab.isMarkdownPath(tab.selectedFilePath),
+                isMarkdownPreview: tab.isMarkdownPreview,
+                markdownPreviewState: tab.markdownPreviewState,
+                repoRootPath: tab.activeCheckoutPath,
+                previewSession: tab.session,
+                previewStaged: tab.selectedFileStaged,
+                onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
         }
         .onAppear {
@@ -473,6 +480,14 @@ struct DiffPaneContainer: View {
     let badgeColor: Color
     let diffRows: [DiffRow]
     let emptyMessage: String
+    var canPreviewMarkdown: Bool = false
+    var isMarkdownPreview: Bool = false
+    var markdownPreviewState: RepoTab.MarkdownPreviewState = .idle
+    var repoRootPath: String? = nil
+    var previewSession: RepoSession? = nil
+    var previewCommitOid: String? = nil
+    var previewStaged: Bool = false
+    var onToggleMarkdownPreview: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -481,10 +496,35 @@ struct DiffPaneContainer: View {
                 badgeText: badgeText,
                 badgeColor: badgeColor,
                 // A multi-file diff heads each file with the same icon.
-                showsIcon: !diffRows.contains { $0.kind == "header" }
+                showsIcon: !diffRows.contains { $0.kind == "header" },
+                canPreviewMarkdown: canPreviewMarkdown,
+                isMarkdownPreview: isMarkdownPreview,
+                onToggleMarkdownPreview: onToggleMarkdownPreview
             )
             Divider()
-            if diffRows.isEmpty {
+            if canPreviewMarkdown && isMarkdownPreview {
+                switch markdownPreviewState {
+                case .loaded(let html):
+                    MarkdownPreviewView(
+                        html: html,
+                        repoRootPath: repoRootPath,
+                        filePath: filePath,
+                        session: previewSession,
+                        commitOid: previewCommitOid,
+                        staged: previewStaged
+                    )
+                    .background(Color(nsColor: .textBackgroundColor))
+                case .idle, .loading:
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .textBackgroundColor))
+                case .deleted:
+                    EmptyDiffView(message: "File was deleted")
+                case .unavailable(let reason):
+                    EmptyDiffView(message: reason)
+                }
+            } else if diffRows.isEmpty {
                 EmptyDiffView(message: emptyMessage)
             } else {
                 DiffTableView(rows: diffRows)
@@ -498,6 +538,9 @@ private struct DiffHeaderBar: View {
     let badgeText: String?
     let badgeColor: Color
     let showsIcon: Bool
+    let canPreviewMarkdown: Bool
+    let isMarkdownPreview: Bool
+    let onToggleMarkdownPreview: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -511,6 +554,29 @@ private struct DiffHeaderBar: View {
                 .lineLimit(1)
                 .truncationMode(.head)
                 .accessibilityIdentifier("diff-path")
+            if canPreviewMarkdown, let onToggleMarkdownPreview {
+                Button(action: onToggleMarkdownPreview) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isMarkdownPreview ? "eye.fill" : "eye")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Preview")
+                            .font(.system(size: 11, weight: isMarkdownPreview ? .semibold : .medium))
+                    }
+                    .foregroundStyle(isMarkdownPreview ? Color.accentColor : Color.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isMarkdownPreview ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.06))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(isMarkdownPreview ? "Show diff" : "Preview Markdown")
+                .accessibilityValue(isMarkdownPreview ? "On" : "Off")
+                .accessibilityIdentifier("markdown-preview-toggle")
+            }
             Spacer()
             if let badgeText {
                 Text(badgeText)
