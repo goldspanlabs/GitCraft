@@ -48,6 +48,26 @@ final class SquashMessageTests: XCTestCase {
         )
     }
 
+    func testCoAuthorLinesOutsideTheTrailerBlockStayInTheBody() {
+        let example = "Write trailers like this:\n\n```\nCo-authored-by: Ex <ex@x.com>\n```"
+        let quoted = "Co-authored-by: Q <q@x.com>\nis the syntax."
+
+        let draft = SquashMessage.draft(for: [commit("One", body: example), commit("Two", body: quoted)])
+
+        XCTAssertEqual(draft.description, "\(example)\n\nTwo\n\n\(quoted)")
+    }
+
+    func testCoAuthorsLeaveTheTrailerBlockAndOtherTrailersStay() {
+        let body = "Why.\n\nSigned-off-by: Cy <cy@x.com>\nCo-authored-by: Di <di@x.com>"
+
+        let draft = SquashMessage.draft(for: [commit("One", body: body), commit("Two")])
+
+        XCTAssertEqual(
+            draft.description,
+            "Why.\n\nSigned-off-by: Cy <cy@x.com>\n\nTwo\n\nCo-authored-by: Di <di@x.com>"
+        )
+    }
+
     func testOneAuthorGetsNoCoAuthorLine() {
         let draft = SquashMessage.draft(for: [commit("One"), commit("Two")])
 

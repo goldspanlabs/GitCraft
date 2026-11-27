@@ -153,7 +153,7 @@ impl RepoSession {
             // the name on the server is worked out separately.
             let tracking = resolve(format!("{branch}@{{push}}"))?;
             let configured = value(&["for-each-ref", "--format=%(push:remoteref)", &same_name]);
-            let server_ref = configured.unwrap_or_else(|| {
+            let server_ref = configured.map(full_branch_ref).unwrap_or_else(|| {
                 let to_upstream = value(&["config", "--get", "push.default"])
                     .is_some_and(|mode| mode == "upstream" || mode == "tracking");
                 to_upstream
@@ -163,11 +163,20 @@ impl RepoSession {
             });
             (remote, server_ref, tracking)
         } else {
-            // A first push goes to the same name on the default remote, whatever push
-            // settings say.
+            // A first push goes to the default remote, to the same name unless that
+            // remote's push refspecs map the branch elsewhere.
             let remote = resolve_default_remote(&self.path);
-            let tracking = self.fetched_as(&remote, &same_name)?;
-            (remote, same_name, tracking)
+            let push_to_it = format!("branch.{branch}.pushRemote={remote}");
+            let server_ref = value(&[
+                "-c",
+                &push_to_it,
+                "for-each-ref",
+                "--format=%(push:remoteref)",
+                &same_name,
+            ])
+            .map_or_else(|| same_name.clone(), full_branch_ref);
+            let tracking = self.fetched_as(&remote, &server_ref)?;
+            (remote, server_ref, tracking)
         };
         ref_exists(&self.path, &tracking).then_some(PushTarget {
             remote,
@@ -242,5 +251,14 @@ impl RepoSession {
             });
         }
         Ok(commits)
+    }
+}
+
+/// A push refspec may name its destination branch without the `refs/heads/` prefix.
+fn full_branch_ref(name: String) -> String {
+    if name.starts_with("refs/") {
+        name
+    } else {
+        format!("refs/heads/{name}")
     }
 }

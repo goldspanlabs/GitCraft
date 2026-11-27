@@ -39,7 +39,14 @@ extension RepoTab {
             scrollToCommit(oidHex: oid)
             return
         }
-        guard !selectedCommits.isEmpty else { return }
+        guard !selectedCommits.isEmpty else {
+            // The table drops a vanished row's highlight, so keeping its details would leave
+            // Commit and Amend off with nothing selected.
+            if let selected = selectedCommit, !commits.contains(where: { $0.oidHex == selected.oidHex }) {
+                selectCommit(nil)
+            }
+            return
+        }
         let selected = Set(selectedCommits.map(\.oidHex))
         let survivors = commits.filter { selected.contains($0.oidHex) }
         if survivors.count > 1 {

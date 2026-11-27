@@ -451,3 +451,38 @@ fn pushes_the_confirmed_commit_rather_than_the_branch_name() {
     assert_eq!(result.branch, "main");
     assert_eq!(fixture.remote_tip("main"), confirmed);
 }
+
+#[test]
+fn without_an_upstream_follows_a_configured_push_refspec() {
+    for spec in [
+        "refs/heads/main:refs/heads/deploy",
+        "refs/heads/main:deploy",
+        "refs/heads/*:refs/heads/review/*",
+    ] {
+        let fixture = pushed();
+        let server_branch = if spec.contains('*') {
+            "review/main"
+        } else {
+            "deploy"
+        };
+        run_git(
+            fixture.path(),
+            &["push", "-q", "origin", &format!("main:{server_branch}")],
+        );
+        run_git(fixture.path(), &["config", "remote.origin.push", spec]);
+        run_git(fixture.path(), &["branch", "--unset-upstream"]);
+        let kept = fixture.remote_tip("main");
+        fixture.amend("C amended");
+
+        let plan = fixture.plan();
+        assert_eq!(
+            plan.destination_ref,
+            format!("refs/heads/{server_branch}"),
+            "{spec}"
+        );
+        open(fixture.path()).force_push(plan).unwrap();
+
+        assert_eq!(fixture.remote_tip(server_branch), head(fixture.path()));
+        assert_eq!(fixture.remote_tip("main"), kept, "{spec}");
+    }
+}

@@ -229,6 +229,24 @@ final class SquashTabTests: XCTestCase {
     }
 
     @MainActor
+    func testUndoingASquashClearsTheSelectionOfTheCommitThatIsGone() async throws {
+        let tab = try await loadedTab()
+        defer { tab.stopWatcher() }
+        let preview = try await allowedPreview(tab, ["two", "three"])
+        tab.squash(preview, summary: "both", description: "")
+        try await waitFor("the squash to be selected") {
+            !tab.isBusy && tab.selectedCommit?.summary == "both"
+        }
+        XCTAssertFalse(tab.canAmend)
+
+        tab.undo()
+
+        try await waitFor("the selection to clear") { !tab.isBusy && tab.selectedCommit == nil }
+        XCTAssertNil(tab.commitDetail)
+        XCTAssertTrue(tab.canAmend)
+    }
+
+    @MainActor
     func testMenuTitleCarriesTheReason() {
         XCTAssertEqual(
             RepoTab.squashMenuTitle(check: .refused("Select consecutive commits")),
