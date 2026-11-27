@@ -566,11 +566,32 @@ fn undo_checkout_refuses_when_target_branch_moved() {
     run_git(dir.path(), &["branch", "feature"]);
 
     let moved = session.checkout_branch("feature".into()).unwrap().unwrap();
-    // Advance `main` externally while on `feature`.
+    // Advance `main` externally without leaving `feature` at a different commit.
     let new_commit = commit_file(dir.path(), "other.txt", "new\n", "advance");
+    run_git(dir.path(), &["reset", "--hard", &moved.after.oid]);
     run_git(dir.path(), &["branch", "-f", "main", &new_commit]);
 
-    assert!(session.undo_checkout(moved.after, moved.before).is_err());
+    assert_eq!(session.head_position().as_ref(), Some(&moved.after));
+    let err = session
+        .undo_checkout(moved.after, moved.before)
+        .unwrap_err();
+    assert!(err.to_string().contains("target branch"));
+    assert_eq!(current_branch(dir.path()), "feature");
+}
+
+#[test]
+fn checkout_with_staged_file_matching_destination_records_no_undo() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["checkout", "-qb", "feature"]);
+    commit_file(dir.path(), "shared.txt", "same\n", "add shared");
+    run_git(dir.path(), &["checkout", "-q", "main"]);
+
+    write(dir.path(), "shared.txt", "same\n");
+    run_git(dir.path(), &["add", "shared.txt"]);
+
+    let moved = session.checkout_branch("feature".into()).unwrap();
+    assert!(moved.is_none());
     assert_eq!(current_branch(dir.path()), "feature");
 }
 
@@ -742,5 +763,37 @@ fn undo_ref_move_rolls_back_ref_when_config_is_locked() {
     assert_eq!(
         session.ref_oid("refs/heads/feature".into()).as_deref(),
         Some(tip.as_str())
+    );
+}
+
+#[test]
+fn delete_branch_undo_preserves_valueless_boolean_config() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    let config_path = dir.path().join(".git/config");
+    let mut config = fs::read_to_string(&config_path).unwrap();
+    config.push_str("\n[branch \"feature\"]\n\trebase\n");
+    fs::write(&config_path, config).unwrap();
+
+    let deleted = session
+        .delete_branch("feature".into(), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(deleted.branch_config.len(), 1);
+    assert_eq!(deleted.branch_config[0].key, "branch.feature.rebase");
+    assert_eq!(deleted.branch_config[0].value, "true");
+
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref,
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    assert_eq!(
+        run_git(dir.path(), &["config", "--bool", "branch.feature.rebase"]).trim(),
+        "true"
     );
 }

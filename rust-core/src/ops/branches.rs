@@ -12,6 +12,15 @@ impl RepoSession {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {
             let before = self.head_position();
+            // Only record undo when tracked index/worktree state is clean; otherwise checkout can
+            // absorb staged or modified files into the destination branch in ways a reverse
+            // checkout would lose.
+            let has_tracked_changes = git_cli::run(
+                &self.path,
+                &["status", "--porcelain", "--untracked-files=no"],
+            )
+            .map(|out| !out.trim().is_empty())
+            .unwrap_or(true);
             let remote_ref = format!("refs/remotes/{branch_name}");
             let local_ref = format!("refs/heads/{branch_name}");
             if ref_exists(&self.path, &remote_ref) && !ref_exists(&self.path, &local_ref) {
@@ -27,6 +36,9 @@ impl RepoSession {
                 }
             } else {
                 git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])?;
+            }
+            if has_tracked_changes {
+                return Ok(None);
             }
             let after = self.head_position();
             Ok(Self::head_move_if_changed(before, after))
@@ -491,7 +503,9 @@ impl RepoSession {
                 if entry.is_empty() {
                     return None;
                 }
-                let (key, value) = entry.split_once('\n')?;
+                // Valueless entries (e.g. bare `rebase` in `[branch "x"]`) have no `\n` and
+                // mean `true` in Git config.
+                let (key, value) = entry.split_once('\n').unwrap_or((entry, "true"));
                 key.strip_prefix(&prefix)
                     .filter(|var| !var.contains('.'))
                     .map(|_| BranchConfigEntry {
