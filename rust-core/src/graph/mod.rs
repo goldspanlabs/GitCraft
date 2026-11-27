@@ -92,6 +92,37 @@ pub fn get_branch_graph(
     graph_walk(sync_repo, cache, offset, limit, search_query, true, sort)
 }
 
+/// Fingerprint of the repository's refs, HEAD, shallow boundary, scope, and sort order.
+/// Callers fetching multiple pages in a batch can compare this before and after each page
+/// to detect when refs moved mid-batch.
+pub fn graph_state_token(
+    sync_repo: &gix::ThreadSafeRepository,
+    scoped: bool,
+    sort: CommitSort,
+) -> Result<u64, GitCraftError> {
+    use std::hash::{Hash, Hasher};
+
+    let repo = sync_repo.to_thread_local();
+    let (refs_by_oid, mut tips, local_reachable) = collect_refs_and_tips(&repo)?;
+    if scoped {
+        if let Some((scoped_tips, _)) = branch_scope(&repo) {
+            tips = scoped_tips;
+        }
+    }
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        None,
+        scoped,
+        sort,
+    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be
 /// shown (detached HEAD, or no default branch to compare against). The view walks only from
 /// the checked-out branch, so it shows that branch's whole history and leaves out other

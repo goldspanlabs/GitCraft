@@ -222,6 +222,10 @@ impl RepoSession {
         )
     }
 
+    pub fn graph_state_token(&self, scoped: bool) -> Result<u64, GitCraftError> {
+        graph::graph_state_token(&self.sync_repo, scoped, self.commit_sort())
+    }
+
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
         graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
     }
