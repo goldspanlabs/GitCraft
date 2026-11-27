@@ -133,8 +133,10 @@ class WorkspaceWindowController: NSWindowController {
 @MainActor
 final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
-    /// Longest the repository / branch text may grow before it is truncated.
-    private static let titleTextWidth: CGFloat = 240
+    /// Width of the repository / branch text: a fraction of the window width, clamped to this range.
+    private static let titleTextWidthRange: ClosedRange<CGFloat> = 200...360
+    private static let titleTextWidthFraction: CGFloat = 0.2
+    private var titleWidthConstraints: [NSLayoutConstraint] = []
     private let dot = TabStatusDot()
     private let spinner: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
@@ -265,7 +267,16 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         return size.width >= 1040 && size.height >= 680 ? size : fallback
     }
 
+    /// Scales the title block with the window, so it is the same for every name at a given width.
+    private func updateTitleWidth() {
+        let windowWidth = window?.frame.width ?? 0
+        let width = min(max(windowWidth * Self.titleTextWidthFraction, Self.titleTextWidthRange.lowerBound),
+                        Self.titleTextWidthRange.upperBound)
+        for constraint in titleWidthConstraints { constraint.constant = width }
+    }
+
     func windowDidResize(_ notification: Notification) {
+        updateTitleWidth()
         guard let window = notification.object as? NSWindow,
               !window.styleMask.contains(.fullScreen)
         else { return }
@@ -315,10 +326,13 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
             // Fixed width (not a maximum) so the action buttons don't shift with the name length.
             // Low compression resistance lets long names truncate in the middle, like the sidebar.
-            for label in [titleLabel, subtitleLabel] {
-                label.widthAnchor.constraint(equalToConstant: Self.titleTextWidth).isActive = true
+            titleWidthConstraints = [titleLabel, subtitleLabel].map { label in
                 label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                let constraint = label.widthAnchor.constraint(equalToConstant: Self.titleTextWidthRange.lowerBound)
+                constraint.isActive = true
+                return constraint
             }
+            updateTitleWidth()
 
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = row
