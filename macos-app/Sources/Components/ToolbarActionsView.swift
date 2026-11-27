@@ -132,10 +132,6 @@ private struct TopBarStashItem: View {
                 .disabled(tab.totalChangesCount == 0 || tab.isBusy)
                 .help("Stash working changes (⇧⌘S)")
 
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.28))
-                    .frame(width: 1, height: 15)
-
                 StashMenuTriggerButton(tab: tab)
             }
             .frame(height: 20)
