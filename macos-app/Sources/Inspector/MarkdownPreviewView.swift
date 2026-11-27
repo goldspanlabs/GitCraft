@@ -51,7 +51,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedHTML: String?
         var loadedBaseURL: URL?
-        let schemeHandler: RepoAssetSchemeHandler
+        fileprivate let schemeHandler: RepoAssetSchemeHandler
 
         init(repoRootPath: String?) {
             let rootURL = repoRootPath.map {
@@ -204,7 +204,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
 /// Serves relative repository assets (such as images referenced in README.md) to WKWebView
 /// without running into file:// origin restrictions.
-private final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
+fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "gitcraft-repo"
     var repoRootURL: URL?
 
