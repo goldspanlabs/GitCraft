@@ -485,13 +485,42 @@ fn append_old_side_param(url: &str) -> String {
 
 const MAX_LCS_BLOCKS: usize = 1500;
 
-fn diff_blocks_html(old: &[String], new: &[String]) -> String {
-    if old.len() > MAX_LCS_BLOCKS || new.len() > MAX_LCS_BLOCKS {
-        let mut out = wrap_all(old, "diff-deleted", true);
-        out.push_str(&wrap_all(new, "diff-added", false));
-        return out;
-    }
+const LARGE_DIFF_NOTICE: &str = "<div class=\"diff-notice\">This change is too large to align block by block, so the changed region is shown as removed and re-added.</div>\n";
 
+fn diff_blocks_html(old: &[String], new: &[String]) -> String {
+    // Unchanged leading and trailing blocks need no alignment, which keeps the quadratic
+    // step below limited to the region that actually changed.
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let max_suffix = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let old_mid = &old[prefix..old.len() - suffix];
+    let new_mid = &new[prefix..new.len() - suffix];
+
+    let mut out = String::new();
+    for block in &new[..prefix] {
+        out.push_str(block);
+    }
+    if old_mid.len() > MAX_LCS_BLOCKS || new_mid.len() > MAX_LCS_BLOCKS {
+        out.push_str(LARGE_DIFF_NOTICE);
+        out.push_str(&wrap_all(old_mid, "diff-deleted", true));
+        out.push_str(&wrap_all(new_mid, "diff-added", false));
+    } else {
+        lcs_diff_blocks(old_mid, new_mid, &mut out);
+    }
+    for block in &new[new.len() - suffix..] {
+        out.push_str(block);
+    }
+    out
+}
+
+fn lcs_diff_blocks(old: &[String], new: &[String], out: &mut String) {
     let n = old.len();
     let m = new.len();
     let mut dp = vec![0usize; (n + 1) * (m + 1)];
@@ -507,7 +536,6 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
         }
     }
 
-    let mut out = String::new();
     let mut i = 0;
     let mut j = 0;
     while i < n && j < m {
@@ -516,22 +544,21 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
             i += 1;
             j += 1;
         } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
-            push_diff_block(&mut out, "diff-deleted", &old[i], true);
+            push_diff_block(out, "diff-deleted", &old[i], true);
             i += 1;
         } else {
-            push_diff_block(&mut out, "diff-added", &new[j], false);
+            push_diff_block(out, "diff-added", &new[j], false);
             j += 1;
         }
     }
     while i < n {
-        push_diff_block(&mut out, "diff-deleted", &old[i], true);
+        push_diff_block(out, "diff-deleted", &old[i], true);
         i += 1;
     }
     while j < m {
-        push_diff_block(&mut out, "diff-added", &new[j], false);
+        push_diff_block(out, "diff-added", &new[j], false);
         j += 1;
     }
-    out
 }
 
 #[cfg(test)]
@@ -641,6 +668,26 @@ mod tests {
     fn deleted_blocks_prefix_heading_ids() {
         let html = render_diff_html(Some("# Gone\n"), None);
         assert!(html.contains("<h1 id=\"old-gone\">"));
+    }
+
+    #[test]
+    fn large_docs_with_a_small_change_still_diff_per_block() {
+        let para = |i: usize| format!("Paragraph {i}.\n\n");
+        let old: String = (0..3000).map(para).collect();
+        let new = old.replace("Paragraph 1500.", "Changed 1500.");
+        let html = render_diff_html(Some(&old), Some(&new));
+        assert!(!html.contains("diff-notice"));
+        assert_eq!(html.matches("diff-deleted").count(), 1);
+        assert_eq!(html.matches("diff-added").count(), 1);
+    }
+
+    #[test]
+    fn huge_rewrites_show_a_notice_instead_of_silently_degrading() {
+        let old: String = (0..2000).map(|i| format!("Old {i}.\n\n")).collect();
+        let new: String = (0..2000).map(|i| format!("New {i}.\n\n")).collect();
+        let html = render_diff_html(Some(&old), Some(&new));
+        assert!(html.contains("diff-notice"));
+        assert_eq!(html.matches("diff-deleted").count(), 2000);
     }
 
     #[test]

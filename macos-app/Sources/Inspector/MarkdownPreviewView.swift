@@ -255,6 +255,15 @@ struct MarkdownPreviewView: NSViewRepresentable {
             border-left-color: var(--diff-del-border);
             opacity: 0.85;
           }
+          .diff-notice {
+            margin: 0 0 16px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--fg-muted);
+            font-size: 12px;
+          }
         </style>
         </head>
         <body>
