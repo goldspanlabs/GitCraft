@@ -56,11 +56,12 @@ impl RepoSession {
             }
             let full_ref = format!("refs/heads/{branch_name}");
             let after_oid = self.ref_oid(full_ref.clone());
+            let branch_config = self.read_branch_config(&branch_name);
             Ok(after_oid.map(|oid| RefMove {
                 full_ref,
                 before_oid: None,
                 after_oid: Some(oid),
-                branch_config: Vec::new(),
+                branch_config,
             }))
         })
     }
@@ -474,10 +475,12 @@ impl RepoSession {
                     return None;
                 }
                 let (key, value) = entry.split_once('\n')?;
-                key.starts_with(&prefix).then(|| BranchConfigEntry {
-                    key: key.to_owned(),
-                    value: value.to_owned(),
-                })
+                key.strip_prefix(&prefix)
+                    .filter(|var| !var.contains('.'))
+                    .map(|_| BranchConfigEntry {
+                        key: key.to_owned(),
+                        value: value.to_owned(),
+                    })
             })
             .collect()
     }

@@ -663,3 +663,35 @@ fn undo_ref_move_refuses_when_branch_checked_out_in_sibling_worktree() {
         .is_err());
     assert!(session.ref_oid("refs/heads/wt-branch".into()).is_some());
 }
+
+#[test]
+fn delete_branch_undo_does_not_duplicate_dotted_sibling_branch_config() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+    run_git(dir.path(), &["branch", "release"]);
+    run_git(dir.path(), &["branch", "release.next"]);
+    run_git(
+        dir.path(),
+        &["config", "branch.release.next.remote", "origin"],
+    );
+
+    let deleted = session
+        .delete_branch("release".into(), false)
+        .unwrap()
+        .unwrap();
+    assert!(deleted.branch_config.is_empty());
+
+    session
+        .undo_ref_move(
+            deleted.after_oid,
+            deleted.full_ref,
+            deleted.before_oid,
+            deleted.branch_config,
+        )
+        .unwrap();
+    let values = run_git(
+        dir.path(),
+        &["config", "--get-all", "branch.release.next.remote"],
+    );
+    assert_eq!(values.lines().collect::<Vec<_>>(), ["origin"]);
+}
