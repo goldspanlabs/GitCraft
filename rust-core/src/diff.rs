@@ -191,6 +191,7 @@ pub fn working_file_content_pair(
 
 /// Reads both the parent and commit versions of a file for rich diffing.
 pub fn commit_file_content_pair(
+    repo_path: &Path,
     sync_repo: &gix::ThreadSafeRepository,
     oid_hex: &str,
     path: &str,
@@ -200,27 +201,69 @@ pub fn commit_file_content_pair(
     let repo = sync_repo.to_thread_local();
     let parent_id = repo
         .find_commit(oid)
-        .ok()
-        .and_then(|c| c.parent_ids().next())
+        .map_err(crate::GitCraftError::from_display)?
+        .parent_ids()
+        .next()
         .map(|p| p.detach());
+    let new_content = commit_tree_blob_text(&repo, oid, path)?;
     let old_content = match parent_id {
-        Some(pid) => commit_tree_blob_text(&repo, pid, path)?,
+        Some(pid) => {
+            let mut old = commit_tree_blob_text(&repo, pid, path)?;
+            if old.is_none() && new_content.is_some() {
+                // The file may have been renamed or moved in this commit.
+                if let Some(old_path) = renamed_from(repo_path, pid, oid, path) {
+                    old = commit_tree_blob_text(&repo, pid, &old_path)?;
+                }
+            }
+            old
+        }
         None => None,
     };
-    let new_content = commit_tree_blob_text(&repo, oid, path)?;
     Ok(crate::FileContentPair {
         old_content,
         new_content,
     })
 }
 
+/// The path `path` had in `parent` when `commit` renamed it (rename detection), if any.
+fn renamed_from(
+    repo_path: &Path,
+    parent: gix::ObjectId,
+    commit: gix::ObjectId,
+    path: &str,
+) -> Option<String> {
+    let out = git_cli::run(
+        repo_path,
+        &[
+            "diff-tree",
+            "-r",
+            "-M",
+            "--diff-filter=R",
+            "--name-status",
+            "-z",
+            &parent.to_string(),
+            &commit.to_string(),
+        ],
+    )
+    .ok()?;
+    let mut fields = out.split('\0').filter(|f| !f.is_empty());
+    while let Some(status) = fields.next() {
+        let old = fields.next()?;
+        let new = fields.next()?;
+        if status.starts_with('R') && new == path {
+            return Some(old.to_owned());
+        }
+    }
+    None
+}
+
 fn index_blob_text(
     repo: &gix::Repository,
     path: &str,
 ) -> Result<Option<String>, crate::GitCraftError> {
-    let Ok(index) = repo.index() else {
-        return Ok(None);
-    };
+    let index = repo
+        .index_or_empty()
+        .map_err(crate::GitCraftError::from_display)?;
     let Some(entry) = index.entry_by_path(path.into()) else {
         return Ok(None);
     };
@@ -231,9 +274,11 @@ fn head_blob_text(
     repo: &gix::Repository,
     path: &str,
 ) -> Result<Option<String>, crate::GitCraftError> {
-    let Ok(head_id) = repo.head_id() else {
+    let head = repo.head().map_err(crate::GitCraftError::from_display)?;
+    if head.is_unborn() {
         return Ok(None);
-    };
+    }
+    let head_id = repo.head_id().map_err(crate::GitCraftError::from_display)?;
     commit_tree_blob_text(repo, head_id.detach(), path)
 }
 
@@ -242,13 +287,14 @@ fn commit_tree_blob_text(
     commit_id: gix::ObjectId,
     path: &str,
 ) -> Result<Option<String>, crate::GitCraftError> {
-    let Ok(commit) = repo.find_commit(commit_id) else {
-        return Ok(None);
-    };
-    let Ok(tree) = commit.tree() else {
-        return Ok(None);
-    };
-    let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+    let commit = repo
+        .find_commit(commit_id)
+        .map_err(crate::GitCraftError::from_display)?;
+    let tree = commit.tree().map_err(crate::GitCraftError::from_display)?;
+    let Some(entry) = tree
+        .lookup_entry_by_path(path)
+        .map_err(crate::GitCraftError::from_display)?
+    else {
         return Ok(None);
     };
     odb_blob_text(repo, entry.oid().into())
@@ -352,9 +398,6 @@ pub fn read_repo_asset(
     }
 
     if old_side {
-        if !is_tracked(repo_path, path) {
-            return Ok(None);
-        }
         let repo = sync_repo.to_thread_local();
         let Ok(index) = repo.index() else {
             return Ok(None);

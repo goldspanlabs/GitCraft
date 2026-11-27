@@ -263,7 +263,7 @@ impl RepoSession {
         oid_hex: String,
         path: String,
     ) -> Result<FileContentPair, GitCraftError> {
-        diff::commit_file_content_pair(&self.sync_repo, &oid_hex, &path)
+        diff::commit_file_content_pair(&self.path, &self.sync_repo, &oid_hex, &path)
     }
 
     pub fn get_working_file_versions(

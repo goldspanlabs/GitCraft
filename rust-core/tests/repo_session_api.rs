@@ -1996,3 +1996,35 @@ fn repo_asset_reads_from_matching_commit_index_or_working_tree() {
         None
     );
 }
+
+#[test]
+fn commit_file_versions_follow_renames() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    write(
+        dir.path(),
+        "a.md",
+        "# Title\n\nline one\nline two\nline three\n",
+    );
+    run_git(dir.path(), &["add", "a.md"]);
+    run_git(dir.path(), &["commit", "-m", "add a"]);
+    run_git(dir.path(), &["mv", "a.md", "b.md"]);
+    write(
+        dir.path(),
+        "b.md",
+        "# Title\n\nline one\nline 2\nline three\n",
+    );
+    run_git(dir.path(), &["add", "b.md"]);
+    run_git(dir.path(), &["commit", "-m", "rename a to b"]);
+    let oid = rev(dir.path(), "HEAD");
+
+    let pair = session
+        .get_commit_file_versions(oid, "b.md".into())
+        .unwrap();
+    assert_eq!(
+        pair.old_content.as_deref(),
+        Some("# Title\n\nline one\nline two\nline three\n")
+    );
+    assert!(pair.new_content.unwrap().contains("line 2"));
+}

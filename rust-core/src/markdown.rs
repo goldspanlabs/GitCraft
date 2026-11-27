@@ -35,10 +35,8 @@ pub fn render_diff_html(old_markdown: Option<&str>, new_markdown: Option<&str>) 
 }
 
 fn markdown_options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_HEADING_ATTRIBUTES
+    // GitHub does not support `{#id}` heading attributes, so they are deliberately not enabled.
+    Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS
 }
 
 struct PendingHeading<'a> {
@@ -69,10 +67,10 @@ fn assign_heading_ids<'a>(parser: impl Iterator<Item = Event<'a>>) -> Vec<Event<
                         None => {
                             let text = collect_plain_text(&pending.inner);
                             let base = github_slug(&text);
-                            if base.is_empty() {
-                                None
-                            } else if used_ids.insert(base.clone()) {
-                                Some(CowStr::Boxed(base.into_boxed_str()))
+                            if used_ids.insert(base.clone()) {
+                                // GitHub gives an empty slug no usable id the first time,
+                                // then `-1`, `-2`, ...
+                                (!base.is_empty()).then(|| CowStr::Boxed(base.into_boxed_str()))
                             } else {
                                 let suffix = next_suffix.entry(base.clone()).or_insert(1);
                                 let candidate = loop {
@@ -179,7 +177,10 @@ fn render_blocks(markdown: &str) -> Vec<String> {
                 }
             }
             Event::Html(raw) | Event::InlineHtml(raw) => {
-                html_depth = update_html_depth(html_depth, raw);
+                // Only block-level HTML can span several Markdown blocks (e.g. `<details>`).
+                if matches!(event, Event::Html(_)) {
+                    html_depth = update_html_depth(html_depth, raw);
+                }
                 current.push(event);
                 if depth == 0 && html_depth == 0 {
                     blocks.push(events_to_html(std::mem::take(&mut current)));
@@ -220,15 +221,18 @@ fn update_html_depth(mut depth: usize, raw: &str) -> usize {
         if tag_inner.is_empty() || tag_inner.starts_with('!') || tag_inner.starts_with('?') {
             continue;
         }
-        if tag_inner.starts_with('/') {
-            depth = depth.saturating_sub(1);
+        if let Some(closing) = tag_inner.strip_prefix('/') {
+            let name = closing.trim().to_ascii_lowercase();
+            if is_container_html_tag(&name) {
+                depth = depth.saturating_sub(1);
+            }
         } else if !tag_inner.ends_with('/') {
             let tag_name = tag_inner
                 .split(|c: char| c.is_whitespace() || c == '/')
                 .next()
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if !is_void_html_tag(&tag_name) {
+            if is_container_html_tag(&tag_name) {
                 depth += 1;
             }
         }
@@ -236,23 +240,28 @@ fn update_html_depth(mut depth: usize, raw: &str) -> usize {
     depth
 }
 
-fn is_void_html_tag(tag: &str) -> bool {
+/// Block containers whose content may be separated by blank lines and so span several
+/// Markdown blocks. Void, inline and optional-end-tag elements (`<p>`, `<li>`, `<td>`, `<b>`, ...)
+/// are deliberately excluded: an unclosed one must not swallow the rest of the document.
+fn is_container_html_tag(tag: &str) -> bool {
     matches!(
         tag,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
+        "details"
+            | "div"
+            | "table"
+            | "blockquote"
+            | "ul"
+            | "ol"
+            | "dl"
+            | "section"
+            | "article"
+            | "aside"
+            | "nav"
+            | "header"
+            | "footer"
+            | "figure"
+            | "center"
+            | "pre"
     )
 }
 
@@ -275,11 +284,21 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
     out.push_str(class_name);
     out.push_str("\">");
     if is_deleted {
-        out.push_str(&tag_deleted_assets(block));
+        out.push_str(&prefix_heading_ids(&tag_deleted_assets(block)));
     } else {
         out.push_str(block);
     }
     out.push_str("</div>\n");
+}
+
+/// Gives headings in deleted blocks their own id namespace so anchors keep targeting the
+/// current document rather than the removed copy.
+fn prefix_heading_ids(html: &str) -> String {
+    let mut out = html.to_owned();
+    for level in 1..=6 {
+        out = out.replace(&format!("<h{level} id=\""), &format!("<h{level} id=\"old-"));
+    }
+    out
 }
 
 /// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
@@ -604,13 +623,35 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_inline_or_optional_tags_do_not_merge_later_blocks() {
+        let md = "<p align=center>\n\nOne <b>bold\n\nTwo\n\nThree\n";
+        let html = render_diff_html(None, Some(md));
+        assert!(html.matches("diff-added").count() >= 3);
+    }
+
+    #[test]
+    fn heading_braces_are_kept_and_empty_slugs_dedupe() {
+        let html = render_html("## Config {#id}\n\n## !!!\n\n## ???\n");
+        assert!(html.contains("<h2 id=\"config-id\">Config {#id}</h2>"));
+        assert!(html.contains("<h2>!!!</h2>"));
+        assert!(html.contains("<h2 id=\"-1\">???</h2>"));
+    }
+
+    #[test]
+    fn deleted_blocks_prefix_heading_ids() {
+        let html = render_diff_html(Some("# Gone\n"), None);
+        assert!(html.contains("<h1 id=\"old-gone\">"));
+    }
+
+    #[test]
     fn diff_html_handles_new_and_deleted_files() {
         let added = render_diff_html(None, Some("# Fresh\n"));
         assert!(added
             .contains("<div class=\"diff-block diff-added\"><h1 id=\"fresh\">Fresh</h1>\n</div>"));
 
         let deleted = render_diff_html(Some("# Gone\n"), None);
-        assert!(deleted
-            .contains("<div class=\"diff-block diff-deleted\"><h1 id=\"gone\">Gone</h1>\n</div>"));
+        assert!(deleted.contains(
+            "<div class=\"diff-block diff-deleted\"><h1 id=\"old-gone\">Gone</h1>\n</div>"
+        ));
     }
 }
