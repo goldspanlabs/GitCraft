@@ -134,7 +134,7 @@ class WorkspaceWindowController: NSWindowController {
 final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     let tab: RepoTab
     /// Longest the repository / branch text may grow before it is truncated.
-    private static let titleTextMaxWidth: CGFloat = 240
+    private static let titleTextWidth: CGFloat = 240
     private let dot = TabStatusDot()
     private let spinner: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
@@ -149,14 +149,14 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .labelColor
-        label.lineBreakMode = .byTruncatingTail
+        label.lineBreakMode = .byTruncatingMiddle
         return label
     }()
     private let subtitleLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        label.lineBreakMode = .byTruncatingTail
+        label.lineBreakMode = .byTruncatingMiddle
         return label
     }()
     private var changes: AnyCancellable?
@@ -313,8 +313,12 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             row.alignment = .centerY
             row.spacing = 16
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
-            titleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
-            subtitleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.titleTextMaxWidth).isActive = true
+            // Fixed width (not a maximum) so the action buttons don't shift with the name length.
+            // Low compression resistance lets long names truncate in the middle, like the sidebar.
+            for label in [titleLabel, subtitleLabel] {
+                label.widthAnchor.constraint(equalToConstant: Self.titleTextWidth).isActive = true
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            }
 
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = row
