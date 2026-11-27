@@ -134,11 +134,12 @@ pub struct GraphEdge {
     pub color_idx: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StyleSpan {
     pub start_utf16: u32,
     pub len_utf16: u32,
-    pub foreground: String,
+    /// Packed 24-bit RGB color (`0x00RRGGBB`).
+    pub foreground: u32,
 }
 
 #[derive(Clone, Debug)]

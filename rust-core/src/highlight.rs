@@ -41,16 +41,27 @@ impl LineHighlighter {
         };
         // Counted as the tokens go by: re-reading the line up to each token is quadratic.
         let mut start_utf16 = 0u32;
-        let mut spans = Vec::with_capacity(parts.len());
+        let mut spans: Vec<StyleSpan> = Vec::with_capacity(parts.len());
         for (style, token) in parts {
             let len_utf16 = token.encode_utf16().count() as u32;
+            if len_utf16 == 0 {
+                continue;
+            }
+            let foreground = ((style.foreground.r as u32) << 16)
+                | ((style.foreground.g as u32) << 8)
+                | (style.foreground.b as u32);
+            if let Some(last) = spans.last_mut() {
+                if last.foreground == foreground && last.start_utf16 + last.len_utf16 == start_utf16
+                {
+                    last.len_utf16 += len_utf16;
+                    start_utf16 += len_utf16;
+                    continue;
+                }
+            }
             spans.push(StyleSpan {
                 start_utf16,
                 len_utf16,
-                foreground: format!(
-                    "#{:02x}{:02x}{:02x}",
-                    style.foreground.r, style.foreground.g, style.foreground.b
-                ),
+                foreground,
             });
             start_utf16 += len_utf16;
         }
@@ -88,8 +99,17 @@ mod tests {
         let mut expected = 0;
         for span in &spans {
             assert_eq!(span.start_utf16, expected);
+            assert!(span.foreground <= 0xFF_FFFF);
             expected += span.len_utf16;
         }
         assert_eq!(expected, 25);
+    }
+
+    #[test]
+    fn adjacent_same_color_tokens_are_coalesced() {
+        let spans = LineHighlighter::new("txt").highlight_line("hello   world   again");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].start_utf16, 0);
+        assert_eq!(spans[0].len_utf16, 21);
     }
 }

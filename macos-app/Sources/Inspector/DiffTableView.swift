@@ -440,7 +440,8 @@ final class DiffRowCellView: NSTableCellView {
             for span in row.spans {
                 let start = Int(span.startUtf16)
                 let len = Int(span.lenUtf16)
-                if start >= 0 && start + len <= utf16Len, let color = NSColor(hex: span.foreground, isDark: isDark) {
+                if start >= 0 && start + len <= utf16Len {
+                    let color = NSColor(rgb: span.foreground, isDark: isDark)
                     attr.addAttribute(.foregroundColor, value: color, range: NSRange(location: start, length: len))
                 }
             }
@@ -450,12 +451,7 @@ final class DiffRowCellView: NSTableCellView {
 }
 
 private extension NSColor {
-    convenience init?(hex: String, isDark: Bool) {
-        var cleaned = hex.trimmed
-        if cleaned.hasPrefix("#") {
-            cleaned.removeFirst()
-        }
-        guard cleaned.count == 6, let rgb = UInt64(cleaned, radix: 16) else { return nil }
+    convenience init(rgb: UInt32, isDark: Bool) {
         var r = CGFloat((rgb >> 16) & 0xFF) / 255.0
         var g = CGFloat((rgb >> 8) & 0xFF) / 255.0
         var b = CGFloat(rgb & 0xFF) / 255.0

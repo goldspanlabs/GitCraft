@@ -194,9 +194,7 @@ fn highlight_colors_known_extension_and_covers_whole_text() {
     let spans = session.highlight(text, "rs");
 
     assert!(!spans.is_empty());
-    assert!(spans
-        .iter()
-        .all(|s| s.foreground.starts_with('#') && s.foreground.len() == 7));
+    assert!(spans.iter().all(|s| s.foreground <= 0xFF_FFFF));
 
     // Tokens should tile the entire input in UTF-16 code units.
     let covered: u32 = spans.iter().map(|s| s.len_utf16).sum();

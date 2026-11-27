@@ -75,7 +75,7 @@ dictionary GraphEdge {
 dictionary StyleSpan {
   u32 start_utf16;
   u32 len_utf16;
-  string foreground;
+  u32 foreground;
 };
 
 dictionary DiffRow {
