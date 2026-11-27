@@ -219,8 +219,10 @@ fn graph_walk(
         CommitSort::Topological => {
             // Like `git log --topo-order`: a parent never appears before its children and
             // commits of one line of history are not interleaved with another's.
+            let commit_graph = repo.commit_graph_if_enabled().ok().flatten();
             let topo =
                 gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(hidden))
+                    .with_commit_graph(commit_graph)
                     .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
                     .parents(gix::traverse::commit::Parents::All)
                     .build()

@@ -20,6 +20,34 @@ extension RepoTab {
         return try session.getCommitGraph(offset: offset, limit: limit, searchQuery: query)
     }
 
+    /// Fetches up to `totalLimit` commits in bounded UniFFI chunks so refreshing a deeply
+    /// scrolled history doesn't serialize tens of thousands of rows in one buffer.
+    nonisolated static func graphPages(
+        _ session: RepoSession,
+        scoped: Bool,
+        totalLimit: UInt32,
+        query: String?
+    ) throws -> [CommitRow] {
+        let chunkSize: UInt32 = 2_000
+        if totalLimit <= chunkSize {
+            return try graphPage(session, scoped: scoped, offset: 0, limit: totalLimit, query: query)
+        }
+        var rows: [CommitRow] = []
+        rows.reserveCapacity(Int(totalLimit))
+        var offset: UInt32 = 0
+        while offset < totalLimit {
+            let remaining = totalLimit - offset
+            let request = min(chunkSize, remaining)
+            let page = try graphPage(session, scoped: scoped, offset: offset, limit: request, query: query)
+            rows.append(contentsOf: page)
+            if page.count < Int(request) {
+                break
+            }
+            offset += UInt32(page.count)
+        }
+        return rows
+    }
+
     /// Hides git's plumbing header lines (`index`, `---`, `+++`, mode lines). When the diff
     /// spans several files, each file's `diff --git` line is kept as a plain file name so
     /// the files stay distinguishable; a single-file diff needs no header at all.

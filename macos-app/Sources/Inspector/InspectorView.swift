@@ -283,6 +283,7 @@ private struct WorkingChangesInspectorView: View {
                 badgeText: tab.selectedFilePath == nil ? nil : (tab.selectedFileStaged ? "Staged" : "Unstaged"),
                 badgeColor: tab.selectedFileStaged ? .green : .orange,
                 diffRows: tab.diffRows,
+                diffRevision: tab.diffRevision,
                 emptyMessage: tab.totalChangesCount == 0
                     ? "Working tree is clean"
                     : "Select a changed file to inspect its diff",
@@ -517,6 +518,7 @@ struct DiffPaneContainer: View {
     let badgeText: String?
     let badgeColor: Color
     let diffRows: [DiffRow]
+    var diffRevision: UUID? = nil
     let emptyMessage: String
     var canPreviewMarkdown: Bool = false
     var isMarkdownPreview: Bool = false
@@ -565,7 +567,7 @@ struct DiffPaneContainer: View {
             } else if diffRows.isEmpty {
                 EmptyDiffView(message: emptyMessage)
             } else {
-                DiffTableView(rows: diffRows)
+                DiffTableView(rows: diffRows, revision: diffRevision)
             }
         }
     }

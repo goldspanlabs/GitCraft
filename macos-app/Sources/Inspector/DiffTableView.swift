@@ -3,9 +3,10 @@ import SwiftUI
 
 struct DiffTableView: NSViewRepresentable {
     let rows: [DiffRow]
+    var revision: UUID? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(rows: rows)
+        Coordinator(rows: rows, revision: revision)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -49,11 +50,16 @@ struct DiffTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let table = scrollView.documentView as? NSTableView else { return }
-        // Compare every row: an edit in the middle of a hunk keeps the count and the first and
-        // last rows, and a partial check would leave the visible cells showing the old text.
-        let changed = context.coordinator.rows != rows
+        let changed: Bool
+        if let revision {
+            changed = context.coordinator.lastRevision != revision
+        } else {
+            // Fallback when no revision token is supplied (e.g. direct unit-test construction).
+            changed = context.coordinator.rows != rows
+        }
 
         if changed {
+            context.coordinator.lastRevision = revision
             context.coordinator.rows = rows
         }
         context.coordinator.updateColumnWidth(scrollView: scrollView, table: table)
@@ -63,6 +69,7 @@ struct DiffTableView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var lastRevision: UUID?
         var rows: [DiffRow] {
             didSet { longestLine = Self.longestLine(in: rows) }
         }
@@ -74,7 +81,8 @@ struct DiffTableView: NSViewRepresentable {
         private var visibleWidth: CGFloat = 0
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("DiffRowCell")
 
-        init(rows: [DiffRow]) {
+        init(rows: [DiffRow], revision: UUID? = nil) {
+            self.lastRevision = revision
             self.rows = rows
             self.longestLine = Self.longestLine(in: rows)
         }

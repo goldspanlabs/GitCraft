@@ -88,7 +88,10 @@ final class RepoTab: ObservableObject, Identifiable {
     /// Counts squash checks, so an older answer can't replace a newer one.
     var squashCheckGeneration = 0
     @Published var commitDetail: CommitDetail?
-    @Published var diffRows: [DiffRow] = []
+    @Published var diffRows: [DiffRow] = [] {
+        didSet { diffRevision = UUID() }
+    }
+    private(set) var diffRevision = UUID()
     @Published var selectedFilePath: String?
     @Published var selectedFileStaged = false
     @Published var isMarkdownPreview = false
@@ -768,7 +771,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 async let stashesTask = Task.detached { try session.listStashes() }.value
                 async let remotesTask = Task.detached { try session.listRemotes() }.value
                 async let graphTask = Task.detached {
-                    try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: query)
+                    try RepoTab.graphPages(session, scoped: scoped, totalLimit: limit, query: query)
                 }.value
 
                 // The history goes up as soon as it is ready. The sidebar lists and status can
