@@ -30,11 +30,8 @@ impl RepoSession {
                 args.push(t.as_str());
             }
             git_cli::mutate(&self.path, &args)?;
-
             if push_to_remote {
-                let remote = resolve_default_remote(&self.path);
-                let refspec = format!("refs/tags/{trimmed_name}");
-                git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
+                self.push_refspec(&format!("refs/tags/{trimmed_name}"))?;
             }
             Ok(())
         })
@@ -45,9 +42,7 @@ impl RepoSession {
         self.with_mutation_lock(|| {
             git_cli::mutate(&self.path, &["tag", "-d", &tag_name])?;
             if delete_remote {
-                let remote = resolve_default_remote(&self.path);
-                let refspec = format!(":refs/tags/{tag_name}");
-                git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
+                self.push_refspec(&format!(":refs/tags/{tag_name}"))?;
             }
             Ok(())
         })
@@ -55,12 +50,14 @@ impl RepoSession {
 
     pub fn push_tag(&self, tag_name: String) -> Result<(), GitCraftError> {
         let tag_name = validate_ref_arg(&tag_name)?;
-        self.with_mutation_lock(|| {
-            let remote = resolve_default_remote(&self.path);
-            let refspec = format!("refs/tags/{tag_name}");
-            git_cli::mutate(&self.path, &["push", &remote, &refspec])?;
-            Ok(())
-        })
+        self.with_mutation_lock(|| self.push_refspec(&format!("refs/tags/{tag_name}")))
+    }
+
+    /// Pushes `refspec` (`:<ref>` deletes it) to the default remote. Call it while holding
+    /// the mutation lock.
+    fn push_refspec(&self, refspec: &str) -> Result<(), GitCraftError> {
+        let remote = resolve_default_remote(&self.path);
+        git_cli::mutate(&self.path, &["push", &remote, refspec])
     }
 
     pub fn list_stashes(&self) -> Result<Vec<StashInfo>, GitCraftError> {

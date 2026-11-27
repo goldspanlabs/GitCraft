@@ -87,28 +87,28 @@ extension RepoTab {
         let limit = pageSize
         let scoped = scopeToCurrentBranch
 
+        // A newer search, scope change or checkout switch replaces this one's results.
+        let isCurrent = {
+            self.session === session
+                && requestGeneration == self.graphGeneration
+                && self.activeSearchQuery == q
+                && self.scopeToCurrentBranch == scoped
+        }
+
         Task {
             defer { pendingSearchReplacements -= 1 }
             do {
                 let graphRows = try await Task.detached {
                     try RepoTab.graphPage(session, scoped: scoped, offset: 0, limit: limit, query: q)
                 }.value
-                guard self.session === session,
-                      requestGeneration == graphGeneration,
-                      activeSearchQuery == q,
-                      scopeToCurrentBranch == scoped
-                else { return }
+                guard isCurrent() else { return }
                 graphGeneration += 1
                 commits = graphRows
                 graphRevision = UUID()
                 hasMoreCommits = graphRows.count >= Int(limit)
                 historyState = .loaded
             } catch {
-                guard self.session === session,
-                      requestGeneration == graphGeneration,
-                      activeSearchQuery == q,
-                      scopeToCurrentBranch == scoped
-                else { return }
+                guard isCurrent() else { return }
                 showError(error)
             }
         }
@@ -284,68 +284,41 @@ extension RepoTab {
     }
 
     private func loadWorkingDiff(path: String, staged: Bool) {
-        let session = self.session
-        Task {
-            do {
-                let rows = try await Task.detached {
-                    try session.getWorkingDiff(path: path, staged: staged)
-                }.value
-                guard self.session === session else { return }
-                if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
-                    publish(Self.displayRows(rows), to: \.diffRows)
-                }
-            } catch {
-                guard self.session === session else { return }
-                showError(error)
+        loadInBackground({ try $0.getWorkingDiff(path: path, staged: staged) }, apply: { [self] rows in
+            if selectedCommit == nil && selectedFilePath == path && selectedFileStaged == staged {
+                publish(Self.displayRows(rows), to: \.diffRows)
             }
-        }
+        })
     }
 
     private func loadCommitDetails(_ commit: CommitRow) {
-        let session = self.session
         let oid = commit.oidHex
-        Task {
-            do {
-                let detail = try await Task.detached {
-                    try session.getCommitDetail(oidHex: oid)
-                }.value
-                guard self.session === session, selectedCommit?.oidHex == oid else { return }
-                commitDetail = detail
-                let firstPath = detail.files.first?.path
-                selectedFilePath = firstPath
-                loadCommitDiff(oidHex: oid, path: firstPath)
-            } catch {
-                guard self.session === session else { return }
-                if loadedDetailOid == oid { loadedDetailOid = nil }
-                showError(error)
-            }
-        }
+        loadInBackground({ try $0.getCommitDetail(oidHex: oid) }, apply: { [self] detail in
+            guard selectedCommit?.oidHex == oid else { return }
+            commitDetail = detail
+            let firstPath = detail.files.first?.path
+            selectedFilePath = firstPath
+            loadCommitDiff(oidHex: oid, path: firstPath)
+        }, onFailure: { [self] _ in
+            if loadedDetailOid == oid { loadedDetailOid = nil }
+        })
     }
 
     private func loadCommitDiff(oidHex: String, path: String?) {
-        let session = self.session
-        Task {
-            do {
-                let rows = try await Task.detached {
-                    try session.getCommitDiff(oidHex: oidHex, path: path)
-                }.value
-                guard self.session === session else { return }
-                if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
-                    diffRows = Self.displayRows(rows)
-                }
-            } catch {
-                guard self.session === session else { return }
-                // Only react if this request is still the current one (same commit and file);
-                // a late failure for a file the user already moved off must not wipe the
-                // newer file's diff.
-                if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
-                    // Don't leave the previous diff showing, and let re-selecting
-                    // this commit retry the load.
-                    diffRows = []
-                    loadedDetailOid = nil
-                }
-                showError(error)
+        loadInBackground({ try $0.getCommitDiff(oidHex: oidHex, path: path) }, apply: { [self] rows in
+            if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                diffRows = Self.displayRows(rows)
             }
-        }
+        }, onFailure: { [self] _ in
+            // Only react if this request is still the current one (same commit and file);
+            // a late failure for a file the user already moved off must not wipe the
+            // newer file's diff.
+            if selectedCommit?.oidHex == oidHex && selectedFilePath == path {
+                // Don't leave the previous diff showing, and let re-selecting
+                // this commit retry the load.
+                diffRows = []
+                loadedDetailOid = nil
+            }
+        })
     }
 }

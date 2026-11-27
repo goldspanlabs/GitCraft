@@ -77,8 +77,7 @@ impl RepoSession {
         }
         // No mutation lock: fetch only updates remote-tracking refs (git locks those itself) and
         // can run for minutes, which must not hold up staging or committing.
-        git_cli::mutate(&self.path, &args)?;
-        Ok(())
+        git_cli::mutate(&self.path, &args)
     }
 
     pub fn fetch_remote(&self, name: String, include_tags: bool) -> Result<(), GitCraftError> {
@@ -93,27 +92,16 @@ impl RepoSession {
     pub fn pull(&self, strategy: PullStrategy) -> Result<(), GitCraftError> {
         self.with_mutation_lock(|| match strategy {
             PullStrategy::GitConfig => match git_cli::mutate(&self.path, &["pull"]) {
-                Ok(()) => Ok(()),
                 // With no pull.rebase/pull.ff configured, git refuses diverged pulls. Fall
                 // back to a merge, which is what git did before it started asking.
                 Err(e) if e.to_string().contains("divergent branches") => {
-                    git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
-                    Ok(())
+                    git_cli::mutate(&self.path, &["pull", "--no-rebase"])
                 }
-                Err(e) => Err(e),
+                result => result,
             },
-            PullStrategy::Merge => {
-                git_cli::mutate(&self.path, &["pull", "--no-rebase"])?;
-                Ok(())
-            }
-            PullStrategy::Rebase => {
-                git_cli::mutate(&self.path, &["pull", "--rebase"])?;
-                Ok(())
-            }
-            PullStrategy::FastForwardOnly => {
-                git_cli::mutate(&self.path, &["pull", "--ff-only"])?;
-                Ok(())
-            }
+            PullStrategy::Merge => git_cli::mutate(&self.path, &["pull", "--no-rebase"]),
+            PullStrategy::Rebase => git_cli::mutate(&self.path, &["pull", "--rebase"]),
+            PullStrategy::FastForwardOnly => git_cli::mutate(&self.path, &["pull", "--ff-only"]),
         })
     }
 
@@ -125,7 +113,7 @@ impl RepoSession {
             )
             .is_ok();
             if has_upstream {
-                git_cli::mutate(&self.path, &["push"])?;
+                git_cli::mutate(&self.path, &["push"])
             } else {
                 // First push of this branch: publish it and set its upstream.
                 let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
@@ -136,9 +124,8 @@ impl RepoSession {
                         GitCraftError::message("HEAD is detached; check out a branch to push")
                     })?;
                 let remote = resolve_default_remote(&self.path);
-                git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])?;
+                git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])
             }
-            Ok(())
         })
     }
 }

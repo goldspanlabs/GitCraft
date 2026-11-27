@@ -1,6 +1,8 @@
 use crate::{
     git_cli,
-    validation::{format_ref_display, ref_exists, validate_ref_arg, validate_remote_arg},
+    validation::{
+        format_ref_display, ref_exists, resolve_commit, validate_ref_arg, validate_remote_arg,
+    },
     worktree, GitCraftError, MergeType, RepoSession, ResetMode,
 };
 
@@ -16,15 +18,13 @@ impl RepoSession {
                 let local_name = branch_name
                     .split_once('/')
                     .map_or(branch_name.as_str(), |(_, n)| n);
-                if ref_exists(&self.path, &format!("refs/heads/{local_name}")) {
-                    git_cli::mutate(&self.path, &["checkout", local_name, "--"])?;
+                return if ref_exists(&self.path, &format!("refs/heads/{local_name}")) {
+                    git_cli::mutate(&self.path, &["checkout", local_name, "--"])
                 } else {
-                    git_cli::mutate(&self.path, &["checkout", "--track", &branch_name])?;
-                }
-                return Ok(());
+                    git_cli::mutate(&self.path, &["checkout", "--track", &branch_name])
+                };
             }
-            git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])?;
-            Ok(())
+            git_cli::mutate(&self.path, &["checkout", &branch_name, "--"])
         })
     }
 
@@ -71,13 +71,9 @@ impl RepoSession {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {
             let local_ref = format!("refs/heads/{branch_name}");
-            let local_oid = git_cli::run(
-                &self.path,
-                &["rev-parse", "--verify", &format!("{local_ref}^{{commit}}")],
-            )
-            .map_err(|_| GitCraftError::message(format!("Branch '{branch_name}' does not exist")))?
-            .trim()
-            .to_owned();
+            let local_oid = resolve_commit(&self.path, &local_ref).map_err(|_| {
+                GitCraftError::message(format!("Branch '{branch_name}' does not exist"))
+            })?;
 
             // Moving a branch that is checked out anywhere would desync that worktree's
             // index and working tree from its HEAD.
@@ -115,17 +111,8 @@ impl RepoSession {
                 ))
             })?;
 
-            let upstream_oid = git_cli::run(
-                &self.path,
-                &[
-                    "rev-parse",
-                    "--verify",
-                    &format!("{upstream_ref}^{{commit}}"),
-                ],
-            )
-            .map_err(|e| GitCraftError::message(e.to_string()))?
-            .trim()
-            .to_owned();
+            let upstream_oid = resolve_commit(&self.path, &upstream_ref)
+                .map_err(|e| GitCraftError::message(e.to_string()))?;
 
             if local_oid == upstream_oid {
                 return Err(GitCraftError::warning(format!(
@@ -158,8 +145,7 @@ impl RepoSession {
                     &upstream_oid,
                     &local_oid,
                 ],
-            )?;
-            Ok(())
+            )
         })
     }
 
@@ -168,7 +154,7 @@ impl RepoSession {
     }
 
     pub fn abort_merge(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["merge", "--abort"])
+        self.abort_op("merge")
     }
 
     /// Merges `commit` into the checked-out branch, joined as `merge_type` says.
@@ -196,8 +182,7 @@ impl RepoSession {
                 MergeType::Squash => args.push("--squash"),
             }
             args.push(commit.as_str());
-            git_cli::mutate(&self.path, &args)?;
-            Ok(())
+            git_cli::mutate(&self.path, &args)
         })
     }
 
@@ -247,13 +232,13 @@ impl RepoSession {
     }
 
     pub fn abort_rebase(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["rebase", "--abort"])
+        self.abort_op("rebase")
     }
 
     /// Continues a stopped rebase after conflicts were resolved and staged. The editor is
     /// disabled so git keeps the existing commit message instead of waiting on one.
     pub fn continue_rebase(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["-c", "core.editor=true", "rebase", "--continue"])
+        self.continue_op("rebase")
     }
 
     /// Moves the checked-out branch to `commit`, as `git reset --<mode>`.
@@ -282,23 +267,34 @@ impl RepoSession {
     /// Stops a cherry-pick that stopped on a conflict, putting the branch and working tree
     /// back as they were before it started.
     pub fn abort_cherry_pick(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["cherry-pick", "--abort"])
+        self.abort_op("cherry-pick")
     }
 
     /// Commits a stopped cherry-pick once its conflicts are resolved and staged, keeping the
     /// original commit's message. The editor is skipped, as there is no terminal.
     pub fn continue_cherry_pick(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["-c", "core.editor=true", "cherry-pick", "--continue"])
+        self.continue_op("cherry-pick")
     }
 
     /// Stops a revert that stopped on a conflict, putting the branch and working tree back.
     pub fn abort_revert(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["revert", "--abort"])
+        self.abort_op("revert")
     }
 
     /// Commits a stopped revert once its conflicts are resolved and staged, keeping git's
     /// default message.
     pub fn continue_revert(&self) -> Result<(), GitCraftError> {
-        self.mutate(&["-c", "core.editor=true", "revert", "--continue"])
+        self.continue_op("revert")
+    }
+
+    /// Stops the merge, rebase, cherry-pick or revert `op` that stopped on a conflict.
+    fn abort_op(&self, op: &str) -> Result<(), GitCraftError> {
+        self.mutate(&[op, "--abort"])
+    }
+
+    /// Continues the stopped `op` once its conflicts are resolved and staged. The editor is
+    /// disabled, as there is no terminal, so git keeps the message it would have offered.
+    fn continue_op(&self, op: &str) -> Result<(), GitCraftError> {
+        self.mutate(&["-c", "core.editor=true", op, "--continue"])
     }
 }

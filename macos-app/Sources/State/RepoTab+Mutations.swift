@@ -137,12 +137,12 @@ extension RepoTab {
         // Amending a commit that is already on the remote would make the push a non-fast-forward,
         // so it is left for the person to push by hand. Asking walks history, so it happens in
         // the background work (before the amend moves HEAD), not on the main thread.
-        let pushedCheck = PushedCheck()
+        let headWasPushed = SendableBox(false)
 
         // One mutation, so staging and committing happen together and the UI sees a single step.
         performMutation { session in
             if amend {
-                pushedCheck.headWasPushed = (try? session.headIsPushed()) ?? false
+                headWasPushed.value = (try? session.headIsPushed()) ?? false
             }
             if autoStage {
                 try session.stageAll()
@@ -154,7 +154,7 @@ extension RepoTab {
             self?.amendCommit = false
             self?.skipHooks = false
             if pushAfter {
-                if pushedCheck.headWasPushed {
+                if headWasPushed.value {
                     self?.toast = Toast(
                         message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
                     )
@@ -344,13 +344,12 @@ extension RepoTab {
     func createTag(name: String, target: String?, message: String?, pushToRemote: Bool) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let msg = message?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalMsg = (msg?.isEmpty == false) ? msg : nil
+        // The core trims the message and treats a blank one as none.
         performMutation {
             try $0.createTag(
                 tagName: trimmed,
                 target: target,
-                message: finalMsg,
+                message: message,
                 pushToRemote: pushToRemote
             )
         }
@@ -365,9 +364,8 @@ extension RepoTab {
     }
 
     func stashPush(message: String?, includeUntracked: Bool) {
-        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let msg = (trimmed?.isEmpty == false) ? trimmed : nil
-        performMutation { try $0.stashPush(message: msg, includeUntracked: includeUntracked) }
+        // The core trims the message and treats a blank one as none.
+        performMutation { try $0.stashPush(message: message, includeUntracked: includeUntracked) }
     }
 
     func stashApply(_ index: UInt32) {
@@ -404,15 +402,12 @@ extension RepoTab {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
         let resolvedPath = Self.resolvePath(trimmedPath, relativeTo: activeCheckoutPath)
-        let trimmedBranch = branchName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalBranch = (trimmedBranch?.isEmpty == false) ? trimmedBranch : nil
-        let trimmedStart = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalStart = (trimmedStart?.isEmpty == false) ? trimmedStart : nil
+        // The core trims the branch and start point and treats blank ones as none.
         performMutation({ session in
             try session.addWorktree(
                 path: resolvedPath,
-                branchName: finalBranch,
-                startPoint: finalStart,
+                branchName: branchName,
+                startPoint: startPoint,
                 detach: detach
             )
         }, onSuccess: { [weak self] in
@@ -437,7 +432,7 @@ extension RepoTab {
                 + "of this repository is available to switch to."
             return
         }
-        let prepared = PreparedSession()
+        let prepared = SendableBox<RepoSession?>(nil)
         performMutation({ session in
             if wasActive, let fallback {
                 // Opening runs `git worktree list`, so it stays off the main actor. The fallback
@@ -453,7 +448,7 @@ extension RepoTab {
                             + "a checkout of this repository to switch to."
                     )
                 }
-                prepared.session = next
+                prepared.value = next
             }
             try session.removeWorktree(path: canonical, force: force)
         }, onSuccess: { [weak self] in
@@ -461,7 +456,7 @@ extension RepoTab {
             if self.repoPath == canonical, let fallback {
                 self.repoPath = fallback
             }
-            if let fallback, let next = prepared.session {
+            if let fallback, let next = prepared.value {
                 self.switchCheckout(to: fallback, using: next)
             }
         }, onFailure: { [weak self] error in
@@ -497,16 +492,13 @@ extension RepoTab {
     }
 }
 
-/// Carries the fallback session opened in a removal's background work back to the main actor.
-/// It is written once, before the work finishes, and read only after `performMutation` has
-/// awaited that work, so the unchecked `Sendable` is safe.
-private final class PreparedSession: @unchecked Sendable {
-    var session: RepoSession?
-}
+/// Carries a value from a mutation's background work back to the main actor. It is written
+/// before the work finishes and read only after `performMutation` has awaited that work, so the
+/// unchecked `Sendable` is safe.
+private final class SendableBox<Value>: @unchecked Sendable {
+    var value: Value
 
-/// Carries whether HEAD was already pushed from a mutation's background work back to the main
-/// actor. Written once before the commit runs and read only after `performMutation` has awaited
-/// that work, so the unchecked `Sendable` is safe.
-private final class PushedCheck: @unchecked Sendable {
-    var headWasPushed = false
+    init(_ value: Value) {
+        self.value = value
+    }
 }

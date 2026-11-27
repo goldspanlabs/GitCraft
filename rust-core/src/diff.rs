@@ -1,6 +1,6 @@
 use std::{io, path::Path};
 
-use crate::{git_cli, highlight, DiffRow};
+use crate::{git_cli, highlight, validation::is_tracked, DiffRow};
 
 pub fn working_tree(repo: &Path) -> Result<Vec<DiffRow>, crate::GitCraftError> {
     working_tree_file(repo, None, false)
@@ -26,55 +26,55 @@ pub fn working_tree_file(
         args.push(p);
     }
     let raw = git_cli::run(repo, &args)?;
-    let ext = path.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
+    let ext = path.and_then(file_ext);
 
     // An empty unstaged diff only means "untracked" if git doesn't know the
     // path. A tracked file with no unstaged changes must yield no rows.
     if raw.trim().is_empty() && !staged {
-        if let Some(rel_path) = path {
-            let is_tracked = git_cli::run(
-                repo,
-                &[
-                    "--literal-pathspecs",
-                    "ls-files",
-                    "--error-unmatch",
-                    "--",
-                    rel_path,
-                ],
-            )
-            .is_ok();
-            let full_path = repo.join(rel_path);
-            if !is_tracked && full_path.is_file() {
-                if let Ok(bytes) = std::fs::read(&full_path) {
-                    if bytes.len() > 256 * 1024 || bytes.contains(&0) {
-                        return Ok(vec![DiffRow::meta(
-                            "hunk",
-                            format!("Binary or large file ({} bytes)", bytes.len()),
-                        )]);
-                    }
-                    let text = String::from_utf8_lossy(&bytes);
-                    let mut rows = vec![DiffRow::meta(
-                        "hunk",
-                        format!("@@ -0,0 +1,{} @@ (untracked)", text.lines().count()),
-                    )];
-                    let mut hl = ext.map(highlight::LineHighlighter::new);
-                    for (idx, line) in text.lines().enumerate() {
-                        let spans = highlight_code(line, hl.as_mut());
-                        rows.push(DiffRow {
-                            kind: "addition".into(),
-                            text: format!("+{line}"),
-                            old_line: None,
-                            new_line: Some((idx + 1) as u32),
-                            spans,
-                        });
-                    }
-                    return Ok(rows);
-                }
-            }
+        if let Some(rows) = path.and_then(|rel_path| untracked_file_rows(repo, rel_path, ext)) {
+            return Ok(rows);
         }
     }
 
     Ok(parse_with_ext(&raw, ext)?)
+}
+
+/// The extension of `path`, such as `rs`, used to pick a syntax highlighter.
+fn file_ext(path: &str) -> Option<&str> {
+    Path::new(path).extension().and_then(|e| e.to_str())
+}
+
+/// Shows an untracked file as one hunk that adds every line, or `None` when `rel_path` is
+/// tracked, not a regular file, or can't be read.
+fn untracked_file_rows(repo: &Path, rel_path: &str, ext: Option<&str>) -> Option<Vec<DiffRow>> {
+    let full_path = repo.join(rel_path);
+    if is_tracked(repo, rel_path) || !full_path.is_file() {
+        return None;
+    }
+    let bytes = std::fs::read(&full_path).ok()?;
+    if bytes.len() > 256 * 1024 || bytes.contains(&0) {
+        return Some(vec![DiffRow::meta(
+            "hunk",
+            format!("Binary or large file ({} bytes)", bytes.len()),
+        )]);
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut rows = vec![DiffRow::meta(
+        "hunk",
+        format!("@@ -0,0 +1,{} @@ (untracked)", text.lines().count()),
+    )];
+    let mut hl = ext.map(highlight::LineHighlighter::new);
+    for (idx, line) in text.lines().enumerate() {
+        let spans = highlight_code(line, hl.as_mut());
+        rows.push(DiffRow {
+            kind: "addition".into(),
+            text: format!("+{line}"),
+            old_line: None,
+            new_line: Some((idx + 1) as u32),
+            spans,
+        });
+    }
+    Some(rows)
 }
 
 pub fn commit_diff(
@@ -100,7 +100,7 @@ pub fn commit_diff(
         args.push(p);
     }
     let raw = git_cli::run(repo, &args)?;
-    let ext = path.and_then(|p| Path::new(p).extension().and_then(|e| e.to_str()));
+    let ext = path.and_then(file_ext);
     Ok(parse_with_ext(&raw, ext)?)
 }
 
@@ -137,8 +137,7 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
             break;
         }
         if let Some(file_path) = line.strip_prefix("+++ b/").filter(|_| !in_hunk) {
-            let ext = Path::new(file_path).extension().and_then(|e| e.to_str());
-            highlighter = ext.map(highlight::LineHighlighter::new);
+            highlighter = file_ext(file_path).map(highlight::LineHighlighter::new);
             rows.push(DiffRow::meta("header", line));
             continue;
         }

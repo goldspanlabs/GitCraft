@@ -2,7 +2,7 @@ use std::io;
 
 use crate::{
     diff, git_cli,
-    validation::{has_head, ignore_rule},
+    validation::{has_head, ignore_rule, is_tracked},
     DiffRow, GitCraftError, RepoSession,
 };
 
@@ -21,15 +21,14 @@ impl RepoSession {
                 git_cli::mutate(
                     &self.path,
                     &["--literal-pathspecs", "reset", "HEAD", "--", &path],
-                )?;
+                )
             } else {
                 // No commits yet: there is no HEAD to reset to, so drop the entry from the index.
                 git_cli::mutate(
                     &self.path,
                     &["--literal-pathspecs", "rm", "--cached", "--", &path],
-                )?;
+                )
             }
-            Ok(())
         })
     }
 
@@ -40,11 +39,10 @@ impl RepoSession {
     pub fn unstage_all(&self) -> Result<(), GitCraftError> {
         self.with_mutation_lock(|| {
             if has_head(&self.path) {
-                git_cli::mutate(&self.path, &["reset", "HEAD"])?;
+                git_cli::mutate(&self.path, &["reset", "HEAD"])
             } else {
-                git_cli::mutate(&self.path, &["rm", "--cached", "-r", "--", "."])?;
+                git_cli::mutate(&self.path, &["rm", "--cached", "-r", "--", "."])
             }
-            Ok(())
         })
     }
 
@@ -53,29 +51,17 @@ impl RepoSession {
             // Tracked paths are restored with checkout and its error is reported. Only a path git
             // does not know is cleaned; falling back to `clean` on any checkout failure would
             // silently do nothing for a tracked file and still report success.
-            let is_tracked = git_cli::run(
-                &self.path,
-                &[
-                    "--literal-pathspecs",
-                    "ls-files",
-                    "--error-unmatch",
-                    "--",
-                    &path,
-                ],
-            )
-            .is_ok();
-            if is_tracked {
+            if is_tracked(&self.path, &path) {
                 git_cli::mutate(
                     &self.path,
                     &["--literal-pathspecs", "checkout", "--", &path],
-                )?;
+                )
             } else {
                 git_cli::mutate(
                     &self.path,
                     &["--literal-pathspecs", "clean", "-fd", "--", &path],
-                )?;
+                )
             }
-            Ok(())
         })
     }
 
