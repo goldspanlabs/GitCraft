@@ -7,7 +7,7 @@
 **A fast, lean, native Git client for macOS. Free and open source, with no subscription.**
 
 [**Download for macOS**](https://github.com/goldspanlabs/gitcraft/releases/latest)
-&nbsp;·&nbsp; [Features](#features) &nbsp;·&nbsp; [Install](#install) &nbsp;·&nbsp; [Build from source](#build-from-source)
+&nbsp;·&nbsp; [Features](#features) &nbsp;·&nbsp; [Benchmarks](#benchmarks) &nbsp;·&nbsp; [Install](#install) &nbsp;·&nbsp; [Build from source](#build-from-source)
 
 [![Latest release](https://img.shields.io/github/v/release/goldspanlabs/gitcraft?label=release)](https://github.com/goldspanlabs/gitcraft/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -30,6 +30,25 @@
 - **Uses your existing setup.** GitCraft works with your system `git` config and SSH keys.
   There's no account to create and nothing to sign in to.
 - **Open source.** Read the code, file an issue, or send a pull request.
+
+## Features
+
+- **Undo & Redo for history actions:** Take back or redo resets, cherry-picks, and reverts (`⌘Z` / `⇧⌘Z`) with safety checks if the repository moved on.
+- **First-class Git worktrees:** Create, lock, prune, and switch between linked worktrees with live dirty counts across sibling checkouts.
+- **Instant, scoped commit graph:** Loads the graph first on large repos, supports date or topological sorting, branch-only scoping (`⇧⌘A`), and full-history search.
+- **Pre-merge conflict prediction:** Checks whether a branch or commit will conflict before you commit to a merge.
+- **Native macOS ergonomics:** Multi-tab windows, familiar macOS keyboard shortcuts, collapsible/maximizable diff pane, commit file trees, live file-system watching, and optional background auto-fetch.
+
+## Benchmarks
+
+GitCraft's Rust core (`gitcraft-core`) runs repository reads, graph layout, and syntax highlighting off the main thread. On a **65,020-commit** repository (1,000 tracked files, 21 branches):
+
+- **278 µs** to open the repository
+- **2.71 ms** for the initial 500-row commit graph (cold, with lane layout) — 3× faster than `git log --all -n 500` (8.45 ms), and **438 µs** for cached pages
+- **348 µs** to list 21 branches with batched ahead/behind counts
+- **146.5 MB** peak core RSS even with 50,000 commit rows cached (**128 ms** deep scroll)
+
+*Median release-build timings measured on macOS 27.2.1 (Apple M5, `git` 2.54.0, `rustc` 1.94.0); peak RSS reflects `gitcraft-core` only.*
 
 ## Install
 
