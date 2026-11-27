@@ -1927,3 +1927,47 @@ fn file_versions_return_before_and_after_for_working_and_commit_diffs() {
     assert_eq!(unstaged_pair.old_content.as_deref(), Some("v3-staged\n"));
     assert_eq!(unstaged_pair.new_content.as_deref(), Some("v4-unstaged\n"));
 }
+
+#[test]
+fn repo_asset_reads_from_matching_commit_index_or_working_tree() {
+    let dir = init_repo_with_commit();
+    let session = open(dir.path());
+
+    fs::create_dir_all(dir.path().join("assets")).unwrap();
+    write(dir.path(), "assets/logo.png", "v1-bytes");
+    run_git(dir.path(), &["add", "assets/logo.png"]);
+    run_git(dir.path(), &["commit", "-m", "add logo"]);
+    let v1_oid = rev(dir.path(), "HEAD");
+
+    write(dir.path(), "assets/logo.png", "v2-staged");
+    session.stage("assets/logo.png".into()).unwrap();
+    write(dir.path(), "assets/logo.png", "v3-working");
+
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), Some(v1_oid), false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v1-bytes".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, true)
+            .unwrap()
+            .as_deref(),
+        Some(b"v2-staged".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/logo.png".into(), None, false)
+            .unwrap()
+            .as_deref(),
+        Some(b"v3-working".as_slice())
+    );
+    assert_eq!(
+        session
+            .get_repo_asset("assets/missing.png".into(), None, false)
+            .unwrap(),
+        None
+    );
+}

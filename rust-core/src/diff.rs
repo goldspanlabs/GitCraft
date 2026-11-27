@@ -283,6 +283,83 @@ fn odb_blob_text(
     Ok(Some(String::from_utf8_lossy(&obj.data).into_owned()))
 }
 
+/// Maximum asset size (16 MiB) allowed when loading images/assets in Markdown preview.
+const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reads raw asset bytes from the matching diff side (commit tree, staged index, or working tree)
+/// with symlink containment and a size cap.
+pub fn read_repo_asset(
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    path: &str,
+    commit_oid: Option<&str>,
+    staged: bool,
+) -> Result<Option<Vec<u8>>, crate::GitCraftError> {
+    if let Some(oid_hex) = commit_oid {
+        let oid = gix::ObjectId::from_hex(oid_hex.as_bytes())
+            .map_err(crate::GitCraftError::from_display)?;
+        let repo = sync_repo.to_thread_local();
+        let Ok(commit) = repo.find_commit(oid) else {
+            return Ok(None);
+        };
+        let Ok(tree) = commit.tree() else {
+            return Ok(None);
+        };
+        let Ok(Some(entry)) = tree.lookup_entry_by_path(path) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.oid().into());
+    }
+
+    if staged {
+        let repo = sync_repo.to_thread_local();
+        let Ok(index) = repo.index() else {
+            return Ok(None);
+        };
+        let Some(entry) = index.entry_by_path(path.into()) else {
+            return Ok(None);
+        };
+        return odb_blob_bytes(&repo, entry.id);
+    }
+
+    let Ok(canonical_root) = std::fs::canonicalize(repo_path) else {
+        return Ok(None);
+    };
+    let Ok(canonical_file) = std::fs::canonicalize(repo_path.join(path)) else {
+        return Ok(None);
+    };
+    if !canonical_file.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+    let Ok(meta) = std::fs::metadata(&canonical_file) else {
+        return Ok(None);
+    };
+    if !meta.is_file() || meta.len() as usize > MAX_ASSET_BYTES {
+        return Ok(None);
+    }
+    Ok(Some(std::fs::read(&canonical_file)?))
+}
+
+fn odb_blob_bytes(
+    repo: &gix::Repository,
+    oid: gix::ObjectId,
+) -> Result<Option<Vec<u8>>, crate::GitCraftError> {
+    use gix::prelude::HeaderExt;
+    let Ok(header) = repo.objects.header(oid) else {
+        return Ok(None);
+    };
+    if header.size() > MAX_ASSET_BYTES as u64 {
+        return Ok(None);
+    }
+    let Ok(obj) = repo.find_object(oid) else {
+        return Ok(None);
+    };
+    if obj.kind != gix::object::Kind::Blob {
+        return Ok(None);
+    }
+    Ok(Some(obj.detach().data))
+}
+
 #[cfg(test)]
 pub fn parse(input: &str) -> io::Result<Vec<DiffRow>> {
     parse_with_ext(input, None)

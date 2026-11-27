@@ -247,6 +247,8 @@ struct CommitInspectorView: View {
                 isMarkdownPreview: tab.isMarkdownPreview,
                 markdownPreviewState: tab.markdownPreviewState,
                 repoRootPath: tab.activeCheckoutPath,
+                previewSession: tab.session,
+                previewCommitOid: commit.oidHex,
                 onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
         }

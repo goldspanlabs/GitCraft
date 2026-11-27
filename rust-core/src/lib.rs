@@ -274,6 +274,21 @@ impl RepoSession {
         diff::working_file_content_pair(&self.path, &self.sync_repo, &path, staged)
     }
 
+    pub fn get_repo_asset(
+        &self,
+        path: String,
+        commit_oid: Option<String>,
+        staged: bool,
+    ) -> Result<Option<Vec<u8>>, GitCraftError> {
+        diff::read_repo_asset(
+            &self.path,
+            &self.sync_repo,
+            &path,
+            commit_oid.as_deref(),
+            staged,
+        )
+    }
+
     pub fn list_branches(&self) -> Result<Vec<BranchInfo>, GitCraftError> {
         graph::list_branches(&self.path, &self.sync_repo)
     }

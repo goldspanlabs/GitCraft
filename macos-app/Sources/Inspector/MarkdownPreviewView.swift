@@ -9,9 +9,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let html: String
     let repoRootPath: String?
     let filePath: String?
+    var session: RepoSession? = nil
+    var commitOid: String? = nil
+    var staged: Bool = false
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(repoRootPath: repoRootPath)
+        Coordinator(repoRootPath: repoRootPath, session: session, commitOid: commitOid, staged: staged)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -28,7 +31,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.schemeHandler.setRepoRootPath(repoRootPath)
+        context.coordinator.schemeHandler.update(
+            repoRootPath: repoRootPath,
+            session: session,
+            commitOid: commitOid,
+            staged: staged
+        )
         let baseURL = Self.baseURL(for: filePath)
         guard context.coordinator.loadedHTML != html || context.coordinator.loadedBaseURL != baseURL else {
             return
@@ -41,9 +49,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     private static func baseURL(for filePath: String?) -> URL? {
         guard let root = URL(string: "\(RepoAssetSchemeHandler.scheme)://root/") else { return nil }
         guard let filePath, !filePath.isEmpty else { return root }
-        let dir = (filePath as NSString).deletingLastPathComponent
-        guard !dir.isEmpty, dir != "." else { return root }
-        return root.appendingPathComponent(dir, isDirectory: true)
+        return root.appendingPathComponent(filePath, isDirectory: false)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -51,8 +57,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
         var loadedBaseURL: URL?
         fileprivate let schemeHandler: RepoAssetSchemeHandler
 
-        init(repoRootPath: String?) {
-            self.schemeHandler = RepoAssetSchemeHandler(repoRootPath: repoRootPath)
+        init(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
+            self.schemeHandler = RepoAssetSchemeHandler(
+                repoRootPath: repoRootPath,
+                session: session,
+                commitOid: commitOid,
+                staged: staged
+            )
         }
 
         func webView(
@@ -74,8 +85,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     return
                 }
                 if navigationAction.targetFrame?.isMainFrame == true,
-                   url.scheme == RepoAssetSchemeHandler.scheme,
-                   url.fragment != nil {
+                   let fragment = url.fragment, !fragment.isEmpty,
+                   let base = loadedBaseURL,
+                   Self.strippingFragment(url) == Self.strippingFragment(base) {
                     decisionHandler(.allow)
                     return
                 }
@@ -91,6 +103,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 return
             }
             decisionHandler(.cancel)
+        }
+
+        private static func strippingFragment(_ url: URL) -> String {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                return url.absoluteString
+            }
+            components.fragment = nil
+            return components.string ?? url.absoluteString
         }
     }
 
@@ -248,53 +268,119 @@ struct MarkdownPreviewView: NSViewRepresentable {
 /// without running into file:// origin restrictions.
 fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "gitcraft-repo"
+    private static let maxAssetBytes = 16 * 1024 * 1024
+
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "gitcraft.markdown.assets", qos: .userInitiated)
     private var resolvedRootURL: URL?
     private var resolvedRootPrefix: String = ""
+    private var session: RepoSession?
+    private var commitOid: String?
+    private var staged: Bool = false
+    private var activeTasks = Set<ObjectIdentifier>()
 
-    init(repoRootPath: String?) {
+    init(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
         super.init()
-        setRepoRootPath(repoRootPath)
+        update(repoRootPath: repoRootPath, session: session, commitOid: commitOid, staged: staged)
     }
 
-    func setRepoRootPath(_ path: String?) {
-        let normalized = path.map {
+    func update(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
+        let normalized = repoRootPath.map {
             URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
         }
+        let prefix = normalized.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" } ?? ""
+
+        lock.lock()
         resolvedRootURL = normalized
-        if let normalized {
-            resolvedRootPrefix = normalized.path.hasSuffix("/") ? normalized.path : normalized.path + "/"
-        } else {
-            resolvedRootPrefix = ""
-        }
+        resolvedRootPrefix = prefix
+        self.session = session
+        self.commitOid = commitOid
+        self.staged = staged
+        lock.unlock()
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let rootURL = resolvedRootURL,
-              let requestURL = urlSchemeTask.request.url else {
+        guard let requestURL = urlSchemeTask.request.url else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
+
+        let taskID = ObjectIdentifier(urlSchemeTask)
+        lock.lock()
+        activeTasks.insert(taskID)
+        let currentSession = session
+        let currentCommitOid = commitOid
+        let currentStaged = staged
+        let rootURL = resolvedRootURL
+        let rootPrefix = resolvedRootPrefix
+        lock.unlock()
 
         let relativePath = requestURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let targetURL = rootURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
-        guard targetURL.path.hasPrefix(resolvedRootPrefix),
-              let data = try? Data(contentsOf: targetURL) else {
-            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
-            return
-        }
 
-        let mimeType = UTType(filenameExtension: targetURL.pathExtension)?.preferredMIMEType
-            ?? "application/octet-stream"
-        let response = URLResponse(
-            url: requestURL,
-            mimeType: mimeType,
-            expectedContentLength: data.count,
-            textEncodingName: nil
-        )
-        urlSchemeTask.didReceive(response)
-        urlSchemeTask.didReceive(data)
-        urlSchemeTask.didFinish()
+        queue.async { [weak self] in
+            guard let self else { return }
+            let data: Data?
+            if let currentSession {
+                data = try? currentSession.getRepoAsset(
+                    path: relativePath,
+                    commitOid: currentCommitOid,
+                    staged: currentStaged
+                )
+            } else if let rootURL {
+                data = Self.boundedFileData(
+                    rootURL: rootURL,
+                    rootPrefix: rootPrefix,
+                    relativePath: relativePath
+                )
+            } else {
+                data = nil
+            }
+
+            DispatchQueue.main.async {
+                self.lock.lock()
+                let isActive = self.activeTasks.remove(taskID) != nil
+                self.lock.unlock()
+                guard isActive else { return }
+
+                guard let data else {
+                    urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+                    return
+                }
+                let ext = (relativePath as NSString).pathExtension
+                let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType
+                    ?? "application/octet-stream"
+                let response = URLResponse(
+                    url: requestURL,
+                    mimeType: mimeType,
+                    expectedContentLength: data.count,
+                    textEncodingName: nil
+                )
+                urlSchemeTask.didReceive(response)
+                urlSchemeTask.didReceive(data)
+                urlSchemeTask.didFinish()
+            }
+        }
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        lock.lock()
+        activeTasks.remove(ObjectIdentifier(urlSchemeTask))
+        lock.unlock()
+    }
+
+    private static func boundedFileData(
+        rootURL: URL,
+        rootPrefix: String,
+        relativePath: String
+    ) -> Data? {
+        let targetURL = rootURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+        guard targetURL.path.hasPrefix(rootPrefix),
+              let values = try? targetURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize <= maxAssetBytes else {
+            return nil
+        }
+        return try? Data(contentsOf: targetURL)
+    }
 }

@@ -269,6 +269,8 @@ private struct WorkingChangesInspectorView: View {
                 isMarkdownPreview: tab.isMarkdownPreview,
                 markdownPreviewState: tab.markdownPreviewState,
                 repoRootPath: tab.activeCheckoutPath,
+                previewSession: tab.session,
+                previewStaged: tab.selectedFileStaged,
                 onToggleMarkdownPreview: { tab.toggleMarkdownPreview() }
             )
         }
@@ -482,6 +484,9 @@ struct DiffPaneContainer: View {
     var isMarkdownPreview: Bool = false
     var markdownPreviewState: RepoTab.MarkdownPreviewState = .idle
     var repoRootPath: String? = nil
+    var previewSession: RepoSession? = nil
+    var previewCommitOid: String? = nil
+    var previewStaged: Bool = false
     var onToggleMarkdownPreview: (() -> Void)? = nil
 
     var body: some View {
@@ -500,8 +505,15 @@ struct DiffPaneContainer: View {
             if canPreviewMarkdown && isMarkdownPreview {
                 switch markdownPreviewState {
                 case .loaded(let html):
-                    MarkdownPreviewView(html: html, repoRootPath: repoRootPath, filePath: filePath)
-                        .background(Color(nsColor: .textBackgroundColor))
+                    MarkdownPreviewView(
+                        html: html,
+                        repoRootPath: repoRootPath,
+                        filePath: filePath,
+                        session: previewSession,
+                        commitOid: previewCommitOid,
+                        staged: previewStaged
+                    )
+                    .background(Color(nsColor: .textBackgroundColor))
                 case .idle, .loading:
                     ProgressView()
                         .controlSize(.small)
