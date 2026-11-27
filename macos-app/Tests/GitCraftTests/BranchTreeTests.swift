@@ -20,12 +20,14 @@ final class BranchTreeTests: XCTestCase {
     private func flatten(
         _ branches: [BranchInfo],
         scope: String = "local",
-        collapsed: Set<String> = []
+        collapsed: Set<String> = [],
+        startCollapsed: Bool = false
     ) -> [FlatBranchRow] {
         BranchTreeNode.buildFlattenedRows(
             from: branches,
             scope: scope,
-            collapsedFolderIDs: collapsed
+            foldersStartCollapsed: startCollapsed,
+            toggledFolderIDs: collapsed
         )
     }
 
@@ -116,6 +118,17 @@ final class BranchTreeTests: XCTestCase {
             return XCTFail("expected a folder row")
         }
         XCTAssertFalse(isExpanded)
+    }
+
+    func testFoldersStartCollapsedHidesChildrenUntilToggled() {
+        let branches = [branch("origin/main", remote: true), branch("origin/feature/x", remote: true)]
+
+        let collapsed = flatten(branches, scope: "remote", startCollapsed: true)
+        XCTAssertEqual(describe(collapsed), ["0 folder:origin"])
+
+        // Toggling a folder flips it to expanded; its nested folders still start collapsed.
+        let opened = flatten(branches, scope: "remote", collapsed: ["folder:remote:origin"], startCollapsed: true)
+        XCTAssertEqual(describe(opened), ["0 folder:origin", "1 branch:main", "1 folder:feature"])
     }
 
     func testEmptyNameComponentsAreIgnored() {

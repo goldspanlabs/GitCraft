@@ -68,7 +68,8 @@ final class BranchTreeNode {
     static func buildFlattenedRows(
         from branches: [BranchInfo],
         scope: String,
-        collapsedFolderIDs: Set<String>
+        foldersStartCollapsed: Bool = false,
+        toggledFolderIDs: Set<String>
     ) -> [FlatBranchRow] {
         let root = BranchTreeNode(name: "", pathID: scope)
         for branch in branches {
@@ -82,7 +83,8 @@ final class BranchTreeNode {
         func flatten(nodes: [BranchTreeNode], depth: Int) {
             for node in nodes {
                 if node.isFolder {
-                    let isExpanded = !collapsedFolderIDs.contains(node.pathID)
+                    // A folder is in `toggledFolderIDs` when the user flipped it away from the default.
+                    let isExpanded = foldersStartCollapsed == toggledFolderIDs.contains(node.pathID)
                     rows.append(
                         FlatBranchRow(
                             id: node.pathID,
