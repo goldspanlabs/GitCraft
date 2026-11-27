@@ -267,6 +267,9 @@ fn is_container_html_tag(tag: &str) -> bool {
             | "address"
             | "form"
             | "fieldset"
+            | "picture"
+            | "video"
+            | "audio"
     )
 }
 
@@ -296,12 +299,8 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
     out.push_str("</div>\n");
 }
 
-/// Id prefix for headings in deleted blocks. Generated slugs never contain `:`, so these ids
-/// cannot collide with the current document's and anchors keep targeting the current copy.
-const DELETED_ID_PREFIX: &str = "old:";
-
 /// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
-/// and prefixes heading `id`s, regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
+/// and renames heading `id`s to `data-old-id` (so no anchor can target a deleted copy), regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
 fn tag_deleted_assets(html: &str) -> String {
     let bytes = html.as_bytes();
     let len = bytes.len();
@@ -380,7 +379,8 @@ fn tag_deleted_assets(html: &str) -> String {
                 i += 1;
             }
             let attr_name = &html[name_start..i];
-            out.push_str(attr_name);
+            let renames_id = is_heading && attr_name.eq_ignore_ascii_case("id");
+            out.push_str(if renames_id { "data-old-id" } else { attr_name });
 
             // Optional whitespace before `=`.
             let pre_eq = i;
@@ -425,9 +425,7 @@ fn tag_deleted_assets(html: &str) -> String {
                 (&html[val_start..i], None)
             };
 
-            let rewritten = if is_heading && attr_name.eq_ignore_ascii_case("id") {
-                format!("{DELETED_ID_PREFIX}{val}")
-            } else if is_srcset {
+            let rewritten = if is_srcset {
                 rewrite_srcset(val)
             } else if is_src {
                 append_old_side_param(val)
@@ -672,7 +670,7 @@ mod tests {
     #[test]
     fn deleted_blocks_prefix_heading_ids() {
         let html = render_diff_html(Some("# Gone\n"), None);
-        assert!(html.contains("<h1 id=\"old:gone\">"));
+        assert!(html.contains("<h1 data-old-id=\"gone\">"));
     }
 
     #[test]
@@ -696,18 +694,31 @@ mod tests {
     }
 
     #[test]
-    fn deleted_heading_ids_cannot_collide_with_current_slugs() {
+    fn deleted_heading_ids_never_collide_with_current_ids() {
         let html = render_diff_html(Some("# Title\n"), Some("# Old Title\n"));
-        assert!(html.contains("<h1 id=\"old:title\">Title</h1>"));
+        assert!(html.contains("<h1 data-old-id=\"title\">Title</h1>"));
         assert!(html.contains("<h1 id=\"old-title\">Old Title</h1>"));
+
+        let raw = "<h2 id=\"section\">Current</h2>\n";
+        let html = render_diff_html(Some("# Section\n"), Some(raw));
+        assert_eq!(html.matches(" id=\"section\"").count(), 1, "{html}");
     }
 
     #[test]
-    fn deleted_raw_html_heading_ids_are_prefixed() {
+    fn deleted_raw_html_heading_ids_are_renamed() {
         let old = "<h2 class=\"t\" id='section'>A</h2>\n\n<H3 ID=other>B</H3>\n";
         let html = render_diff_html(Some(old), None);
-        assert!(html.contains("id='old:section'"), "{html}");
-        assert!(html.contains("ID=old:other"), "{html}");
+        assert!(html.contains("data-old-id='section'"), "{html}");
+        assert!(html.contains("data-old-id=other"), "{html}");
+        assert!(!html.contains(" id="), "{html}");
+        assert!(!html.contains("ID="), "{html}");
+    }
+
+    #[test]
+    fn media_containers_stay_together_across_blank_lines() {
+        let md = "<picture>\n\n<source srcset=\"a.png\">\n\n<img src=\"b.png\">\n\n</picture>\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 1, "{html}");
     }
 
     #[test]
@@ -732,7 +743,7 @@ mod tests {
 
         let deleted = render_diff_html(Some("# Gone\n"), None);
         assert!(deleted.contains(
-            "<div class=\"diff-block diff-deleted\"><h1 id=\"old:gone\">Gone</h1>\n</div>"
+            "<div class=\"diff-block diff-deleted\"><h1 data-old-id=\"gone\">Gone</h1>\n</div>"
         ));
     }
 }
