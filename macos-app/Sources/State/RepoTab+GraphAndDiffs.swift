@@ -138,6 +138,16 @@ extension RepoTab {
         }.value
     }
 
+    /// A slice of the indexed graph read on the main thread while scrolling; nil when the
+    /// index doesn't cover it or is busy.
+    func cachedGraphWindow(offset: Int, limit: Int) -> [CommitRow]? {
+        session.cachedGraphWindow(
+            offset: UInt32(max(0, offset)),
+            limit: UInt32(max(0, limit)),
+            scoped: scopeToCurrentBranch
+        )
+    }
+
     /// Adds the next page to the commit list. Fewer rows than `requested` means the history ended.
     func appendCommits(_ page: [CommitRow], requested: UInt32) {
         if page.count < Int(requested) {

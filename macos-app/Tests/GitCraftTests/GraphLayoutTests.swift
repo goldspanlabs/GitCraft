@@ -155,4 +155,89 @@ final class GraphLayoutTests: XCTestCase {
         coordinator.clearWindowCache()
         XCTAssertNil(coordinator.commit(atRow: 25_001))
     }
+
+    func testScrolledToRowIsFilledFromTheIndexWithoutAPlaceholder() {
+        let coordinator = makeVirtualizedCoordinator()
+        coordinator.onCachedWindow = { offset, limit in
+            (offset..<(offset + limit)).map { Self.row($0) }
+        }
+
+        let cell = coordinator.tableView(NSTableView(), viewFor: nil, row: 25_601) as? CommitRowCellView
+
+        XCTAssertEqual(cell?.isPlaceholder, false)
+        // The row above is loaded too, so the incoming lane line can be drawn.
+        XCTAssertEqual(coordinator.commit(atRow: 25_600)?.oidHex, "oid25599")
+        XCTAssertEqual(coordinator.commit(atRow: 25_601)?.oidHex, "oid25600")
+    }
+
+    /// Scrolling on past a window must not throw away the fetch already running, or nothing
+    /// ever lands until the scroll stops.
+    func testFurtherScrollingKeepsTheRunningWindowFetch() async {
+        var requests: [CheckedContinuation<[CommitRow], Never>] = []
+        var offsets: [Int] = []
+        let started = expectation(description: "fetch started")
+        started.assertForOverFulfill = false
+        let coordinator = makeVirtualizedCoordinator { offset, _ in
+            await withCheckedContinuation { continuation in
+                Task { @MainActor in
+                    offsets.append(offset)
+                    requests.append(continuation)
+                    started.fulfill()
+                }
+            }
+        }
+        let table = NSTableView()
+
+        _ = coordinator.tableView(table, viewFor: nil, row: 1_001)
+        _ = coordinator.tableView(table, viewFor: nil, row: 30_001)
+        await fulfillment(of: [started], timeout: 2)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(requests.count, 1)
+        guard let first = requests.first, let offset = offsets.first else { return }
+        first.resume(returning: (offset..<(offset + 300)).map { Self.row($0) })
+        requests.dropFirst().forEach { $0.resume(returning: []) }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(coordinator.commit(atRow: 1_001)?.oidHex, "oid1000")
+    }
+
+    private static func row(_ index: Int) -> CommitRow {
+        CommitRow(
+            oidHex: "oid\(index)",
+            shortOid: "oid\(index)",
+            summary: "Commit \(index)",
+            authorName: "Alice",
+            authorEmail: "alice@example.com",
+            timestamp: 1_700_000_000,
+            lane: 0,
+            colorIdx: 0,
+            maxLanes: 1,
+            edges: [],
+            refs: [],
+            isRemoteOnly: false,
+            isUnpushed: false
+        )
+    }
+
+    private func makeVirtualizedCoordinator(
+        onFetchWindow: @escaping (Int, Int) async throws -> [CommitRow] = { _, _ in [] }
+    ) -> CommitTableView.Coordinator {
+        CommitTableView.Coordinator(
+            rows: [Self.row(0)],
+            totalCommitCount: 50_000,
+            isSearchActive: false,
+            workingChangesCount: 0,
+            onLoadMore: {},
+            onFetchWindow: onFetchWindow,
+            onSelectCommits: { _ in },
+            onCopyOid: { _ in },
+            onCreateBranchAtCommit: { _ in },
+            onCreateTagAtCommit: { _ in },
+            onCreateWorktreeAtCommit: { _ in },
+            canRemoveWorktree: { _ in false },
+            onRemoveWorktree: { _ in },
+            onCheckoutCommit: { _ in }
+        )
+    }
 }

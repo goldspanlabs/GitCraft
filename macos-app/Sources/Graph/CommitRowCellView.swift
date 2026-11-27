@@ -11,6 +11,7 @@ final class CommitRowCellView: NSTableCellView {
     private let timeLabel = NSTextField(labelWithString: "")
     private var graphWidthConstraint: NSLayoutConstraint!
     private var avatarWidthConstraint: NSLayoutConstraint!
+    private(set) var isPlaceholder = false
 
     private static let summaryRegularFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
     private static let summarySemiboldFont = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
@@ -156,6 +157,7 @@ final class CommitRowCellView: NSTableCellView {
     }
 
     func configureWorkingChanges(fileCount: Int) {
+        isPlaceholder = false
         graphWidthConstraint.constant = 24
         graphView.alphaValue = 1.0
         graphView.configureWorkingChanges()
@@ -181,6 +183,7 @@ final class CommitRowCellView: NSTableCellView {
 
     /// Blank row shown briefly while a virtualized scroll window materializes in the background.
     func configurePlaceholder() {
+        isPlaceholder = true
         graphWidthConstraint.constant = 24
         graphView.alphaValue = 1.0
         graphView.configurePlaceholder()
@@ -202,6 +205,7 @@ final class CommitRowCellView: NSTableCellView {
         remoteHosts: [String: RemoteHost] = [:],
         showTags: Bool = true
     ) {
+        isPlaceholder = false
         let lanes = max(1, Int(commit.maxLanes))
         graphWidthConstraint.constant = GraphCellView.width(forLanes: lanes)
         // Remote-only rows dim their text, not the graph lines.

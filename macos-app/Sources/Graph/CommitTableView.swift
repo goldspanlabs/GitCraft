@@ -31,6 +31,8 @@ struct CommitTableView: NSViewRepresentable {
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
     let onFetchWindow: (Int, Int) async throws -> [CommitRow]
+    /// Reads rows straight from the commit index, or nil when it can't answer right away.
+    var onCachedWindow: (Int, Int) -> [CommitRow]? = { _, _ in nil }
     /// The selected commits in list order: none for Working Changes or no selection.
     let onSelectCommits: ([CommitRow]) -> Void
     let onCopyOid: (String) -> Void
@@ -161,6 +163,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
         coordinator.onFetchWindow = onFetchWindow
+        coordinator.onCachedWindow = onCachedWindow
         coordinator.onSelectCommits = onSelectCommits
         coordinator.onCopyOid = onCopyOid
         coordinator.onCopyOids = onCopyOids
@@ -247,6 +250,7 @@ struct CommitTableView: NSViewRepresentable {
         var lastGraphGeneration: Int?
         var onLoadMore: () -> Void
         var onFetchWindow: (Int, Int) async throws -> [CommitRow]
+        var onCachedWindow: (Int, Int) -> [CommitRow]? = { _, _ in nil }
         var onSelectCommits: ([CommitRow]) -> Void
         var onCopyOid: (String) -> Void
         var onCopyOids: ([String]) -> Void = { _ in }
@@ -269,10 +273,11 @@ struct CommitTableView: NSViewRepresentable {
 
         /// Sparse cache of materialized rows for indices beyond `rows.count` (virtualized mode).
         var windowCache: [Int: CommitRow] = [:]
-        private var inFlightWindowRange: Range<Int>?
         private var windowFetchTask: Task<Void, Never>?
         private static let maxCachedWindowRows = 4_000
         private static let windowPadding = 120
+        /// Rows read per synchronous index lookup: a few screens, and quick enough mid-scroll.
+        private static let cachedChunkSize = 128
 
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("CommitRowCell")
 
@@ -311,7 +316,6 @@ struct CommitTableView: NSViewRepresentable {
         func clearWindowCache() {
             windowFetchTask?.cancel()
             windowFetchTask = nil
-            inFlightWindowRange = nil
             windowCache.removeAll(keepingCapacity: true)
         }
 
@@ -321,7 +325,8 @@ struct CommitTableView: NSViewRepresentable {
             }
             if windowCache.count > Self.maxCachedWindowRows {
                 let center = anchor ?? (offset + fetched.count / 2)
-                let excess = windowCache.count - Self.maxCachedWindowRows
+                // Trim well below the cap so scrolling doesn't sort the cache on every insert.
+                let excess = windowCache.count - Self.maxCachedWindowRows * 3 / 4
                 let toEvict = windowCache.keys
                     .sorted { abs($0 - center) > abs($1 - center) }
                     .prefix(excess)
@@ -483,16 +488,11 @@ struct CommitTableView: NSViewRepresentable {
 
             if row == 0 {
                 cell.configureWorkingChanges(fileCount: workingChangesCount)
-            } else if let commit = commit(atRow: row) {
-                let commitIndex = row - 1
-                let hasIncomingLine = hasIncomingLane(at: commitIndex)
-                cell.configure(
-                    commit: commit,
-                    hasIncomingLine: hasIncomingLine,
-                    otherWorktreeBranches: worktreeBranches,
-                    remoteHosts: remoteHosts,
-                    showTags: showTags
-                )
+                return cell
+            }
+            loadCachedRows(around: row - 1)
+            if let commit = commit(atRow: row) {
+                configure(cell, with: commit, atRow: row)
             } else {
                 cell.configurePlaceholder()
                 scheduleWindowFetch(around: row - 1)
@@ -500,57 +500,72 @@ struct CommitTableView: NSViewRepresentable {
             return cell
         }
 
+        private func configure(_ cell: CommitRowCellView, with commit: CommitRow, atRow row: Int) {
+            cell.configure(
+                commit: commit,
+                hasIncomingLine: hasIncomingLane(at: row - 1),
+                otherWorktreeBranches: worktreeBranches,
+                remoteHosts: remoteHosts,
+                showTags: showTags
+            )
+        }
+
+        /// Fills the cache around commit `index` from the index, before the row is drawn, so
+        /// scrolling shows commits rather than blank rows. The row above comes along because
+        /// the incoming lane line depends on it.
+        private func loadCachedRows(around index: Int) {
+            guard !isSearchActive, index >= rows.count else { return }
+            let previousIsMissing = index > rows.count && windowCache[index - 1] == nil
+            guard windowCache[index] == nil || previousIsMissing else { return }
+            let chunk = Self.cachedChunkSize
+            let start = max(0, index / chunk * chunk - 1)
+            guard let fetched = onCachedWindow(start, chunk + 1) else { return }
+            insertIntoWindowCache(offset: start, fetched: fetched, anchor: index)
+        }
+
+        /// The background fallback for rows the index can't serve right away. One fetch runs at
+        /// a time and is never cancelled by further scrolling; whatever is still blank when it
+        /// lands is fetched next.
         private func scheduleWindowFetch(around index: Int) {
             let effectiveCount = max(rows.count, totalCommitCount)
-            guard index >= 0, index < effectiveCount else { return }
-            if let inFlight = inFlightWindowRange, inFlight.contains(index) {
-                return
-            }
+            guard windowFetchTask == nil, index >= 0, index < effectiveCount else { return }
 
-            let visibleCommitRange: Range<Int>
-            if let tableView {
-                let visible = tableView.rows(in: tableView.visibleRect)
-                if visible.length > 0 {
-                    let start = max(0, visible.location - 1)
-                    let end = min(effectiveCount, max(start + 1, visible.location + visible.length - 1))
-                    visibleCommitRange = min(start, index)..<max(end, index + 1)
-                } else {
-                    visibleCommitRange = index..<(index + 1)
-                }
-            } else {
-                visibleCommitRange = index..<(index + 1)
-            }
-
-            // Include at least 1 row before the window so `hasIncomingLane` has the previous row.
-            let fetchStart = max(0, visibleCommitRange.lowerBound - Self.windowPadding)
-            let fetchEnd = min(effectiveCount, visibleCommitRange.upperBound + Self.windowPadding)
-            guard fetchEnd > fetchStart else { return }
-
-            windowFetchTask?.cancel()
-            inFlightWindowRange = fetchStart..<fetchEnd
+            // Starting before `index` also fetches the previous row for `hasIncomingLane`.
+            let fetchStart = max(0, index - Self.windowPadding)
+            let fetchEnd = min(effectiveCount, index + Self.windowPadding)
             let generation = lastGraphGeneration
             let fetch = onFetchWindow
 
             windowFetchTask = Task { @MainActor [weak self] in
-                do {
-                    let fetched = try await fetch(fetchStart, fetchEnd - fetchStart)
-                    guard !Task.isCancelled, let self, self.lastGraphGeneration == generation else { return }
-                    self.insertIntoWindowCache(offset: fetchStart, fetched: fetched, anchor: index)
-                    self.inFlightWindowRange = nil
-                    guard let table = self.tableView, !fetched.isEmpty else { return }
-                    let firstRow = fetchStart + 1
-                    let lastRow = min(table.numberOfRows - 1, fetchStart + fetched.count)
-                    if firstRow <= lastRow {
-                        table.reloadData(
-                            forRowIndexes: IndexSet(integersIn: firstRow...lastRow),
-                            columnIndexes: IndexSet(integer: 0)
-                        )
-                    }
-                } catch {
-                    if let self, self.lastGraphGeneration == generation {
-                        self.inFlightWindowRange = nil
-                    }
+                let fetched = try? await fetch(fetchStart, fetchEnd - fetchStart)
+                // A cancelled fetch belongs to a replaced list, which may have its own running.
+                guard !Task.isCancelled, let self else { return }
+                self.windowFetchTask = nil
+                guard self.lastGraphGeneration == generation, let fetched, !fetched.isEmpty else { return }
+                self.insertIntoWindowCache(offset: fetchStart, fetched: fetched, anchor: index)
+                self.fillPlaceholders()
+            }
+        }
+
+        /// Reconfigures placeholder cells in place, including those prepared just off screen
+        /// (`reloadData(forRowIndexes:)` would tear down and flash them).
+        private func fillPlaceholders() {
+            guard let tableView else { return }
+            var stillMissing: [Int] = []
+            tableView.enumerateAvailableRowViews { rowView, row in
+                guard row > 0, rowView.numberOfColumns > 0,
+                      let cell = rowView.view(atColumn: 0) as? CommitRowCellView,
+                      cell.isPlaceholder
+                else { return }
+                if let commit = self.commit(atRow: row) {
+                    self.configure(cell, with: commit, atRow: row)
+                } else {
+                    stillMissing.append(row)
                 }
+            }
+            let visible = tableView.rows(in: tableView.visibleRect)
+            if let row = stillMissing.first(where: { NSLocationInRange($0, visible) }) {
+                scheduleWindowFetch(around: row - 1)
             }
         }
 

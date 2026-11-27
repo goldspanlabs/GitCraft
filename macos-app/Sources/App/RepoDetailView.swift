@@ -96,6 +96,9 @@ struct RepoDetailView: View {
                         onFetchWindow: { offset, limit in
                             try await tab.fetchGraphWindow(offset: offset, limit: limit)
                         },
+                        onCachedWindow: { offset, limit in
+                            tab.cachedGraphWindow(offset: offset, limit: limit)
+                        },
                         onSelectCommits: { commits in
                             if !commits.isEmpty {
                                 isBottomExpandedToMax = false

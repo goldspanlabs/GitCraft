@@ -50,11 +50,19 @@ enum CachedWalk {
         commits: Vec<IndexedCommit>,
         checkpoints: Vec<LaneState>,
         exhausted: bool,
+        view: IndexView,
     },
     Rows {
         rows: Vec<CommitRow>,
         exhausted: bool,
     },
+}
+
+/// What an index was built for, so [`cached_graph_window`] can serve it without re-reading refs.
+struct IndexView {
+    scoped: bool,
+    sort: CommitSort,
+    refs_by_oid: HashMap<gix::ObjectId, Vec<RefBadge>>,
 }
 
 /// State from the last graph walk, kept so that paging down doesn't re-walk history from the
@@ -90,6 +98,45 @@ pub fn get_branch_graph(
     sort: CommitSort,
 ) -> Result<Vec<CommitRow>, GitCraftError> {
     graph_walk(sync_repo, cache, offset, limit, search_query, true, sort)
+}
+
+/// A page of the already indexed unfiltered graph, cheap enough to call while scrolling: it
+/// reads no refs and walks no history, and returns the refs as of the walk that built the
+/// index. `None` when the index doesn't cover the page, was built for another scope or sort,
+/// or is in use by another thread (this never blocks on the cache).
+pub fn cached_graph_window(
+    sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
+    offset: u32,
+    limit: u32,
+    scoped: bool,
+    sort: CommitSort,
+) -> Option<Vec<CommitRow>> {
+    let guard = cache.try_lock().ok()?;
+    let CachedWalk::Indexed {
+        commits,
+        checkpoints,
+        exhausted,
+        view,
+    } = &guard.walk
+    else {
+        return None;
+    };
+    let covered = commits.len() >= offset.saturating_add(limit) as usize || *exhausted;
+    if view.scoped != scoped || view.sort != sort || !covered {
+        return None;
+    }
+    let mut repo = sync_repo.to_thread_local();
+    repo.object_cache_size_if_unset(1024 * 1024);
+    materialize_indexed_page(
+        &repo,
+        &view.refs_by_oid,
+        commits,
+        checkpoints,
+        offset,
+        limit,
+    )
+    .ok()
 }
 
 /// Fingerprint of the repository's refs, HEAD, shallow boundary, scope, and sort order.
@@ -255,6 +302,11 @@ pub fn index_commit_graph(
                 commits: indexed_commits,
                 checkpoints,
                 exhausted,
+                view: IndexView {
+                    scoped,
+                    sort,
+                    refs_by_oid,
+                },
             },
         };
     }
@@ -389,6 +441,7 @@ fn graph_walk(
                     commits,
                     checkpoints,
                     exhausted,
+                    ..
                 } => {
                     if commits.len() >= target_count || *exhausted {
                         return materialize_indexed_page(
@@ -601,6 +654,11 @@ fn graph_walk(
                     commits: indexed_commits,
                     checkpoints,
                     exhausted,
+                    view: IndexView {
+                        scoped,
+                        sort,
+                        refs_by_oid,
+                    },
                 }
             } else {
                 CachedWalk::Rows {

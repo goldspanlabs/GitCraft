@@ -249,6 +249,22 @@ impl RepoSession {
         )
     }
 
+    pub fn cached_graph_window(
+        &self,
+        offset: u32,
+        limit: u32,
+        scoped: bool,
+    ) -> Option<Vec<CommitRow>> {
+        graph::cached_graph_window(
+            &self.sync_repo,
+            &self.graph_cache,
+            offset,
+            limit,
+            scoped,
+            self.commit_sort(),
+        )
+    }
+
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
         graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
     }

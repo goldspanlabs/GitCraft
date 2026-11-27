@@ -282,6 +282,8 @@ interface RepoSession {
   [Throws=GitCraftError]
   u32? find_commit_index(string oid_hex, boolean scoped);
 
+  sequence<CommitRow>? cached_graph_window(u32 offset, u32 limit, boolean scoped);
+
   [Throws=GitCraftError]
   CommitDetail get_commit_detail(string oid_hex);
 

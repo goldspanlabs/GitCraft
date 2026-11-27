@@ -9,7 +9,7 @@ use std::{
 };
 
 use common::run_git;
-use gitcraft_core::RepoSession;
+use gitcraft_core::{CommitSort, RepoSession};
 
 fn generate_large_repo_via_fast_import(dir: &Path, num_commits: usize) {
     run_git(dir, &["init", "-b", "main"]);
@@ -216,4 +216,42 @@ fn index_commit_graph_and_random_access_lookup() {
             .unwrap(),
         None
     );
+}
+
+#[test]
+fn cached_graph_window_serves_only_the_indexed_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    generate_large_repo_via_fast_import(root, 1_500);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+
+    // Nothing indexed yet: the caller has to fall back to a full fetch.
+    assert!(session.cached_graph_window(0, 50, false).is_none());
+
+    // A first page indexes only a prefix; windows past it are not served.
+    session.get_commit_graph(0, 100, None).unwrap();
+    assert!(session.cached_graph_window(1_200, 50, false).is_none());
+
+    session.index_commit_graph(false).unwrap();
+    let cached = session.cached_graph_window(1_200, 50, false).unwrap();
+    let walked = session.get_commit_graph(1_200, 50, None).unwrap();
+    assert_eq!(format!("{cached:?}"), format!("{walked:?}"));
+
+    // The tail is clipped to the end of history.
+    assert_eq!(
+        session.cached_graph_window(1_500, 50, false).unwrap().len(),
+        10
+    );
+
+    // A different scope, sort or a search walk doesn't match the cached index.
+    assert!(session.cached_graph_window(0, 50, true).is_none());
+    session.set_commit_sort(CommitSort::Topological);
+    assert!(session.cached_graph_window(0, 50, false).is_none());
+    session.set_commit_sort(CommitSort::ByDate);
+    assert!(session.cached_graph_window(0, 50, false).is_some());
+    session
+        .get_commit_graph(0, 50, Some("milestone".into()))
+        .unwrap();
+    assert!(session.cached_graph_window(0, 50, false).is_none());
 }
