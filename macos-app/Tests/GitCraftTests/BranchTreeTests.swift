@@ -128,7 +128,7 @@ final class BranchTreeTests: XCTestCase {
 
         // Toggling a folder flips it to expanded; its nested folders still start collapsed.
         let opened = flatten(branches, scope: "remote", collapsed: ["folder:remote:origin"], startCollapsed: true)
-        XCTAssertEqual(describe(opened), ["0 folder:origin", "1 branch:main", "1 folder:feature"])
+        XCTAssertEqual(describe(opened), ["0 folder:origin", "1 folder:feature", "1 branch:main"])
     }
 
     func testEmptyNameComponentsAreIgnored() {
