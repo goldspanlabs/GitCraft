@@ -6,6 +6,15 @@ final class RepoTab: ObservableObject, Identifiable {
     struct ScrollRequest: Equatable {
         let id = UUID()
         let oidHex: String?
+        /// Known 0-based commit index (used for virtualized jumps beyond the initial page).
+        var rowIndex: Int?
+        /// Window rows prefetched around `rowIndex`, installed into the table cache before scrolling.
+        var prefetchedOffset: Int?
+        var prefetchedRows: [CommitRow]?
+
+        static func == (lhs: ScrollRequest, rhs: ScrollRequest) -> Bool {
+            lhs.id == rhs.id
+        }
     }
 
     struct Toast: Identifiable {
@@ -70,6 +79,9 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var stagedFiles: [FileChange] = []
     @Published var unstagedFiles: [FileChange] = []
     @Published var commits: [CommitRow] = []
+    /// Total rows represented in the commit table. Equals `commits.count` while loading or
+    /// searching, and expands to the full indexed count once background indexing finishes.
+    @Published var totalCommitCount = 0
     /// Tells an empty `commits` apart: still being read, truly empty, or unreadable.
     @Published var historyState = HistoryState.loading
     @Published var graphRevision = UUID()
@@ -197,6 +209,7 @@ final class RepoTab: ObservableObject, Identifiable {
     var isLoadingMore = false
     var hasMoreCommits = true
     let pageSize: UInt32 = 500
+    var graphIndexTask: Task<Void, Never>?
     var revealTask: Task<Void, Never>?
     var searchDebounceTask: Task<Void, Never>?
     /// Bumped whenever the commit list is replaced (refresh, search), so in-flight
@@ -605,6 +618,8 @@ final class RepoTab: ObservableObject, Identifiable {
     private func attach(_ next: RepoSession, at canonical: String) {
         watcherTask?.cancel()
         autoFetchTask?.cancel()
+        graphIndexTask?.cancel()
+        graphIndexTask = nil
         revealTask?.cancel()
         revealTask = nil
         // A recovery in flight was preparing a switch from the old checkout.

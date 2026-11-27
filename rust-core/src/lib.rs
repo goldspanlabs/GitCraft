@@ -226,6 +226,29 @@ impl RepoSession {
         graph::graph_state_token(&self.sync_repo, scoped, self.commit_sort())
     }
 
+    pub fn index_commit_graph(&self, scoped: bool) -> Result<GraphIndexSummary, GitCraftError> {
+        graph::index_commit_graph(
+            &self.sync_repo,
+            &self.graph_cache,
+            scoped,
+            self.commit_sort(),
+        )
+    }
+
+    pub fn find_commit_index(
+        &self,
+        oid_hex: String,
+        scoped: bool,
+    ) -> Result<Option<u32>, GitCraftError> {
+        graph::find_commit_index(
+            &self.sync_repo,
+            &self.graph_cache,
+            &oid_hex,
+            scoped,
+            self.commit_sort(),
+        )
+    }
+
     pub fn get_commit_detail(&self, oid_hex: String) -> Result<CommitDetail, GitCraftError> {
         graph::get_commit_detail(&self.path, &self.sync_repo, &oid_hex)
     }

@@ -17,6 +17,8 @@ extension Notification.Name {
 
 struct CommitTableView: NSViewRepresentable {
     let rows: [CommitRow]
+    let totalCommitCount: Int
+    let isSearchActive: Bool
     let graphRevision: UUID
     let graphGeneration: Int
     let workingChangesCount: Int
@@ -28,6 +30,7 @@ struct CommitTableView: NSViewRepresentable {
     let isBusy: Bool
     let scrollRequest: RepoTab.ScrollRequest?
     let onLoadMore: () -> Void
+    let onFetchWindow: (Int, Int) async throws -> [CommitRow]
     /// The selected commits in list order: none for Working Changes or no selection.
     let onSelectCommits: ([CommitRow]) -> Void
     let onCopyOid: (String) -> Void
@@ -49,8 +52,11 @@ struct CommitTableView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             rows: rows,
+            totalCommitCount: totalCommitCount,
+            isSearchActive: isSearchActive,
             workingChangesCount: workingChangesCount,
             onLoadMore: onLoadMore,
+            onFetchWindow: onFetchWindow,
             onSelectCommits: onSelectCommits,
             onCopyOid: onCopyOid,
             onCreateBranchAtCommit: onCreateBranchAtCommit,
@@ -117,19 +123,20 @@ struct CommitTableView: NSViewRepresentable {
             || coordinator.showAvatars != showAvatars
         let dataChanged = revisionChanged || metadataChanged
 
-        let oldRowCount = coordinator.rows.count
+        let oldTotalCount = max(coordinator.rows.count, coordinator.totalCommitCount)
+        let newTotalCount = max(rows.count, totalCommitCount)
         let sameGeneration = coordinator.lastGraphRevision != nil
             && coordinator.lastGraphGeneration == graphGeneration
         let isAppendOnly = revisionChanged
             && !metadataChanged
             && sameGeneration
-            && rows.count > oldRowCount
-            && table.numberOfRows == 1 + oldRowCount
+            && newTotalCount > oldTotalCount
+            && table.numberOfRows == 1 + oldTotalCount
         let isEmptyAppend = revisionChanged
             && !metadataChanged
             && sameGeneration
-            && rows.count == oldRowCount
-            && table.numberOfRows == 1 + oldRowCount
+            && newTotalCount == oldTotalCount
+            && table.numberOfRows == 1 + oldTotalCount
 
         // Remember what is selected (by commit, not row index) before the data is swapped.
         let selectedRowsBefore = table.selectedRowIndexes
@@ -139,7 +146,12 @@ struct CommitTableView: NSViewRepresentable {
             coordinator.lastGraphRevision = graphRevision
             coordinator.lastGraphGeneration = graphGeneration
         }
+        if !sameGeneration {
+            coordinator.clearWindowCache()
+        }
         coordinator.rows = rows
+        coordinator.totalCommitCount = totalCommitCount
+        coordinator.isSearchActive = isSearchActive
         coordinator.workingChangesCount = workingChangesCount
         coordinator.remoteHosts = remoteHosts
         coordinator.worktrees = worktrees
@@ -148,6 +160,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.showAvatars = showAvatars
         coordinator.isBusy = isBusy
         coordinator.onLoadMore = onLoadMore
+        coordinator.onFetchWindow = onFetchWindow
         coordinator.onSelectCommits = onSelectCommits
         coordinator.onCopyOid = onCopyOid
         coordinator.onCopyOids = onCopyOids
@@ -164,9 +177,9 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onClickWorkingChanges = onClickWorkingChanges
 
         if isAppendOnly {
-            // Pagination only appends commits at the bottom; inserting the new rows leaves
-            // existing visible cells (and selection) untouched without flickering.
-            let inserted = IndexSet(integersIn: (1 + oldRowCount)..<(1 + rows.count))
+            // Pagination or background indexing only grows the list at the bottom; inserting
+            // the new rows leaves existing visible cells (and selection) untouched without flickering.
+            let inserted = IndexSet(integersIn: (1 + oldTotalCount)..<(1 + newTotalCount))
             table.insertRows(at: inserted, withAnimation: [])
         } else if dataChanged && !isEmptyAppend {
             // Reload/restore is not a user selection: keep it from reaching the model, where
@@ -186,7 +199,11 @@ struct CommitTableView: NSViewRepresentable {
 
         if let request = scrollRequest, coordinator.lastHandledScrollID != request.id {
             coordinator.lastHandledScrollID = request.id
+            if let offset = request.prefetchedOffset, let prefetched = request.prefetchedRows {
+                coordinator.insertIntoWindowCache(offset: offset, fetched: prefetched)
+            }
             let requestedOid = request.oidHex
+            let requestedRowIndex = request.rowIndex
             // Defer: selecting fires the delegate, which publishes state, and that
             // must not happen during a SwiftUI view update (the change can be dropped).
             // Resolve the row inside the block so a graph refresh in between can't
@@ -194,9 +211,16 @@ struct CommitTableView: NSViewRepresentable {
             DispatchQueue.main.async { [weak table, weak coordinator] in
                 guard let table, let coordinator else { return }
                 let targetRow: Int
-                if let oid = requestedOid {
-                    guard let idx = coordinator.rows.firstIndex(where: { $0.oidHex == oid }) else { return }
-                    targetRow = idx + 1
+                if let rowIdx = requestedRowIndex {
+                    targetRow = rowIdx + 1
+                } else if let oid = requestedOid {
+                    if let idx = coordinator.rows.firstIndex(where: { $0.oidHex == oid }) {
+                        targetRow = idx + 1
+                    } else if let idx = coordinator.windowCache.first(where: { $0.value.oidHex == oid })?.key {
+                        targetRow = idx + 1
+                    } else {
+                        return
+                    }
                 } else {
                     targetRow = 0
                 }
@@ -209,6 +233,8 @@ struct CommitTableView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var rows: [CommitRow]
+        var totalCommitCount: Int
+        var isSearchActive: Bool
         var workingChangesCount: Int
         var remoteHosts: [String: RemoteHost] = [:]
         var worktrees: [WorktreeInfo] = []
@@ -220,6 +246,7 @@ struct CommitTableView: NSViewRepresentable {
         var lastGraphRevision: UUID?
         var lastGraphGeneration: Int?
         var onLoadMore: () -> Void
+        var onFetchWindow: (Int, Int) async throws -> [CommitRow]
         var onSelectCommits: ([CommitRow]) -> Void
         var onCopyOid: (String) -> Void
         var onCopyOids: ([String]) -> Void = { _ in }
@@ -240,12 +267,22 @@ struct CommitTableView: NSViewRepresentable {
         private var boundsObserver: NSObjectProtocol?
         private var focusObserver: NSObjectProtocol?
 
+        /// Sparse cache of materialized rows for indices beyond `rows.count` (virtualized mode).
+        var windowCache: [Int: CommitRow] = [:]
+        private var inFlightWindowRange: Range<Int>?
+        private var windowFetchTask: Task<Void, Never>?
+        private static let maxCachedWindowRows = 4_000
+        private static let windowPadding = 120
+
         private static let cellIdentifier = NSUserInterfaceItemIdentifier("CommitRowCell")
 
         init(
             rows: [CommitRow],
+            totalCommitCount: Int,
+            isSearchActive: Bool,
             workingChangesCount: Int,
             onLoadMore: @escaping () -> Void,
+            onFetchWindow: @escaping (Int, Int) async throws -> [CommitRow],
             onSelectCommits: @escaping ([CommitRow]) -> Void,
             onCopyOid: @escaping (String) -> Void,
             onCreateBranchAtCommit: @escaping (String) -> Void,
@@ -256,8 +293,11 @@ struct CommitTableView: NSViewRepresentable {
             onCheckoutCommit: @escaping (String) -> Void
         ) {
             self.rows = rows
+            self.totalCommitCount = totalCommitCount
+            self.isSearchActive = isSearchActive
             self.workingChangesCount = workingChangesCount
             self.onLoadMore = onLoadMore
+            self.onFetchWindow = onFetchWindow
             self.onSelectCommits = onSelectCommits
             self.onCopyOid = onCopyOid
             self.onCreateBranchAtCommit = onCreateBranchAtCommit
@@ -268,11 +308,37 @@ struct CommitTableView: NSViewRepresentable {
             self.onCheckoutCommit = onCheckoutCommit
         }
 
-        /// The SHA of the commit shown in `row`; `nil` for Working Changes (row 0) or no row.
+        func clearWindowCache() {
+            windowFetchTask?.cancel()
+            windowFetchTask = nil
+            inFlightWindowRange = nil
+            windowCache.removeAll(keepingCapacity: true)
+        }
+
+        func insertIntoWindowCache(offset: Int, fetched: [CommitRow], anchor: Int? = nil) {
+            for (i, commit) in fetched.enumerated() {
+                windowCache[offset + i] = commit
+            }
+            if windowCache.count > Self.maxCachedWindowRows {
+                let center = anchor ?? (offset + fetched.count / 2)
+                let excess = windowCache.count - Self.maxCachedWindowRows
+                let toEvict = windowCache.keys
+                    .sorted { abs($0 - center) > abs($1 - center) }
+                    .prefix(excess)
+                for key in toEvict {
+                    windowCache.removeValue(forKey: key)
+                }
+            }
+        }
+
         /// The commit shown in table row `row`. Row 0 is Working Changes, so it has none.
         func commit(atRow row: Int) -> CommitRow? {
-            guard row > 0, row - 1 < rows.count else { return nil }
-            return rows[row - 1]
+            guard row > 0 else { return nil }
+            let idx = row - 1
+            if idx < rows.count {
+                return rows[idx]
+            }
+            return windowCache[idx]
         }
 
         func commitOid(atRow row: Int) -> String? {
@@ -358,6 +424,7 @@ struct CommitTableView: NSViewRepresentable {
         }
 
         deinit {
+            windowFetchTask?.cancel()
             if let boundsObserver {
                 NotificationCenter.default.removeObserver(boundsObserver)
             }
@@ -394,15 +461,20 @@ struct CommitTableView: NSViewRepresentable {
 
         private func checkScrollNearBottom() {
             guard let tableView else { return }
+            let effectiveCount = max(rows.count, totalCommitCount)
+            // In virtualized mode (totalCommitCount > rows.count), rows are fetched on demand
+            // by `scheduleWindowFetch` as they enter the viewport. Only trigger `onLoadMore`
+            // when paginating search results or when scrolled past the indexed prefix.
+            guard isSearchActive || rows.count >= totalCommitCount else { return }
             let visible = tableView.rows(in: tableView.visibleRect)
-            if visible.location + visible.length >= max(0, rows.count - 40) {
+            if visible.location + visible.length >= max(0, effectiveCount - 40) {
                 onLoadMore()
             }
         }
 
         func numberOfRows(in _: NSTableView) -> Int {
             // Row 0 is pinned as synthetic "Working Changes".
-            1 + rows.count
+            1 + max(rows.count, totalCommitCount)
         }
 
         func tableView(_ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
@@ -411,9 +483,8 @@ struct CommitTableView: NSViewRepresentable {
 
             if row == 0 {
                 cell.configureWorkingChanges(fileCount: workingChangesCount)
-            } else {
+            } else if let commit = commit(atRow: row) {
                 let commitIndex = row - 1
-                let commit = rows[commitIndex]
                 let hasIncomingLine = hasIncomingLane(at: commitIndex)
                 cell.configure(
                     commit: commit,
@@ -422,8 +493,65 @@ struct CommitTableView: NSViewRepresentable {
                     remoteHosts: remoteHosts,
                     showTags: showTags
                 )
+            } else {
+                cell.configurePlaceholder()
+                scheduleWindowFetch(around: row - 1)
             }
             return cell
+        }
+
+        private func scheduleWindowFetch(around index: Int) {
+            let effectiveCount = max(rows.count, totalCommitCount)
+            guard index >= 0, index < effectiveCount else { return }
+            if let inFlight = inFlightWindowRange, inFlight.contains(index) {
+                return
+            }
+
+            let visibleCommitRange: Range<Int>
+            if let tableView {
+                let visible = tableView.rows(in: tableView.visibleRect)
+                if visible.length > 0 {
+                    let start = max(0, visible.location - 1)
+                    let end = min(effectiveCount, max(start + 1, visible.location + visible.length - 1))
+                    visibleCommitRange = min(start, index)..<max(end, index + 1)
+                } else {
+                    visibleCommitRange = index..<(index + 1)
+                }
+            } else {
+                visibleCommitRange = index..<(index + 1)
+            }
+
+            // Include at least 1 row before the window so `hasIncomingLane` has the previous row.
+            let fetchStart = max(0, visibleCommitRange.lowerBound - Self.windowPadding)
+            let fetchEnd = min(effectiveCount, visibleCommitRange.upperBound + Self.windowPadding)
+            guard fetchEnd > fetchStart else { return }
+
+            windowFetchTask?.cancel()
+            inFlightWindowRange = fetchStart..<fetchEnd
+            let generation = lastGraphGeneration
+            let fetch = onFetchWindow
+
+            windowFetchTask = Task { @MainActor [weak self] in
+                do {
+                    let fetched = try await fetch(fetchStart, fetchEnd - fetchStart)
+                    guard !Task.isCancelled, let self, self.lastGraphGeneration == generation else { return }
+                    self.insertIntoWindowCache(offset: fetchStart, fetched: fetched, anchor: index)
+                    self.inFlightWindowRange = nil
+                    guard let table = self.tableView, !fetched.isEmpty else { return }
+                    let firstRow = fetchStart + 1
+                    let lastRow = min(table.numberOfRows - 1, fetchStart + fetched.count)
+                    if firstRow <= lastRow {
+                        table.reloadData(
+                            forRowIndexes: IndexSet(integersIn: firstRow...lastRow),
+                            columnIndexes: IndexSet(integer: 0)
+                        )
+                    }
+                } catch {
+                    if let self, self.lastGraphGeneration == generation {
+                        self.inFlightWindowRange = nil
+                    }
+                }
+            }
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
@@ -456,9 +584,10 @@ struct CommitTableView: NSViewRepresentable {
 
         private func hasIncomingLane(at commitIndex: Int) -> Bool {
             guard commitIndex > 0 else { return false }
-            let currentLane = rows[commitIndex].lane
-            let prev = rows[commitIndex - 1]
-            return prev.edges.contains { $0.toLane == currentLane }
+            guard let current = commit(atRow: commitIndex + 1),
+                  let prev = commit(atRow: commitIndex)
+            else { return false }
+            return prev.edges.contains { $0.toLane == current.lane }
         }
     }
 }

@@ -81,12 +81,61 @@ extension RepoTab {
     /// Installs a fresh first page as the whole commit list. Fewer rows than `requested` means
     /// the history ended. Bumps the generation, so pages fetched for the old list are dropped.
     func replaceCommits(with rows: [CommitRow], requested: UInt32) {
+        graphIndexTask?.cancel()
+        graphIndexTask = nil
         graphGeneration += 1
         commits = rows
+        totalCommitCount = rows.count
         graphRevision = UUID()
         hasMoreCommits = rows.count >= Int(requested)
         historyState = .loaded
         reconcileSelection()
+        if hasMoreCommits && activeSearchQuery == nil {
+            startBackgroundGraphIndexing()
+        }
+    }
+
+    /// Indexes the full unfiltered commit graph in Rust (compact OIDs + lane checkpoints, no
+    /// row string materialization) so the table scrollbar reflects the full history without
+    /// blocking startup.
+    func startBackgroundGraphIndexing() {
+        graphIndexTask?.cancel()
+        let session = self.session
+        let generation = graphGeneration
+        let scoped = scopeToCurrentBranch
+        graphIndexTask = Task { [weak self] in
+            do {
+                let summary = try await Task.detached {
+                    session.setCommitSort(sort: CommitSortPreference.current.core)
+                    return try session.indexCommitGraph(scoped: scoped)
+                }.value
+                guard !Task.isCancelled, let self,
+                      self.session === session,
+                      self.graphGeneration == generation,
+                      self.activeSearchQuery == nil,
+                      self.scopeToCurrentBranch == scoped
+                else { return }
+                let indexedCount = Int(summary.totalCount)
+                if indexedCount > self.totalCommitCount {
+                    self.totalCommitCount = indexedCount
+                    self.graphRevision = UUID()
+                }
+                self.hasMoreCommits = !summary.exhausted
+            } catch {
+                // Background indexing is best-effort; on-demand paging remains available.
+            }
+        }
+    }
+
+    /// Fetches a small materialized slice of the unfiltered graph for virtualized scrolling.
+    func fetchGraphWindow(offset: Int, limit: Int) async throws -> [CommitRow] {
+        let session = self.session
+        let scoped = scopeToCurrentBranch
+        let uOffset = UInt32(max(0, offset))
+        let uLimit = UInt32(max(0, limit))
+        return try await Task.detached {
+            try RepoTab.graphPage(session, scoped: scoped, offset: uOffset, limit: uLimit, query: nil)
+        }.value
     }
 
     /// Adds the next page to the commit list. Fewer rows than `requested` means the history ended.
@@ -95,6 +144,7 @@ extension RepoTab {
             hasMoreCommits = false
         }
         commits.append(contentsOf: page)
+        totalCommitCount = max(totalCommitCount, commits.count)
         graphRevision = UUID()
     }
 
@@ -185,6 +235,65 @@ extension RepoTab {
         defer { isLoadingMore = false }
 
         let session = self.session
+        // Fast path for unfiltered graphs: look up the commit's exact index in Rust's compact
+        // index and fetch only a small window around it instead of paging tens of thousands of rows.
+        if activeSearchQuery == nil {
+            let scoped = scopeToCurrentBranch
+            let generation = graphGeneration
+            do {
+                let foundIndex = try await Task.detached {
+                    session.setCommitSort(sort: CommitSortPreference.current.core)
+                    return try session.findCommitIndex(oidHex: oidHex, scoped: scoped)
+                }.value
+                if Task.isCancelled || self.session !== session || generation != graphGeneration { return }
+                if let idx = foundIndex {
+                    let rowIdx = Int(idx)
+                    let winStart = max(0, rowIdx - 20)
+                    let winLen = 60
+                    let window = try await Task.detached {
+                        try RepoTab.graphPage(
+                            session,
+                            scoped: scoped,
+                            offset: UInt32(winStart),
+                            limit: UInt32(winLen),
+                            query: nil
+                        )
+                    }.value
+                    if Task.isCancelled || self.session !== session || generation != graphGeneration { return }
+                    let localIdx = rowIdx - winStart
+                    if localIdx >= 0, localIdx < window.count {
+                        let target = window[localIdx]
+                        if rowIdx + 1 > totalCommitCount {
+                            totalCommitCount = rowIdx + 1
+                            graphRevision = UUID()
+                        }
+                        scrollRequest = ScrollRequest(
+                            oidHex: oidHex,
+                            rowIndex: rowIdx,
+                            prefetchedOffset: winStart,
+                            prefetchedRows: window
+                        )
+                        selectCommit(target)
+                        return
+                    }
+                } else if !hasMoreCommits {
+                    // Index is exhausted and commit wasn't found; skip the paging loop.
+                    if scopeToCurrentBranch {
+                        toggleScopeToCurrentBranch()
+                        revealTask = Task { await self.revealCommit(oidHex: oidHex) }
+                        return
+                    }
+                    errorMessage = "That commit isn't in the current commit list."
+                    scrollToWorkingChanges()
+                    return
+                }
+            } catch {
+                guard self.session === session else { return }
+                showError(error)
+                return
+            }
+        }
+
         // Each graph call re-walks history from the tips (cost ~ offset + limit), so
         // grow the page geometrically: O(log n) calls instead of n / pageSize.
         var limit = pageSize

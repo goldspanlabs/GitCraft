@@ -93,4 +93,66 @@ final class GraphLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(cell.leadingContentFrame.maxX, cell.authorFrame.minX)
         XCTAssertEqual(cell.timeFrame.maxX, 690, accuracy: 2.5)
     }
+
+    func testCoordinatorVirtualizedRowCountAndWindowCache() {
+        let initialRow = CommitRow(
+            oidHex: "aaa0000",
+            shortOid: "aaa0000",
+            summary: "Initial",
+            authorName: "Alice",
+            authorEmail: "alice@example.com",
+            timestamp: 1_700_000_000,
+            lane: 0,
+            colorIdx: 0,
+            maxLanes: 1,
+            edges: [],
+            refs: [],
+            isRemoteOnly: false,
+            isUnpushed: false
+        )
+        let deepRow = CommitRow(
+            oidHex: "bbb9999",
+            shortOid: "bbb9999",
+            summary: "Deep commit",
+            authorName: "Bob",
+            authorEmail: "bob@example.com",
+            timestamp: 1_700_000_000,
+            lane: 0,
+            colorIdx: 1,
+            maxLanes: 1,
+            edges: [],
+            refs: [],
+            isRemoteOnly: false,
+            isUnpushed: false
+        )
+
+        let coordinator = CommitTableView.Coordinator(
+            rows: [initialRow],
+            totalCommitCount: 50_000,
+            isSearchActive: false,
+            workingChangesCount: 0,
+            onLoadMore: {},
+            onFetchWindow: { _, _ in [] },
+            onSelectCommits: { _ in },
+            onCopyOid: { _ in },
+            onCreateBranchAtCommit: { _ in },
+            onCreateTagAtCommit: { _ in },
+            onCreateWorktreeAtCommit: { _ in },
+            canRemoveWorktree: { _ in false },
+            onRemoveWorktree: { _ in },
+            onCheckoutCommit: { _ in }
+        )
+
+        let table = NSTableView()
+        // Row 0 is Working Changes + 50,000 virtualized commit rows.
+        XCTAssertEqual(coordinator.numberOfRows(in: table), 50_001)
+        XCTAssertEqual(coordinator.commit(atRow: 1)?.oidHex, "aaa0000")
+        XCTAssertNil(coordinator.commit(atRow: 25_001))
+
+        coordinator.insertIntoWindowCache(offset: 25_000, fetched: [deepRow])
+        XCTAssertEqual(coordinator.commit(atRow: 25_001)?.oidHex, "bbb9999")
+
+        coordinator.clearWindowCache()
+        XCTAssertNil(coordinator.commit(atRow: 25_001))
+    }
 }

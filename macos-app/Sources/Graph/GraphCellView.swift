@@ -49,6 +49,13 @@ final class GraphCellView: NSView {
         needsDisplay = true
     }
 
+    func configurePlaceholder() {
+        isWorkingChanges = false
+        commit = nil
+        hasIncomingLine = false
+        needsDisplay = true
+    }
+
     func configure(commit: CommitRow, hasIncomingLine: Bool) {
         isWorkingChanges = false
         self.commit = commit

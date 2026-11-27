@@ -78,6 +78,8 @@ struct RepoDetailView: View {
                 ZStack(alignment: .bottom) {
                     CommitTableView(
                         rows: tab.commits,
+                        totalCommitCount: tab.totalCommitCount,
+                        isSearchActive: tab.activeSearchQuery != nil,
                         graphRevision: tab.graphRevision,
                         graphGeneration: tab.graphGeneration,
                         workingChangesCount: tab.totalChangesCount,
@@ -91,6 +93,9 @@ struct RepoDetailView: View {
                         isBusy: tab.isBusy,
                         scrollRequest: tab.scrollRequest,
                         onLoadMore: { tab.loadMoreCommits() },
+                        onFetchWindow: { offset, limit in
+                            try await tab.fetchGraphWindow(offset: offset, limit: limit)
+                        },
                         onSelectCommits: { commits in
                             if !commits.isEmpty {
                                 isBottomExpandedToMax = false

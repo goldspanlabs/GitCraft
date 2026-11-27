@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use gix::bstr::ByteSlice;
 
-use crate::{CommitRow, CommitSort, GitCraftError, RefBadge, RefKind};
+use crate::{CommitRow, CommitSort, GitCraftError, GraphIndexSummary, RefBadge, RefKind};
 
 pub use detail::get_commit_detail;
 pub use refs::{list_branches, list_tags};
@@ -33,7 +33,7 @@ struct IndexedCommit {
 
 /// Snapshot [`LaneState`] every this many commits so any page can jump near `offset` and
 /// replay at most `CHECKPOINT_STRIDE - 1` commits.
-const CHECKPOINT_STRIDE: usize = 512;
+const CHECKPOINT_STRIDE: usize = 256;
 
 /// Upper bound on indexed unfiltered commits (~11 MiB at 22 B/commit).
 const MAX_INDEXED_COMMITS: usize = 500_000;
@@ -121,6 +121,211 @@ pub fn graph_state_token(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut hasher);
     Ok(hasher.finish())
+}
+
+/// Walk and index the unfiltered commit graph (up to `MAX_INDEXED_COMMITS`) into [`GraphCache`]
+/// without materializing `CommitRow` text or edges. Returns the indexed count and whether the
+/// history is exhausted.
+pub fn index_commit_graph(
+    sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
+    scoped: bool,
+    sort: CommitSort,
+) -> Result<GraphIndexSummary, GitCraftError> {
+    let mut repo = sync_repo.to_thread_local();
+    repo.object_cache_size_if_unset(4 * 1024 * 1024);
+    let (refs_by_oid, mut tips, mut local_reachable) = collect_refs_and_tips(&repo)?;
+    if tips.is_empty() {
+        return Ok(GraphIndexSummary {
+            total_count: 0,
+            exhausted: true,
+        });
+    }
+    let mut hidden: Vec<gix::ObjectId> = Vec::new();
+    if scoped {
+        if let Some((scoped_tips, scoped_hidden)) = branch_scope(&repo) {
+            tips = scoped_tips;
+            hidden = scoped_hidden;
+        }
+    }
+
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        None,
+        scoped,
+        sort,
+    );
+
+    if let Ok(guard) = cache.lock() {
+        if guard.key == key {
+            if let CachedWalk::Indexed {
+                commits, exhausted, ..
+            } = &guard.walk
+            {
+                if *exhausted || commits.len() >= MAX_INDEXED_COMMITS {
+                    return Ok(GraphIndexSummary {
+                        total_count: commits.len() as u32,
+                        exhausted: *exhausted,
+                    });
+                }
+            }
+        }
+    }
+
+    let has_local_refs = !local_reachable.is_empty();
+    let unpushed = unpushed_head_commits(&repo, &refs_by_oid);
+
+    let ids: Box<dyn Iterator<Item = Result<gix::ObjectId, GitCraftError>>> = match sort {
+        CommitSort::ByDate => {
+            let walk = repo
+                .rev_walk(tips)
+                .with_hidden(hidden)
+                .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                    gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+                ))
+                .all()
+                .map_err(GitCraftError::from_display)?;
+            Box::new(walk.map(|entry| {
+                entry
+                    .map(|info| info.id)
+                    .map_err(GitCraftError::from_display)
+            }))
+        }
+        CommitSort::Topological => {
+            let commit_graph = repo.commit_graph_if_enabled().ok().flatten();
+            let topo =
+                gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(hidden))
+                    .with_commit_graph(commit_graph)
+                    .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
+                    .parents(gix::traverse::commit::Parents::All)
+                    .build()
+                    .map_err(GitCraftError::from_display)?;
+            Box::new(topo.map(|entry| {
+                entry
+                    .map(|info| info.id)
+                    .map_err(GitCraftError::from_display)
+            }))
+        }
+    };
+
+    let mut lanes = LaneState::default();
+    let mut indexed_commits: Vec<IndexedCommit> = Vec::new();
+    let mut checkpoints: Vec<LaneState> = Vec::new();
+    let mut exhausted = true;
+
+    for entry in ids {
+        if indexed_commits.len() >= MAX_INDEXED_COMMITS {
+            exhausted = false;
+            break;
+        }
+        let oid = entry?;
+        let commit = repo.find_commit(oid).map_err(GitCraftError::from_display)?;
+        let parents = CommitParents::from_iter(commit.parent_ids().map(|id| id.detach()));
+
+        let is_local = !has_local_refs || local_reachable.remove(&oid);
+        if is_local {
+            for &p in parents.iter() {
+                local_reachable.insert(p);
+            }
+        }
+
+        let idx = indexed_commits.len();
+        if idx.is_multiple_of(CHECKPOINT_STRIDE) {
+            checkpoints.push(lanes.clone());
+        }
+        let mut flags = 0u8;
+        if !is_local {
+            flags |= FLAG_REMOTE_ONLY;
+        }
+        if unpushed.contains(&oid) {
+            flags |= FLAG_UNPUSHED;
+        }
+        indexed_commits.push(IndexedCommit { oid, flags });
+        lanes.advance_commit(oid, &parents);
+    }
+
+    let total_count = indexed_commits.len() as u32;
+    if let Ok(mut guard) = cache.lock() {
+        *guard = GraphCache {
+            key,
+            walk: CachedWalk::Indexed {
+                commits: indexed_commits,
+                checkpoints,
+                exhausted,
+            },
+        };
+    }
+    Ok(GraphIndexSummary {
+        total_count,
+        exhausted,
+    })
+}
+
+/// Finds the 0-based row index of `oid_hex` in the unfiltered graph, indexing the graph first
+/// if it isn't already cached.
+pub fn find_commit_index(
+    sync_repo: &gix::ThreadSafeRepository,
+    cache: &SharedGraphCache,
+    oid_hex: &str,
+    scoped: bool,
+    sort: CommitSort,
+) -> Result<Option<u32>, GitCraftError> {
+    let Ok(target_oid) = gix::ObjectId::from_hex(oid_hex.as_bytes()) else {
+        return Ok(None);
+    };
+
+    let repo = sync_repo.to_thread_local();
+    let (refs_by_oid, mut tips, local_reachable) = collect_refs_and_tips(&repo)?;
+    if tips.is_empty() {
+        return Ok(None);
+    }
+    if scoped {
+        if let Some((scoped_tips, _)) = branch_scope(&repo) {
+            tips = scoped_tips;
+        }
+    }
+    let key = cache_key(
+        &repo,
+        &refs_by_oid,
+        &tips,
+        &local_reachable,
+        None,
+        scoped,
+        sort,
+    );
+
+    if let Ok(guard) = cache.lock() {
+        if guard.key == key {
+            if let CachedWalk::Indexed {
+                commits, exhausted, ..
+            } = &guard.walk
+            {
+                if let Some(idx) = commits.iter().position(|c| c.oid == target_oid) {
+                    return Ok(Some(idx as u32));
+                }
+                if *exhausted || commits.len() >= MAX_INDEXED_COMMITS {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    index_commit_graph(sync_repo, cache, scoped, sort)?;
+
+    if let Ok(guard) = cache.lock() {
+        if guard.key == key {
+            if let CachedWalk::Indexed { commits, .. } = &guard.walk {
+                return Ok(commits
+                    .iter()
+                    .position(|c| c.oid == target_oid)
+                    .map(|idx| idx as u32));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Tips and hidden commits for the branch view, or `None` when the full graph should be

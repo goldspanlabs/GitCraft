@@ -180,3 +180,40 @@ fn stress_test_10k_commits_pagination_search_and_large_diff() {
         diff_rows.len()
     );
 }
+
+#[test]
+fn index_commit_graph_and_random_access_lookup() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    generate_large_repo_via_fast_import(root, 1_500);
+
+    let session = RepoSession::new(root.to_string_lossy().into_owned()).unwrap();
+
+    // Index all 1,510 commits without materializing rows.
+    let summary = session.index_commit_graph(false).unwrap();
+    assert_eq!(summary.total_count, 1_510);
+    assert!(summary.exhausted);
+
+    // Random-access window deep in the history materializes directly from checkpoints.
+    let deep_window = session.get_commit_graph(1_200, 50, None).unwrap();
+    assert_eq!(deep_window.len(), 50);
+
+    // find_commit_index returns the exact 0-based row index.
+    let target_oid = deep_window[17].oid_hex.clone();
+    let found = session.find_commit_index(target_oid, false).unwrap();
+    assert_eq!(found, Some(1_217));
+
+    // Unknown or invalid OIDs return None.
+    assert_eq!(
+        session
+            .find_commit_index("0000000000000000000000000000000000000000".into(), false)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        session
+            .find_commit_index("not-a-hex".into(), false)
+            .unwrap(),
+        None
+    );
+}

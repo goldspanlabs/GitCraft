@@ -179,6 +179,22 @@ final class CommitRowCellView: NSTableCellView {
         avatarWidthConstraint.constant = 0
     }
 
+    /// Blank row shown briefly while a virtualized scroll window materializes in the background.
+    func configurePlaceholder() {
+        graphWidthConstraint.constant = 24
+        graphView.alphaValue = 1.0
+        graphView.configurePlaceholder()
+        badgesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        badgesStack.isHidden = true
+        summaryLabel.stringValue = ""
+        authorLabel.stringValue = ""
+        hashLabel.stringValue = ""
+        timeLabel.stringValue = ""
+        avatarView.isHidden = true
+        avatarView.clear()
+        avatarWidthConstraint.constant = 0
+    }
+
     func configure(
         commit: CommitRow,
         hasIncomingLine: Bool,

@@ -171,6 +171,12 @@ pub struct FileChange {
     pub staged: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphIndexSummary {
+    pub total_count: u32,
+    pub exhausted: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct CommitRow {
     pub oid_hex: String,
