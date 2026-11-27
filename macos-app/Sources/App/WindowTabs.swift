@@ -5,6 +5,7 @@ import SwiftUI
 extension NSToolbarItem.Identifier {
     static let repoTitle = NSToolbarItem.Identifier("GitCraft.repoTitle")
     static let repoActions = NSToolbarItem.Identifier("GitCraft.repoActions")
+    static let repoSpinner = NSToolbarItem.Identifier("GitCraft.repoSpinner")
     static let repoSearch = NSToolbarItem.Identifier("GitCraft.repoSearch")
 }
 
@@ -138,8 +139,8 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     private static let titleTextWidthRange: ClosedRange<CGFloat> = 200...360
     private static let titleTextWidthFraction: CGFloat = 0.2
     private static let titleTextMinimumWidth: CGFloat = 60
-    /// Everything in the title block besides the text: edge insets, spacing and the spinner slot.
-    private static let titleChromeWidth: CGFloat = 48
+    /// Everything in the title block besides the text: its edge insets.
+    private static let titleChromeWidth: CGFloat = 16
     /// Space the toolbar keeps between the title block and the action buttons. macOS 26 needs
     /// 16; with less it pushes the buttons off centre.
     private static let titleActionsGap: CGFloat = 16
@@ -359,7 +360,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     // MARK: Toolbar
 
     func toolbarDefaultItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .repoTitle, .flexibleSpace, .repoActions, .flexibleSpace, .repoSearch]
+        [.toggleSidebar, .sidebarTrackingSeparator, .repoTitle, .flexibleSpace, .repoActions, .flexibleSpace, .repoSpinner, .repoSearch]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -373,28 +374,15 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     ) -> NSToolbarItem? {
         switch identifier {
         case .repoTitle:
-            // The window title is drawn here (the system one is hidden) so the busy
-            // spinner can sit immediately to the right of it.
+            // The window title is drawn here (the system one is hidden).
             let text = NSStackView(views: [titleLabel, subtitleLabel])
             text.orientation = .vertical
             text.alignment = .leading
             text.spacing = 0
 
-            // Fixed-size slot: the layout doesn't shift when the spinner comes and goes.
-            let slot = NSView()
-            slot.translatesAutoresizingMaskIntoConstraints = false
-            slot.addSubview(spinner)
-            NSLayoutConstraint.activate([
-                slot.widthAnchor.constraint(equalToConstant: 16),
-                slot.heightAnchor.constraint(equalToConstant: 16),
-                spinner.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
-                spinner.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
-            ])
-
-            let row = NSStackView(views: [text, slot])
+            let row = NSStackView(views: [text])
             row.orientation = .horizontal
             row.alignment = .centerY
-            row.spacing = 16
             row.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
             // Fixed width (not a maximum) so the title block doesn't change with the name length.
             // Low compression resistance lets long names truncate in the middle, like the sidebar.
@@ -422,6 +410,23 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             item.isBordered = false
             item.label = "Actions"
             actionsView = hosting
+            return item
+        case .repoSpinner:
+            // Fixed-size slot: the layout doesn't shift when the spinner comes and goes.
+            let slot = NSView()
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            slot.addSubview(spinner)
+            NSLayoutConstraint.activate([
+                slot.widthAnchor.constraint(equalToConstant: 16),
+                slot.heightAnchor.constraint(equalToConstant: 16),
+                spinner.centerXAnchor.constraint(equalTo: slot.centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: slot.centerYAnchor),
+            ])
+
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = slot
+            item.isBordered = false
+            item.label = "Busy"
             return item
         case .repoSearch:
             let item = CommitFilterToolbarItem(itemIdentifier: identifier)
