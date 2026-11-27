@@ -91,7 +91,9 @@ extension RepoTab {
 
     func fetchRemote(_ name: String) {
         let includeTags = GitPreferences.fetchIncludesTags
-        performMutation { try $0.fetchRemote(name: name, includeTags: includeTags) }
+        performMutation(busyLabel: "Fetching \(name)…") {
+            try $0.fetchRemote(name: name, includeTags: includeTags)
+        }
     }
 
     func testRemoteConnection(url: String) async throws {
@@ -155,8 +157,8 @@ extension RepoTab {
             self?.skipHooks = false
             if pushAfter {
                 if headWasPushed.value {
-                    self?.toast = Toast(
-                        message: "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
+                    self?.showToast(
+                        "Amended locally. This commit was already pushed; push it with --force-with-lease when you're ready."
                     )
                 } else {
                     // Hop to the next run-loop turn so this mutation finishes (and clears
@@ -252,27 +254,49 @@ extension RepoTab {
         performMutation { try $0.rebaseOnto(commit: oid) }
     }
 
-    /// Hard resets go through the confirmation dialog; soft and mixed resets run directly.
+    /// Hard resets go through the confirmation dialog; soft and mixed resets run directly and
+    /// can be undone.
     func resetTo(_ oid: String, mode: ResetMode) {
-        if mode == .hard {
+        switch mode {
+        case .hard:
             pendingConfirmation = .resetHard(branch: currentBranch, commit: oid)
-            return
+        case .soft, .mixed:
+            let kept = mode == .soft ? "staged" : "unstaged"
+            performUndoableHeadMove(
+                actionName: "Reset",
+                message: "Reset \"\(currentBranchLabel)\" to \(oid.shortOid). Its changes are \(kept).",
+                undoMode: mode
+            ) { try $0.resetTo(commit: oid, mode: mode) }
+        case .keep:
+            performReset(oid, mode: .keep)
         }
-        performReset(oid, mode: mode)
     }
 
     /// Runs the reset without asking again. The confirmed hard reset calls this directly,
-    /// because `resetTo` would re-arm the dialog.
+    /// because `resetTo` would re-arm the dialog. It isn't undoable: the uncommitted changes
+    /// it discards can't be brought back.
     private func performReset(_ oid: String, mode: ResetMode) {
-        performMutation { try $0.resetTo(commit: oid, mode: mode) }
+        performMutation({ _ = try $0.resetTo(commit: oid, mode: mode) }, onSuccess: { [weak self] in
+            // It may not move HEAD, but it changed files, so nothing undone can be redone.
+            self?.redoStack.removeAll()
+        })
     }
 
     func cherryPick(_ oid: String) {
-        performMutation { try $0.cherryPick(commit: oid) }
+        // Keep mode on undo: the picked changes go, other local changes stay.
+        performUndoableHeadMove(
+            actionName: "Cherry Pick",
+            message: "Cherry-picked \(oid.shortOid) onto \"\(currentBranchLabel)\".",
+            undoMode: .keep
+        ) { try $0.cherryPick(commit: oid) }
     }
 
     func revertCommit(_ oid: String) {
-        performMutation { try $0.revertCommit(commit: oid) }
+        performUndoableHeadMove(
+            actionName: "Revert",
+            message: "Reverted \(oid.shortOid) on \"\(currentBranchLabel)\".",
+            undoMode: .keep
+        ) { try $0.revertCommit(commit: oid) }
     }
 
     func abortRebase() {
@@ -383,13 +407,25 @@ extension RepoTab {
     func runRemote(_ operation: RemoteOperation) {
         let pullStrategy = PullStrategyPreference.current.core
         let includeTags = GitPreferences.fetchIncludesTags
-        performMutation { session in
+        let message = SendableBox<String?>(nil)
+        performMutation(busyLabel: operation.busyLabel, { session in
+            if operation == .push {
+                message.value = RemoteOperation.pushMessage(try session.push())
+                return
+            }
+            // Read the branches on both sides, so the note says what actually changed.
+            let before = (try? session.listBranches()) ?? []
             switch operation {
             case .fetch: try session.fetch(includeTags: includeTags)
             case .pull: try session.pull(strategy: pullStrategy)
-            case .push: try session.push()
+            case .push: break
             }
-        }
+            let after = (try? session.listBranches()) ?? []
+            message.value = RemoteOperation.successMessage(for: operation, before: before, after: after)
+        }, onSuccess: { [weak self] in
+            guard let text = message.value else { return }
+            self?.showToast(text, isSuccess: true)
+        })
     }
 
     func addWorktree(
@@ -489,16 +525,5 @@ extension RepoTab {
 
     func copyOid(_ oid: String) {
         Clipboard.copy(oid)
-    }
-}
-
-/// Carries a value from a mutation's background work back to the main actor. It is written
-/// before the work finishes and read only after `performMutation` has awaited that work, so the
-/// unchecked `Sendable` is safe.
-private final class SendableBox<Value>: @unchecked Sendable {
-    var value: Value
-
-    init(_ value: Value) {
-        self.value = value
     }
 }

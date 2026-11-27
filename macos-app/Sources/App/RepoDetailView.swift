@@ -5,6 +5,11 @@ struct RepoDetailView: View {
     @ObservedObject var workspace: WorkspaceState
     @ObservedObject var tab: RepoTab
 
+    /// The tooltip on a disabled Continue button while conflicts remain.
+    private var conflictsBlockContinue: String? {
+        tab.hasConflicts ? "Resolve the conflicts and stage the fixed files to continue." : nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             UpdateBanner(checker: .shared)
@@ -23,7 +28,8 @@ struct RepoDetailView: View {
                     abortLabel: "Abort Rebase…",
                     onAbort: { tab.pendingConfirmation = .abortRebase },
                     continueLabel: "Continue Rebase",
-                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRebase() }
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRebase() },
+                    continueBlockedReason: conflictsBlockContinue
                 )
             } else if tab.isCherryPicking {
                 OperationBanner(
@@ -33,7 +39,8 @@ struct RepoDetailView: View {
                     abortLabel: "Abort Cherry Pick…",
                     onAbort: { tab.pendingConfirmation = .abortCherryPick },
                     continueLabel: "Continue Cherry Pick",
-                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueCherryPick() }
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueCherryPick() },
+                    continueBlockedReason: conflictsBlockContinue
                 )
             } else if tab.isReverting {
                 OperationBanner(
@@ -43,7 +50,8 @@ struct RepoDetailView: View {
                     abortLabel: "Abort Revert…",
                     onAbort: { tab.pendingConfirmation = .abortRevert },
                     continueLabel: "Continue Revert",
-                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRevert() }
+                    onContinue: tab.hasConflicts || tab.isBusy ? nil : { tab.continueRevert() },
+                    continueBlockedReason: conflictsBlockContinue
                 )
             } else if tab.isMerging || tab.hasConflicts {
                 OperationBanner(
@@ -134,17 +142,26 @@ struct RepoDetailView: View {
                         .id(error)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    if let toast = tab.toast {
-                        ToastView(message: toast.message, autoDismissAfter: 4) {
-                            tab.toast = nil
+                    ForEach(tab.toasts) { toast in
+                        ToastView(
+                            message: toast.message,
+                            tint: toast.isSuccess ? .green : .yellow,
+                            icon: toast.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                            // Longer when there's a button, so there's time to reach it.
+                            autoDismissAfter: toast.action == nil ? 4 : 10,
+                            actionTitle: toast.action?.title,
+                            actionHelp: toast.action?.help,
+                            onAction: toast.action.map { action in { action.perform() } },
+                            actionDisabled: !tab.toastActionEnabled(toast)
+                        ) {
+                            tab.dismissToast(toast.id)
                         }
-                        .id(toast.id)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
                 .padding(.top, 10)
             }
-            .animation(.easeOut(duration: 0.2), value: tab.toast?.id)
+            .animation(.easeOut(duration: 0.2), value: tab.toasts.map(\.id))
             .animation(.easeOut(duration: 0.2), value: tab.errorMessage)
         }
         .modifier(RepoSheets(tab: tab))

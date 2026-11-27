@@ -65,7 +65,7 @@ struct SidebarView: View {
             .item("Edit \(remote.name)", enabled: !tab.isBusy) {
                 tab.presentEditRemote(remote)
             },
-            .item("Delete \(remote.name)", enabled: !tab.isBusy) {
+            .item("Remove \(remote.name)…", enabled: !tab.isBusy) {
                 tab.pendingConfirmation = .removeRemote(name: remote.name)
             },
             .separator,
@@ -75,7 +75,7 @@ struct SidebarView: View {
                     : AutoFetchInterval.fiveMinutes.rawValue
                 UserDefaults.standard.set(next, forKey: AutoFetchInterval.storageKey)
             },
-            .item("Add New Remote", enabled: !tab.isBusy) {
+            .item("Add New Remote…", enabled: !tab.isBusy) {
                 tab.presentAddRemote()
             },
         ]
@@ -160,7 +160,7 @@ struct SidebarView: View {
             } header: {
                 SectionHeaderLabel(title: "REMOTES") {
                     [
-                        .item("Add Remote", enabled: !tab.isBusy) {
+                        .item("Add Remote…", enabled: !tab.isBusy) {
                             tab.presentAddRemote()
                         },
                     ]

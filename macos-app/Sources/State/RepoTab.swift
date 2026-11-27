@@ -11,6 +11,20 @@ final class RepoTab: ObservableObject, Identifiable {
     struct Toast: Identifiable {
         let id = UUID()
         let message: String
+        /// A finished action rather than a no-op or warning: drawn with a checkmark.
+        var isSuccess = false
+        /// A button on the note, such as Undo. Using it also closes the note.
+        var action: ToastAction?
+    }
+
+    struct ToastAction {
+        let title: String
+        /// The undo step this button takes back, if it is an Undo button. It works only while
+        /// that step is the latest, and the note goes once the step leaves the stack.
+        var undoEntryID: UUID?
+        /// The button's tooltip, such as its keyboard shortcut.
+        var help: String?
+        let perform: @MainActor () -> Void
     }
 
     enum LocalChangesHandling: String, CaseIterable, Identifiable {
@@ -61,11 +75,28 @@ final class RepoTab: ObservableObject, Identifiable {
     @Published var selectedFilePath: String?
     @Published var selectedFileStaged = false
     @Published var scrollRequest: ScrollRequest?
-    @Published var isBusy = false
+    @Published var isBusy = false {
+        didSet { if !isBusy { busyLabel = nil } }
+    }
+    /// What the running mutation is doing, for the title-bar spinner. Nil when it isn't named.
+    @Published var busyLabel: String?
     @Published var errorMessage: String?
 
-    /// A brief note over the commit graph for a no-op result, which isn't a failure.
-    @Published var toast: Toast?
+    /// Brief notes over the commit graph, oldest first: finished actions, or no-op results,
+    /// which aren't failures. Each clears itself; see `showToast`.
+    @Published private(set) var toasts: [Toast] = []
+
+    /// The most notes on screen at once; a new one past this pushes out the oldest.
+    static let maxToasts = 3
+
+    /// Actions that can be taken back, oldest first. Change it through `recordUndo` and
+    /// `undo` (see Undo.swift).
+    @Published var undoStack: [UndoEntry] = []
+    /// Undone actions that Redo can do again, oldest first. Emptied by any new action.
+    @Published var redoStack: [UndoEntry] = []
+    /// Whether a text field or text view in this tab's window has the keyboard, which keeps
+    /// ⌘Z and ⇧⌘Z for editing text. Set by the window controller.
+    @Published var isEditingText = false
 
     @Published var pendingConfirmation: DestructiveAction?
     @Published var activeSheet: ActiveSheet?
@@ -215,10 +246,36 @@ final class RepoTab: ObservableObject, Identifiable {
         self.repoPath = listed.first?.path ?? canonical
     }
 
+    /// Adds a note below any already showing. The same text again moves that note to the
+    /// bottom and restarts its timer, rather than showing it twice.
+    func showToast(_ message: String, isSuccess: Bool = false, action: ToastAction? = nil) {
+        toasts.removeAll { $0.message == message }
+        toasts.append(Toast(message: message, isSuccess: isSuccess, action: action))
+        if toasts.count > Self.maxToasts {
+            toasts.removeFirst(toasts.count - Self.maxToasts)
+        }
+    }
+
+    func dismissToast(_ id: UUID) {
+        toasts.removeAll { $0.id == id }
+    }
+
+    /// Closes the note whose Undo button takes back `undoEntryID`.
+    func dismissToasts(forUndo undoEntryID: UUID) {
+        toasts.removeAll { $0.action?.undoEntryID == undoEntryID }
+    }
+
+    /// Whether `toast`'s button can be used now.
+    func toastActionEnabled(_ toast: Toast) -> Bool {
+        guard !isBusy, let action = toast.action else { return false }
+        guard let undoID = action.undoEntryID else { return true }
+        return undoID == latestUndo?.id
+    }
+
     /// Shows a failure in the banner, or a brief toast when the core reports a no-op.
     func showError(_ error: Error) {
         if error.isWarning {
-            toast = Toast(message: error.displayMessage)
+            showToast(error.displayMessage)
         } else {
             errorMessage = error.displayMessage
         }
@@ -435,7 +492,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 }
                 self.switchCheckout(to: fallback, using: next)
                 let target = fallback.folderName
-                self.toast = Toast(message: "\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
+                self.showToast("\"\(name)\" no longer exists, so this tab switched to \"\(target)\".")
             }
         }
     }
@@ -534,6 +591,9 @@ final class RepoTab: ObservableObject, Identifiable {
         worktreesRefreshPending = false
         session = next
         activeCheckoutPath = canonical
+        // Steps name a commit and branch, not a checkout, so they mustn't follow the tab to
+        // another worktree that happens to be at the same place.
+        clearUndoHistory()
         graphGeneration += 1
         currentBranch = worktrees.first(where: { $0.path == canonical })?.branch ?? ""
         isMerging = false
@@ -716,6 +776,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 tags = tagList
                 stashes = stashList
                 remotes = remoteList
+                pruneUndoStack()
             } catch {
                 guard self.session === session else { return }
                 // A failure after the history arrived leaves it showing as loaded.
@@ -752,13 +813,16 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Runs `work` off the main thread, then refreshes. `onFailure` gets the first chance to
     /// handle an error; returning true means it did, so the error banner is skipped.
+    /// `busyLabel` names the work for the title-bar spinner while it runs.
     func performMutation(
+        busyLabel: String? = nil,
         _ work: @escaping @Sendable (RepoSession) throws -> Void,
         onSuccess: (@MainActor () -> Void)? = nil,
         onFailure: (@MainActor (Error) -> Bool)? = nil
     ) {
         let session = self.session
         isBusy = true
+        self.busyLabel = busyLabel
         errorMessage = nil
         Task {
             defer { isBusy = false }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Repository menu. With no active repository it lists the same items, disabled.
@@ -152,5 +153,57 @@ private struct ActiveTabRepositoryMenuItems: View {
             .disabled(!tab.canPruneWorktrees)
         Button("Add Remote…") { tab.presentAddRemote() }
             .disabled(tab.isBusy)
+    }
+}
+
+/// Edit ▸ Undo and Redo (⌘Z, ⇧⌘Z). With text focused, in a repository window or a sheet,
+/// they edit text as usual; otherwise they take back or redo the repository's latest action.
+/// Where a key goes is decided when it is pressed (see `UndoKeyRouting`), so a stale title
+/// can never send typing to the repository.
+struct UndoRedoMenuItems: View {
+    let tab: RepoTab?
+
+    var body: some View {
+        if let tab {
+            ActiveTabUndoRedoMenuItems(tab: tab)
+        } else {
+            Button(RepoTab.genericUndoTitle) { UndoRedoMenuItems.sendToResponders(.undo) }
+                .keyboardShortcut("z", modifiers: .command)
+            Button(RepoTab.genericRedoTitle) { UndoRedoMenuItems.sendToResponders(.redo) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
+    }
+
+    enum Direction { case undo, redo }
+
+    /// The standard behaviour: the focused text's undo, or nothing.
+    @MainActor
+    static func sendToResponders(_ direction: Direction) {
+        let action = direction == .undo ? Selector(("undo:")) : Selector(("redo:"))
+        NSApp.sendAction(action, to: nil, from: nil)
+    }
+}
+
+private struct ActiveTabUndoRedoMenuItems: View {
+    @ObservedObject var tab: RepoTab
+
+    var body: some View {
+        // Always enabled: text undo can't be observed from here, and a key with nothing to
+        // undo just does nothing.
+        Button(tab.undoMenuTitle) {
+            switch UndoKeyRouting.current(hasRepositoryStep: tab.canUndo) {
+            case .repository: tab.undo()
+            case .text: UndoRedoMenuItems.sendToResponders(.undo)
+            }
+        }
+        .keyboardShortcut("z", modifiers: .command)
+
+        Button(tab.redoMenuTitle) {
+            switch UndoKeyRouting.current(hasRepositoryStep: tab.canRedo) {
+            case .repository: tab.redo()
+            case .text: UndoRedoMenuItems.sendToResponders(.redo)
+            }
+        }
+        .keyboardShortcut("z", modifiers: [.command, .shift])
     }
 }

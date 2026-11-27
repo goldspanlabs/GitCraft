@@ -998,6 +998,186 @@ fn first_push_publishes_the_branch_and_sets_its_upstream() {
 }
 
 #[test]
+fn push_reports_what_it_sent_and_where() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+
+    let first = session.push().unwrap();
+    assert_eq!(first.branch, "main");
+    assert_eq!(first.destination, "origin/main");
+    assert!(first.published, "the first push creates the remote branch");
+
+    write(dir.path(), "a.txt", "one\n");
+    run_git(dir.path(), &["commit", "-qam", "one"]);
+    write(dir.path(), "a.txt", "two\n");
+    run_git(dir.path(), &["commit", "-qam", "two"]);
+    let second = session.push().unwrap();
+    assert_eq!((second.commits, second.published), (2, false));
+    assert_eq!(second.destination, "origin/main");
+
+    let nothing = session.push().unwrap();
+    assert_eq!((nothing.commits, nothing.published), (0, false));
+    assert!(nothing.up_to_date);
+    assert!(!second.up_to_date);
+}
+
+#[test]
+fn a_forced_rewind_is_reported_as_forced_not_up_to_date() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    write(dir.path(), "a.txt", "extra\n");
+    run_git(dir.path(), &["commit", "-qam", "extra"]);
+    session.push().unwrap();
+
+    // Rewind main by one and force it over the remote, as `push.default` allows here.
+    run_git(dir.path(), &["reset", "-q", "--hard", "HEAD~1"]);
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "+refs/heads/main:refs/heads/main",
+        ],
+    );
+    let result = session.push().unwrap();
+
+    assert!(result.forced, "{result:?}");
+    assert!(!result.up_to_date);
+}
+
+#[test]
+fn push_says_when_its_settings_left_the_branch_out() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    run_git(dir.path(), &["branch", "-q", "other"]);
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/other:refs/heads/other",
+        ],
+    );
+
+    let result = session.push().unwrap();
+    assert!(!result.included_branch, "{result:?}");
+    assert!(!result.published && !result.up_to_date && !result.forced);
+}
+
+#[test]
+fn push_reads_the_line_for_the_checked_out_branch_under_remapped_refspecs() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    run_git(dir.path(), &["branch", "-q", "other"]);
+    // main goes to `deploy` and `other` to `main`.
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/main:refs/heads/deploy",
+        ],
+    );
+    run_git(
+        dir.path(),
+        &[
+            "config",
+            "--add",
+            "remote.origin.push",
+            "refs/heads/other:refs/heads/main",
+        ],
+    );
+
+    let result = session.push().unwrap();
+    assert!(result.included_branch);
+    assert_eq!(result.destination, "origin/deploy", "{result:?}");
+    assert!(result.published, "deploy is new on the server");
+    assert!(!run_git(origin.path(), &["branch", "--list", "deploy"])
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn push_measures_against_a_separate_push_remote() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+
+    // Pull from origin, push to a fork that doesn't have the branch yet.
+    let fork = tempfile::tempdir().unwrap();
+    run_git(fork.path(), &["init", "-q", "--bare", "-b", "main"]);
+    run_git(
+        dir.path(),
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    run_git(dir.path(), &["config", "branch.main.pushRemote", "fork"]);
+    run_git(dir.path(), &["config", "push.default", "current"]);
+
+    let to_fork = session.push().unwrap();
+    assert_eq!(to_fork.destination, "fork/main");
+    assert!(to_fork.published, "fork had no main, whatever origin has");
+
+    write(dir.path(), "a.txt", "for the fork\n");
+    run_git(dir.path(), &["commit", "-qam", "fork change"]);
+    let again = session.push().unwrap();
+    assert_eq!(again.destination, "fork/main");
+    assert_eq!((again.commits, again.published), (1, false));
+}
+
+#[test]
+fn push_republishes_a_branch_deleted_on_the_remote() {
+    let (dir, origin) = repo_with_bare_origin();
+    let session = open(dir.path());
+    session.push().unwrap();
+    // Deleted on the server; the local origin/main is now stale (no fetch since).
+    run_git(origin.path(), &["branch", "-D", "main"]);
+    run_git(
+        origin.path(),
+        &["symbolic-ref", "HEAD", "refs/heads/elsewhere"],
+    );
+
+    let result = session.push().unwrap();
+    assert!(
+        result.published,
+        "the push recreated it, whatever the stale ref says"
+    );
+}
+
+#[test]
+fn push_of_a_branch_the_server_has_but_this_clone_doesnt_track_isnt_a_publish() {
+    let (dir, origin) = repo_with_bare_origin();
+    // The server already has `main` at this commit, but this clone has no origin/main.
+    run_git(
+        dir.path(),
+        &["push", "-q", origin.path().to_str().unwrap(), "main"],
+    );
+    let result = open(dir.path()).push().unwrap();
+    assert!(!result.published);
+    assert_eq!(result.commits, 0);
+    assert_eq!(result.destination, "origin/main");
+}
+
+#[test]
+fn first_push_reports_the_remote_it_used() {
+    let (dir, _origin) = repo_with_bare_origin();
+    let fork = tempfile::tempdir().unwrap();
+    run_git(fork.path(), &["init", "-q", "--bare", "-b", "main"]);
+    run_git(
+        dir.path(),
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    run_git(dir.path(), &["config", "branch.main.pushRemote", "fork"]);
+
+    // With no upstream yet, the first push publishes to the default remote.
+    let result = open(dir.path()).push().unwrap();
+    assert!(result.published);
+    assert_eq!(result.destination, "origin/main");
+}
+
+#[test]
 fn pull_of_diverged_branches_falls_back_to_a_merge() {
     let (dir, origin) = repo_with_bare_origin();
     let session = open(dir.path());

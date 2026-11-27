@@ -50,6 +50,12 @@ pub fn mutate(repo: &Path, args: &[&str]) -> Result<(), crate::GitCraftError> {
     execute(repo, args, MUTATE_TIMEOUT, true).map(|_| ())
 }
 
+/// Like [`mutate`], returning what the command printed, for commands whose output says what
+/// they did (such as `push --porcelain`).
+pub fn mutate_output(repo: &Path, args: &[&str]) -> Result<String, crate::GitCraftError> {
+    execute(repo, args, MUTATE_TIMEOUT, true)
+}
+
 fn execute_raw(
     repo: &Path,
     args: &[&str],

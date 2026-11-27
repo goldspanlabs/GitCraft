@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// The menu bar's items and keyboard shortcuts.
@@ -231,6 +232,72 @@ final class ShortcutUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
 
         XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Escape closes the details")
+    }
+
+    // MARK: Undo in text
+
+    func testCommandZUndoesTypingInTheCommitDescription() throws {
+        try launch(fixture: FixtureRepository.make(stagedChange: true))
+        let description = app.textViews["commit-description"]
+        XCTAssertTrue(description.waitForExistence(timeout: 20))
+        description.click()
+        description.typeText("Some details")
+        XCTAssertTrue(wait(for: description, toSatisfy: "value == 'Some details'", timeout: 10))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(
+            wait(for: description, toSatisfy: "value == ''", timeout: 10),
+            "⌘Z undoes the typing: \(String(describing: description.value))"
+        )
+
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(
+            wait(for: description, toSatisfy: "value == 'Some details'", timeout: 10),
+            "⇧⌘Z redoes it"
+        )
+    }
+
+    func testPastingIntoTheDescriptionJoinsTheLines() throws {
+        try launch(fixture: FixtureRepository.make(stagedChange: true))
+        let description = app.textViews["commit-description"]
+        XCTAssertTrue(description.waitForExistence(timeout: 20))
+        description.click()
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("first line\nsecond line\n", forType: .string)
+        app.typeKey("v", modifierFlags: .command)
+        XCTAssertTrue(
+            wait(for: description, toSatisfy: "value == 'first line second line'", timeout: 10),
+            "pasted lines go in on one line: \(String(describing: description.value))"
+        )
+
+        // Return still starts a new line, for descriptions of several paragraphs.
+        description.typeKey(.return, modifierFlags: [])
+        description.typeText("more")
+        XCTAssertTrue(wait(
+            for: description, toSatisfy: "value == %@", argument: "first line second line\nmore", timeout: 10
+        ))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertFalse(
+            (description.value as? String ?? "").hasSuffix("more"),
+            "the paste and typing can be undone"
+        )
+    }
+
+    func testCommandZUndoesTypingInTheCommitSummary() throws {
+        try launch(fixture: FixtureRepository.make(stagedChange: true))
+        let summary = app.textFields["commit-summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 20))
+        summary.click()
+        summary.typeText("Fix it")
+        XCTAssertTrue(wait(for: summary, toSatisfy: "value == 'Fix it'", timeout: 10))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(
+            wait(for: summary, toSatisfy: "value != 'Fix it'", timeout: 10),
+            "⌘Z undoes the typing: \(String(describing: summary.value))"
+        )
     }
 
     // MARK: Helpers

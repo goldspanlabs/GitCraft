@@ -106,6 +106,9 @@ pub enum ResetMode {
     Mixed,
     /// Move the branch and discard all uncommitted changes.
     Hard,
+    /// Move the branch and update the files that differ between the two commits, keeping
+    /// other local changes. Refuses when a local change is in one of those files.
+    Keep,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +228,44 @@ pub struct RemoteInfo {
     pub name: String,
     pub fetch_url: String,
     pub push_url: String,
+}
+
+/// Where HEAD points: its commit and the checked-out branch, if any. An undo checks that
+/// HEAD is still here before moving it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadPosition {
+    pub oid: String,
+    /// The branch's full ref, such as `refs/heads/main`; nil when HEAD is detached.
+    pub branch: Option<String>,
+}
+
+/// What a push did, measured against where it actually went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PushResult {
+    /// The branch that was pushed.
+    pub branch: String,
+    /// The remote-tracking name of the destination, such as `origin/main`.
+    pub destination: String,
+    /// Commits the destination didn't have before. Zero when there was nothing to push.
+    pub commits: u32,
+    /// True when the destination branch didn't exist yet, so the push created it.
+    pub published: bool,
+    /// True when the destination already had everything: nothing was sent.
+    pub up_to_date: bool,
+    /// True when the destination's history was replaced rather than added to, as in a forced
+    /// push that rewinds it. `commits` may then be zero.
+    pub forced: bool,
+    /// False when the push succeeded but git reported nothing for `branch`, because the push
+    /// settings (say `remote.<name>.push`) send other branches only. `destination` and the
+    /// other fields then describe nothing.
+    pub included_branch: bool,
+}
+
+/// How an action moved HEAD, so it can be undone by moving HEAD back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadMove {
+    pub before: HeadPosition,
+    pub after: HeadPosition,
 }
 
 #[derive(Clone, Debug)]

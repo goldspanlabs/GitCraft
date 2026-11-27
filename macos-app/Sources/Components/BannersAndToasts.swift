@@ -8,6 +8,8 @@ struct OperationBanner: View {
     let onAbort: () -> Void
     var continueLabel: String?
     var onContinue: (() -> Void)?
+    /// Why Continue is disabled, shown as its tooltip; nil when there's nothing to explain.
+    var continueBlockedReason: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -22,6 +24,8 @@ struct OperationBanner: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(onContinue == nil)
+                    .help(onContinue == nil ? continueBlockedReason ?? "" : "")
+                    .accessibilityHint(onContinue == nil ? continueBlockedReason ?? "" : "")
             }
             Button(abortLabel, action: onAbort)
                 .buttonStyle(.bordered)
@@ -81,10 +85,15 @@ struct UpdateBanner: View {
 private struct ErrorSummaryRow: View {
     let message: String
     let tint: Color
+    var icon = "exclamationmark.triangle.fill"
     let lineLimit: Int
     let spacerMinLength: CGFloat
     let closeStyle: HierarchicalShapeStyle
     let showDetailsTooltip: Bool
+    var actionTitle: String?
+    var actionHelp: String?
+    var onAction: (() -> Void)?
+    var actionDisabled = false
     let onDismiss: () -> Void
     @State private var showingDetails = false
 
@@ -92,7 +101,7 @@ private struct ErrorSummaryRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: icon)
                 .foregroundStyle(tint)
             Text(parts.summary)
                 .font(.caption)
@@ -103,6 +112,16 @@ private struct ErrorSummaryRow: View {
                 .fixedSize(horizontal: false, vertical: lineLimit > 1)
                 .help(showDetailsTooltip && parts.hasDetails ? "Click Show Details for the full output" : "")
             Spacer(minLength: spacerMinLength)
+            if let actionTitle, let onAction {
+                Button(actionTitle) {
+                    onAction()
+                    onDismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(actionDisabled)
+                .help(actionHelp ?? "")
+            }
             if parts.hasDetails {
                 Button("Show Details…") { showingDetails = true }
                     .buttonStyle(.bordered)
@@ -114,6 +133,7 @@ private struct ErrorSummaryRow: View {
                     .foregroundStyle(closeStyle)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
         }
         .sheet(isPresented: $showingDetails) {
             ErrorDetailsSheet(text: parts.full)
@@ -121,23 +141,34 @@ private struct ErrorSummaryRow: View {
     }
 }
 
-/// A brief note shown over the commit graph for a no-op result or error. It clears itself
+/// A brief note shown over the commit graph for a finished action, a no-op result or an error. It clears itself
 /// after `autoDismissAfter` seconds when set, or stays until closed.
 struct ToastView: View {
     let message: String
     var tint: Color = .yellow
+    var icon = "exclamationmark.triangle.fill"
     /// Clears the toast by itself after this many seconds; nil keeps it until closed.
     var autoDismissAfter: Double?
+    /// A button such as Undo; using it also closes the toast.
+    var actionTitle: String?
+    var actionHelp: String?
+    var onAction: (() -> Void)?
+    var actionDisabled = false
     let onDismiss: () -> Void
 
     var body: some View {
         ErrorSummaryRow(
             message: message,
             tint: tint,
+            icon: icon,
             lineLimit: 2,
             spacerMinLength: 4,
             closeStyle: .secondary,
             showDetailsTooltip: false,
+            actionTitle: actionTitle,
+            actionHelp: actionHelp,
+            onAction: onAction,
+            actionDisabled: actionDisabled,
             onDismiss: onDismiss
         )
         .padding(.horizontal, 12)

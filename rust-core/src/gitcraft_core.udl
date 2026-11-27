@@ -38,7 +38,8 @@ enum PullStrategy {
 enum ResetMode {
   "Soft",
   "Mixed",
-  "Hard"
+  "Hard",
+  "Keep"
 };
 
 enum MergeType {
@@ -151,6 +152,26 @@ dictionary RemoteInfo {
   string name;
   string fetch_url;
   string push_url;
+};
+
+dictionary HeadPosition {
+  string oid;
+  string? branch;
+};
+
+dictionary PushResult {
+  string branch;
+  string destination;
+  u32 commits;
+  boolean published;
+  boolean up_to_date;
+  boolean forced;
+  boolean included_branch;
+};
+
+dictionary HeadMove {
+  HeadPosition before;
+  HeadPosition after;
 };
 
 dictionary StashInfo {
@@ -283,13 +304,18 @@ interface RepoSession {
   void rebase_onto(string commit);
 
   [Throws=GitCraftError]
-  void reset_to(string commit, ResetMode mode);
+  HeadMove? reset_to(string commit, ResetMode mode);
+
+  HeadPosition? head_position();
 
   [Throws=GitCraftError]
-  void cherry_pick(string commit);
+  void undo_head_move(HeadPosition expected, string target, ResetMode mode);
 
   [Throws=GitCraftError]
-  void revert_commit(string commit);
+  HeadMove? cherry_pick(string commit);
+
+  [Throws=GitCraftError]
+  HeadMove? revert_commit(string commit);
 
   [Throws=GitCraftError]
   sequence<DiffRow> diff();
@@ -366,7 +392,7 @@ interface RepoSession {
   void continue_revert();
 
   [Throws=GitCraftError]
-  void push();
+  PushResult push();
 
   boolean take_dirty();
   boolean take_graph_dirty();

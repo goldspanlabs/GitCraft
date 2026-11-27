@@ -456,7 +456,7 @@ final class WorktreeTabTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertEqual(tab.activeCheckoutPath, primary)
-        XCTAssertNotNil(tab.toast)
+        XCTAssertFalse(tab.toasts.isEmpty)
         XCTAssertNil(tab.errorMessage)
     }
 

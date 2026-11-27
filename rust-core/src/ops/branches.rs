@@ -3,7 +3,7 @@ use crate::{
     validation::{
         format_ref_display, ref_exists, resolve_commit, validate_ref_arg, validate_remote_arg,
     },
-    worktree, GitCraftError, MergeType, RepoSession, ResetMode,
+    worktree, GitCraftError, HeadMove, HeadPosition, MergeType, RepoSession, ResetMode,
 };
 
 impl RepoSession {
@@ -242,26 +242,83 @@ impl RepoSession {
     }
 
     /// Moves the checked-out branch to `commit`, as `git reset --<mode>`.
-    pub fn reset_to(&self, commit: String, mode: ResetMode) -> Result<(), GitCraftError> {
+    /// Returns how HEAD moved, or nil if it didn't (resetting to the commit it is on).
+    pub fn reset_to(
+        &self,
+        commit: String,
+        mode: ResetMode,
+    ) -> Result<Option<HeadMove>, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
-        let flag = match mode {
-            ResetMode::Soft => "--soft",
-            ResetMode::Mixed => "--mixed",
-            ResetMode::Hard => "--hard",
-        };
-        self.mutate(&["reset", flag, &commit])
+        self.mutate_tracking_head(&["reset", reset_flag(mode), &commit])
     }
 
-    /// Applies `commit`'s changes on top of the checked-out branch.
-    pub fn cherry_pick(&self, commit: String) -> Result<(), GitCraftError> {
-        let commit = validate_ref_arg(&commit)?;
-        self.mutate(&["cherry-pick", &commit])
+    /// Runs the mutating git command `args` under the mutation lock and reports how it moved
+    /// HEAD. Both positions are read under the same lock, so nothing else can slip in between.
+    fn mutate_tracking_head(&self, args: &[&str]) -> Result<Option<HeadMove>, GitCraftError> {
+        self.with_mutation_lock(|| {
+            let before = self.head_position();
+            git_cli::mutate(&self.path, args)?;
+            let after = self.head_position();
+            Ok(match (before, after) {
+                (Some(before), Some(after)) if before != after => Some(HeadMove { before, after }),
+                _ => None,
+            })
+        })
     }
 
-    /// Creates a commit that undoes `commit`, keeping git's default message.
-    pub fn revert_commit(&self, commit: String) -> Result<(), GitCraftError> {
+    /// HEAD's commit and branch, or nil before the first commit.
+    pub fn head_position(&self) -> Option<HeadPosition> {
+        let oid = git_cli::run(&self.path, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
+        let branch = git_cli::run(&self.path, &["symbolic-ref", "-q", "HEAD"])
+            .ok()
+            .map(|b| b.trim().to_owned())
+            .filter(|b| !b.is_empty());
+        Some(HeadPosition {
+            oid: oid.trim().to_owned(),
+            branch,
+        })
+    }
+
+    /// Undoes a reset, cherry-pick or revert by resetting back to `target`, but only while HEAD
+    /// is still where that action left it. Anything since (a commit, a checkout, another
+    /// reset) makes this refuse and change nothing.
+    pub fn undo_head_move(
+        &self,
+        expected: HeadPosition,
+        target: String,
+        mode: ResetMode,
+    ) -> Result<(), GitCraftError> {
+        let target = validate_ref_arg(&target)?;
+        self.with_mutation_lock(|| {
+            if self.head_position().as_ref() != Some(&expected) {
+                return Err(GitCraftError::message(
+                    "The branch has changed since then, so there's nothing to undo.",
+                ));
+            }
+            // `reset --keep` resets the index even for files the move doesn't touch, which
+            // would quietly unstage them.
+            if mode == ResetMode::Keep
+                && git_cli::run(&self.path, &["diff", "--cached", "--quiet"]).is_err()
+            {
+                return Err(GitCraftError::message(
+                    "Commit or unstage your staged changes first: this would unstage them.",
+                ));
+            }
+            git_cli::mutate(&self.path, &["reset", reset_flag(mode), &target])
+        })
+    }
+
+    /// Applies `commit`'s changes on top of the checked-out branch. Returns how HEAD moved.
+    pub fn cherry_pick(&self, commit: String) -> Result<Option<HeadMove>, GitCraftError> {
         let commit = validate_ref_arg(&commit)?;
-        self.mutate(&["revert", "--no-edit", &commit])
+        self.mutate_tracking_head(&["cherry-pick", &commit])
+    }
+
+    /// Creates a commit that undoes `commit`, keeping git's default message. Returns how HEAD
+    /// moved.
+    pub fn revert_commit(&self, commit: String) -> Result<Option<HeadMove>, GitCraftError> {
+        let commit = validate_ref_arg(&commit)?;
+        self.mutate_tracking_head(&["revert", "--no-edit", &commit])
     }
 
     /// Stops a cherry-pick that stopped on a conflict, putting the branch and working tree
@@ -296,5 +353,14 @@ impl RepoSession {
     /// disabled, as there is no terminal, so git keeps the message it would have offered.
     fn continue_op(&self, op: &str) -> Result<(), GitCraftError> {
         self.mutate(&["-c", "core.editor=true", op, "--continue"])
+    }
+}
+
+fn reset_flag(mode: ResetMode) -> &'static str {
+    match mode {
+        ResetMode::Soft => "--soft",
+        ResetMode::Mixed => "--mixed",
+        ResetMode::Hard => "--hard",
+        ResetMode::Keep => "--keep",
     }
 }

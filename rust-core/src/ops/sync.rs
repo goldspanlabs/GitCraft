@@ -1,7 +1,7 @@
 use crate::{
     git_cli,
     validation::{resolve_default_remote, validate_remote_arg},
-    GitCraftError, PullStrategy, RemoteInfo, RepoSession,
+    GitCraftError, PullStrategy, PushResult, RemoteInfo, RepoSession,
 };
 
 impl RepoSession {
@@ -105,27 +105,123 @@ impl RepoSession {
         })
     }
 
-    pub fn push(&self) -> Result<(), GitCraftError> {
+    /// Pushes the checked-out branch, publishing it (and setting its upstream) on its first
+    /// push. Reports what happened from git's own per-ref result (`push --porcelain`), so a
+    /// stale or missing remote-tracking ref can't make the summary wrong.
+    pub fn push(&self) -> Result<PushResult, GitCraftError> {
         self.with_mutation_lock(|| {
+            let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
+                .map(|b| b.trim().to_owned())
+                .ok()
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| {
+                    GitCraftError::message("HEAD is detached; check out a branch to push")
+                })?;
             let has_upstream = git_cli::run(
                 &self.path,
                 &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
             )
             .is_ok();
-            if has_upstream {
-                git_cli::mutate(&self.path, &["push"])
+
+            let (remote, output) = if has_upstream {
+                // Where a plain `git push` goes, which may be a separate push remote.
+                let remote = self.push_remote(&branch);
+                let output = git_cli::mutate_output(&self.path, &["push", "--porcelain"])?;
+                (remote, output)
             } else {
                 // First push of this branch: publish it and set its upstream.
-                let branch = git_cli::run(&self.path, &["symbolic-ref", "--short", "-q", "HEAD"])
-                    .map(|b| b.trim().to_owned())
-                    .ok()
-                    .filter(|b| !b.is_empty())
-                    .ok_or_else(|| {
-                        GitCraftError::message("HEAD is detached; check out a branch to push")
-                    })?;
                 let remote = resolve_default_remote(&self.path);
-                git_cli::mutate(&self.path, &["push", "--set-upstream", &remote, &branch])
-            }
+                let output = git_cli::mutate_output(
+                    &self.path,
+                    &["push", "--porcelain", "--set-upstream", &remote, &branch],
+                )?;
+                (remote, output)
+            };
+
+            let status = PorcelainRef::find(&output, &branch);
+            let destination_branch = status
+                .as_ref()
+                .and_then(|s| s.to.strip_prefix("refs/heads/"))
+                .unwrap_or(&branch)
+                .to_owned();
+            let flag = status.as_ref().map(|s| s.flag);
+            let commits = match &status {
+                Some(s) if matches!(s.flag, ' ' | '+') => self.count_range(&s.summary),
+                _ => 0,
+            };
+            Ok(PushResult {
+                branch,
+                destination: format!("{remote}/{destination_branch}"),
+                commits,
+                published: flag == Some('*'),
+                up_to_date: flag == Some('='),
+                forced: flag == Some('+'),
+                included_branch: status.is_some(),
+            })
+        })
+    }
+
+    /// Commits in a push summary's `old..new` (or forced `old...new`) range, or 0 when git
+    /// can't count them here.
+    fn count_range(&self, summary: &str) -> u32 {
+        let range = summary.split_whitespace().next().unwrap_or("");
+        let Some((old, new)) = range.split_once("...").or_else(|| range.split_once("..")) else {
+            return 0;
+        };
+        git_cli::run(
+            &self.path,
+            &["rev-list", "--count", &format!("{old}..{new}")],
+        )
+        .ok()
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or(0)
+    }
+
+    /// The remote `branch` pushes to, as git chooses it: the branch's `pushRemote`, then
+    /// `remote.pushDefault`, then the remote it pulls from, then the default remote.
+    fn push_remote(&self, branch: &str) -> String {
+        let config = |key: String| {
+            git_cli::run(&self.path, &["config", "--get", &key])
+                .ok()
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        };
+        config(format!("branch.{branch}.pushRemote"))
+            .or_else(|| config("remote.pushDefault".to_owned()))
+            .or_else(|| config(format!("branch.{branch}.remote")))
+            .unwrap_or_else(|| resolve_default_remote(&self.path))
+    }
+}
+
+/// One ref's line from `git push --porcelain`: `<flag>\t<from>:<to>\t<summary>`.
+struct PorcelainRef {
+    /// `*` created, `=` already up to date, ` ` fast-forward, `+` forced, `!` rejected.
+    flag: char,
+    from: String,
+    to: String,
+    summary: String,
+}
+
+impl PorcelainRef {
+    /// The line pushing `branch`, matched on its source: with remapped refspecs (say
+    /// `main:deploy`) the destination can be any name. None when no line pushes it.
+    fn find(output: &str, branch: &str) -> Option<Self> {
+        let wanted = format!("refs/heads/{branch}");
+        output
+            .lines()
+            .filter_map(Self::parse)
+            .find(|r| r.from == wanted)
+    }
+
+    fn parse(line: &str) -> Option<Self> {
+        let mut fields = line.splitn(3, '\t');
+        let flag = fields.next()?.chars().next()?;
+        let (from, to) = fields.next()?.split_once(':')?;
+        Some(Self {
+            flag,
+            from: from.to_owned(),
+            to: to.to_owned(),
+            summary: fields.next().unwrap_or("").to_owned(),
         })
     }
 }
