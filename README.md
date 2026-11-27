@@ -37,6 +37,7 @@
 - **First-class Git worktrees:** Create, lock, prune, and switch between linked worktrees with live dirty counts across sibling checkouts.
 - **Instant, scoped commit graph:** Loads the graph first on large repos, supports date or topological sorting, branch-only scoping (`⇧⌘A`), and full-history search.
 - **Pre-merge conflict prediction:** Checks whether a branch or commit will conflict before you commit to a merge.
+- **Markdown preview with rich diffs:** Toggle between raw diff and rendered Markdown in-place when inspecting `.md` files, with inline added/removed block highlights and relative image support.
 - **Native macOS ergonomics:** Multi-tab windows, familiar macOS keyboard shortcuts, collapsible/maximizable diff pane, commit file trees, live file-system watching, and optional background auto-fetch.
 
 ## Benchmarks
