@@ -68,6 +68,20 @@ final class SquashMessageTests: XCTestCase {
         )
     }
 
+    func testACreditFoldedOverSeveralLinesStaysWhole() {
+        let body = "Why.\n\nCo-authored-by: Di Longname\n <di@x.com>\nReviewed-by: Cy\n <cy@x.com>"
+
+        let draft = SquashMessage.draft(for: [
+            commit("One", body: body),
+            commit("Two", author: "Di", email: "di@x.com"),
+        ])
+
+        XCTAssertEqual(
+            draft.description,
+            "Why.\n\nReviewed-by: Cy\n <cy@x.com>\n\nTwo\n\nCo-authored-by: Di Longname <di@x.com>"
+        )
+    }
+
     func testOneAuthorGetsNoCoAuthorLine() {
         let draft = SquashMessage.draft(for: [commit("One"), commit("Two")])
 

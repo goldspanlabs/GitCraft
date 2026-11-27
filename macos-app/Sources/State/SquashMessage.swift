@@ -22,11 +22,13 @@ enum SquashMessage {
         for (index, commit) in commits.enumerated() {
             let (text, trailers) = splitTrailers(commit.body)
             var kept: [String] = []
-            for line in trailers {
-                if line.lowercased().hasPrefix(coAuthorPrefix) {
-                    credit(line.trimmed, email: email(in: line.trimmed))
+            for trailer in trailers {
+                if trailer.lowercased().hasPrefix(coAuthorPrefix) {
+                    // A credit folded over several lines is written back on one.
+                    let line = trailer.components(separatedBy: "\n").map(\.trimmed).joined(separator: " ")
+                    credit(line, email: email(in: line))
                 } else {
-                    kept.append(line)
+                    kept.append(trailer)
                 }
             }
             if index > 0 { paragraphs.append(commit.summary) }
@@ -41,7 +43,7 @@ enum SquashMessage {
         return (oldest.summary, paragraphs.filter { !$0.isEmpty }.joined(separator: "\n\n"))
     }
 
-    /// `body` apart from its trailer block, and that block's lines. As in git, only a last
+    /// `body` apart from its trailer block, and that block's trailers. As in git, only a last
     /// paragraph made up of `Token: value` lines (and their indented continuations) counts, so
     /// an example quoted elsewhere stays part of the text.
     private static func splitTrailers(_ body: String) -> (text: String, trailers: [String]) {
@@ -54,7 +56,15 @@ enum SquashMessage {
         guard let first = block.first, isTrailer(first),
               block.allSatisfy({ isTrailer($0) || $0.first?.isWhitespace == true })
         else { return (body.trimmed, []) }
-        return (lines[..<start].joined(separator: "\n").trimmed, block)
+        // An indented line continues the trailer above it.
+        let trailers = block.reduce(into: [String]()) { trailers, line in
+            if line.first?.isWhitespace == true, !trailers.isEmpty {
+                trailers[trailers.count - 1] += "\n" + line
+            } else {
+                trailers.append(line)
+            }
+        }
+        return (lines[..<start].joined(separator: "\n").trimmed, trailers)
     }
 
     /// The address between `<` and `>`, or the whole credit when there is none.
