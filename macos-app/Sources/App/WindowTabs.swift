@@ -160,6 +160,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         return label
     }()
     private var changes: AnyCancellable?
+    private var firstResponderObservation: NSKeyValueObservation?
     private var searchField: NSSearchField?
 
     init(tab: RepoTab, workspace: WorkspaceState) {
@@ -203,6 +204,15 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshChrome() }
         refreshChrome()
+
+        // Names the repository step in Edit ▸ Undo only while no text has the keyboard.
+        firstResponderObservation = window.observe(\.firstResponder, options: [.initial, .new]) { [weak self] window, _ in
+            let editing = window.firstResponder is NSText
+            DispatchQueue.main.async {
+                guard let self, self.tab.isEditingText != editing else { return }
+                self.tab.isEditingText = editing
+            }
+        }
     }
 
     @available(*, unavailable)

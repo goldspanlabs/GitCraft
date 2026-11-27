@@ -315,6 +315,146 @@ final class UndoStackTests: XCTestCase {
         )
     }
 
+    // MARK: Redo
+
+    @MainActor
+    func testRedoDoesACherryPickAgainAndOffersUndo() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        let before = try rev("main")
+        try write("README.md", "local edit\n")
+
+        try await cherryPickOther(tab)
+        let picked = try rev("main")
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == before && tab.latestRedo != nil && !tab.isBusy }
+        XCTAssertEqual(tab.redoMenuTitle, "Redo Cherry Pick")
+        XCTAssertTrue(tab.canRedo)
+
+        tab.redo()
+        try await waitFor("the redo") { try self.rev("main") == picked && tab.latestUndo != nil && !tab.isBusy }
+
+        XCTAssertTrue(tab.redoStack.isEmpty)
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Cherry Pick")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: repo.appendingPathComponent("picked.txt").path))
+        XCTAssertEqual(try read("README.md"), "local edit\n", "redo keeps local edits too")
+        let note = try XCTUnwrap(tab.toasts.last)
+        XCTAssertTrue(note.message.hasPrefix("Redid Cherry Pick."), note.message)
+        XCTAssertEqual(note.action?.undoEntryID, tab.latestUndo?.id, "the redo can be undone again")
+    }
+
+    @MainActor
+    func testRedoingASoftResetMovesTheBranchBackDown() async throws {
+        let (first, second) = try commitAndEditOnMain()
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        tab.resetTo(first, mode: .soft)
+        try await waitFor("the reset") { try self.rev("main") == first && tab.latestUndo != nil && !tab.isBusy }
+        let statusAfterReset = try porcelain()
+        tab.undo()
+        try await waitFor("the undo") { try self.rev("main") == second && tab.latestRedo != nil && !tab.isBusy }
+
+        tab.redo()
+        try await waitFor("the redo") { try self.rev("main") == first && !tab.isBusy }
+        XCTAssertEqual(try porcelain(), statusAfterReset, "the reset's changes are staged again")
+    }
+
+    @MainActor
+    func testANewActionClearsRedo() async throws {
+        try write("README.md", "changed\n")
+        try git(["commit", "-q", "-am", "change readme"], in: repo)
+        let change = try rev("main")
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        try await cherryPickOther(tab)
+        tab.undo()
+        try await waitFor("the undo") { tab.latestRedo != nil && !tab.isBusy }
+
+        tab.revertCommit(change)
+        try await waitFor("the revert") { tab.latestUndo?.actionName == "Revert" && !tab.isBusy }
+        XCTAssertTrue(tab.redoStack.isEmpty)
+        XCTAssertFalse(tab.canRedo)
+        XCTAssertEqual(tab.redoMenuTitle, RepoTab.genericRedoTitle)
+    }
+
+    @MainActor
+    func testAStaleRedoIsRefusedAndDropped() async throws {
+        let tab = try RepoTab(url: repo)
+        try await waitFor("the first load") { !tab.branches.isEmpty }
+        tab.stopWatcher()
+        let main = try rev("main")
+
+        // Redo would move main from `other` to here, but main isn't at `other`.
+        let stale = HeadMove(
+            before: HeadPosition(oid: main, branch: "refs/heads/main"),
+            after: HeadPosition(oid: try rev("other"), branch: "refs/heads/main")
+        )
+        tab.redoStack.append(RepoTab.UndoEntry(actionName: "Cherry Pick", step: .moveHead(stale, mode: .keep)))
+        tab.redo()
+        try await waitFor("the refusal") { tab.errorMessage != nil && !tab.isBusy }
+
+        XCTAssertEqual(try rev("main"), main)
+        XCTAssertTrue(tab.redoStack.isEmpty)
+    }
+
+    func testAnInverseRunsTheSameMoveBackwards() {
+        let a = HeadPosition(oid: String(repeating: "a", count: 40), branch: "refs/heads/main")
+        let b = HeadPosition(oid: String(repeating: "b", count: 40), branch: "refs/heads/main")
+        guard case let .moveHead(move, mode) = UndoStep.moveHead(HeadMove(before: a, after: b), mode: .soft).inverse else {
+            return XCTFail("a head move's inverse is a head move")
+        }
+        XCTAssertEqual(move, HeadMove(before: b, after: a))
+        XCTAssertEqual(mode, .soft, "redo uses the same mode as the undo")
+    }
+
+    // MARK: Keys and menu titles
+
+    func testTextFocusKeepsTheUndoKeys() {
+        XCTAssertEqual(
+            UndoKeyRouting.route(firstResponderIsText: false, keyWindowIsRepository: true, hasRepositoryStep: true),
+            .repository
+        )
+        XCTAssertEqual(
+            UndoKeyRouting.route(firstResponderIsText: true, keyWindowIsRepository: true, hasRepositoryStep: true),
+            .text,
+            "typing in the commit message undoes typing"
+        )
+        XCTAssertEqual(
+            UndoKeyRouting.route(firstResponderIsText: false, keyWindowIsRepository: false, hasRepositoryStep: true),
+            .text,
+            "a sheet or Settings window keeps standard undo"
+        )
+        XCTAssertEqual(
+            UndoKeyRouting.route(firstResponderIsText: false, keyWindowIsRepository: true, hasRepositoryStep: false),
+            .text,
+            "with nothing to undo in the repository, the key does what it normally does"
+        )
+    }
+
+    @MainActor
+    func testTitlesStopNamingTheStepWhileEditingText() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        try await cherryPickOther(tab)
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Cherry Pick")
+
+        tab.isEditingText = true
+        XCTAssertEqual(tab.undoMenuTitle, RepoTab.genericUndoTitle)
+
+        tab.isEditingText = false
+        XCTAssertEqual(tab.undoMenuTitle, "Undo Cherry Pick")
+    }
+
+    @MainActor
+    func testTheUndoButtonShowsItsShortcut() async throws {
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+        try await cherryPickOther(tab)
+        XCTAssertEqual(tab.toasts.last?.action?.help, "Undo Cherry Pick (⌘Z)")
+    }
+
     @MainActor
     func testTheStackForgetsTheOldestPastItsLimit() throws {
         let tab = try RepoTab(url: repo)

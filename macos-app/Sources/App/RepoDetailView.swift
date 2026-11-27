@@ -150,6 +150,7 @@ struct RepoDetailView: View {
                             // Longer when there's a button, so there's time to reach it.
                             autoDismissAfter: toast.action == nil ? 4 : 10,
                             actionTitle: toast.action?.title,
+                            actionHelp: toast.action?.help,
                             onAction: toast.action.map { action in { action.perform() } },
                             actionDisabled: !tab.toastActionEnabled(toast)
                         ) {

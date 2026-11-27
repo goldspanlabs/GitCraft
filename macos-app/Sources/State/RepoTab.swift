@@ -22,6 +22,8 @@ final class RepoTab: ObservableObject, Identifiable {
         /// The undo step this button takes back, if it is an Undo button. It works only while
         /// that step is the latest, and the note goes once the step leaves the stack.
         var undoEntryID: UUID?
+        /// The button's tooltip, such as its keyboard shortcut.
+        var help: String?
         let perform: @MainActor () -> Void
     }
 
@@ -90,6 +92,11 @@ final class RepoTab: ObservableObject, Identifiable {
     /// Actions that can be taken back, oldest first. Change it through `recordUndo` and
     /// `undo` (see Undo.swift).
     @Published var undoStack: [UndoEntry] = []
+    /// Undone actions that Redo can do again, oldest first. Emptied by any new action.
+    @Published var redoStack: [UndoEntry] = []
+    /// Whether a text field or text view in this tab's window has the keyboard, which keeps
+    /// ⌘Z and ⇧⌘Z for editing text. Set by the window controller.
+    @Published var isEditingText = false
 
     @Published var pendingConfirmation: DestructiveAction?
     @Published var activeSheet: ActiveSheet?

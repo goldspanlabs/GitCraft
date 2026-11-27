@@ -91,6 +91,7 @@ private struct ErrorSummaryRow: View {
     let closeStyle: HierarchicalShapeStyle
     let showDetailsTooltip: Bool
     var actionTitle: String?
+    var actionHelp: String?
     var onAction: (() -> Void)?
     var actionDisabled = false
     let onDismiss: () -> Void
@@ -119,6 +120,7 @@ private struct ErrorSummaryRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(actionDisabled)
+                .help(actionHelp ?? "")
             }
             if parts.hasDetails {
                 Button("Show Details…") { showingDetails = true }
@@ -149,6 +151,7 @@ struct ToastView: View {
     var autoDismissAfter: Double?
     /// A button such as Undo; using it also closes the toast.
     var actionTitle: String?
+    var actionHelp: String?
     var onAction: (() -> Void)?
     var actionDisabled = false
     let onDismiss: () -> Void
@@ -163,6 +166,7 @@ struct ToastView: View {
             closeStyle: .secondary,
             showDetailsTooltip: false,
             actionTitle: actionTitle,
+            actionHelp: actionHelp,
             onAction: onAction,
             actionDisabled: actionDisabled,
             onDismiss: onDismiss
