@@ -23,6 +23,31 @@ final class CommitCopyTests: XCTestCase {
         XCTAssertEqual(copied, [["abc123", "def456"]])
     }
 
+    @MainActor
+    func testRestoringNothingClearsTheOldRows() {
+        final class Rows: NSObject, NSTableViewDataSource {
+            func numberOfRows(in _: NSTableView) -> Int { 4 }
+        }
+        let source = Rows()
+        let table = NSTableView()
+        table.allowsMultipleSelection = true
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("commit")))
+        table.dataSource = source
+        table.reloadData()
+        table.selectRowIndexes(IndexSet([1, 2]), byExtendingSelection: false)
+
+        // Every selected commit was rewritten, so none of the new rows matches.
+        table.reloadData()
+        CommitTableView.Coordinator.restoreSelection(in: table, oids: ["x", "y", "z"], selected: ["gone"], workingChanges: false)
+
+        XCTAssertTrue(table.selectedRowIndexes.isEmpty)
+
+        CommitTableView.Coordinator.restoreSelection(in: table, oids: ["x", "y", "z"], selected: ["y"], workingChanges: false)
+        XCTAssertEqual(table.selectedRowIndexes, IndexSet(integer: 2))
+        CommitTableView.Coordinator.restoreSelection(in: table, oids: ["x", "y", "z"], selected: [], workingChanges: true)
+        XCTAssertEqual(table.selectedRowIndexes, IndexSet(integer: 0))
+    }
+
     func testWorkingChangesIsNeverPartOfAMultiSelection() {
         typealias Coordinator = CommitTableView.Coordinator
 

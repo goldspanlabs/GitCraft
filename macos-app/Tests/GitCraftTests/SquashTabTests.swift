@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import GitCraft
 
@@ -169,6 +170,62 @@ final class SquashTabTests: XCTestCase {
                 && preview.commits.map(\.summary) == ["one", "two"]
                 && preview.head.oid == head
         }
+    }
+
+    @MainActor
+    func testConflictsAppearingAndClearingRecheckTheSelection() async throws {
+        let tab = try await loadedTab()
+        defer { tab.stopWatcher() }
+        _ = try await allowedPreview(tab, ["two", "three"])
+        // Only status reloads from here on, as when nothing in the history changed.
+        tab.stopWatcher()
+        let file = repo.appendingPathComponent("one.txt")
+        try "stashed\n".write(to: file, atomically: true, encoding: .utf8)
+        try git(["stash", "-q"], in: repo)
+        try "committed\n".write(to: file, atomically: true, encoding: .utf8)
+        try git(["commit", "-q", "-am", "four"], in: repo)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["stash", "pop", "-q"]
+        process.currentDirectoryURL = repo
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+
+        tab.refreshStatus()
+        try await waitFor("the conflict to refuse the squash") {
+            tab.squashCheck == .refused("Finish the current operation first")
+        }
+
+        try git(["add", "one.txt"], in: repo)
+        tab.refreshStatus()
+        try await waitFor("the squash to be allowed again") {
+            if case .allowed = tab.squashCheck { return true }
+            return false
+        }
+    }
+
+    @MainActor
+    func testTheMultiSelectionPanelOpensACollapsedPane() async throws {
+        let defaults = UserDefaults.standard
+        let keys = [BottomPanelDefaults.collapsedKey, BottomPanelDefaults.maximizedKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { zip(keys, saved).forEach { defaults.set($1, forKey: $0) } }
+        keys.forEach { defaults.set(true, forKey: $0) }
+        let tab = try RepoTab(url: repo)
+        defer { tab.stopWatcher() }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: MultiCommitInspectorView(tab: tab))
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        try await waitFor("the pane to reopen") { keys.allSatisfy { !defaults.bool(forKey: $0) } }
     }
 
     @MainActor

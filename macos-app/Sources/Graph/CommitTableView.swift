@@ -172,13 +172,12 @@ struct CommitTableView: NSViewRepresentable {
             table.reloadData()
             // The model drops commits that vanished from a multi-selection (`reconcileSelection`),
             // so this only has to put the survivors back.
-            var restored = selectedRowsBefore.contains(0) ? IndexSet(integer: 0) : IndexSet()
-            for (index, row) in rows.enumerated() where selectedOidsBefore.contains(row.oidHex) {
-                restored.insert(index + 1)
-            }
-            if !restored.isEmpty {
-                table.selectRowIndexes(restored, byExtendingSelection: false)
-            }
+            Coordinator.restoreSelection(
+                in: table,
+                oids: rows.map(\.oidHex),
+                selected: selectedOidsBefore,
+                workingChanges: selectedRowsBefore.contains(0)
+            )
             coordinator.isRestoringSelection = false
         }
 
@@ -430,6 +429,17 @@ struct CommitTableView: NSViewRepresentable {
 
         func tableView(_: NSTableView, selectionIndexesForProposedSelection proposed: IndexSet) -> IndexSet {
             Self.allowedSelection(proposed)
+        }
+
+        /// Selects the rows now showing the `selected` commits (`oids` lists the commits in row
+        /// order, after Working Changes). With none left the selection is cleared: a reload
+        /// keeps row numbers, which would highlight other commits.
+        static func restoreSelection(in table: NSTableView, oids: [String], selected: Set<String>, workingChanges: Bool) {
+            var restored = workingChanges ? IndexSet(integer: 0) : IndexSet()
+            for (index, oid) in oids.enumerated() where selected.contains(oid) {
+                restored.insert(index + 1)
+            }
+            table.selectRowIndexes(restored, byExtendingSelection: false)
         }
 
         /// Working Changes (row 0) can only be selected on its own.

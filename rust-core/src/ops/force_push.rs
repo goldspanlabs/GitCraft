@@ -8,6 +8,15 @@ use crate::{
 const HEAD_MOVED: &str = "The branch has changed since then. Push again.";
 const REMOTE_MOVED: &str = "The remote has new commits. Fetch, then try again.";
 
+/// The branch on a remote that a push updates.
+struct PushTarget {
+    remote: String,
+    /// Its full ref on the server.
+    server_ref: String,
+    /// The local remote-tracking ref for it.
+    tracking: String,
+}
+
 impl RepoSession {
     /// The force push that publishing the checked-out branch needs, because commits that are on
     /// the remote were rewritten here. `None` means an ordinary push will do. Fails when the
@@ -24,11 +33,15 @@ impl RepoSession {
         else {
             return Ok(None);
         };
-        let remote = self.push_remote(&branch);
-        let Some(tracking) = self.push_tracking_ref(&branch, &remote) else {
+        let Some(target) = self.push_target(&branch) else {
             return Ok(None);
         };
-        let Some(name) = tracking.strip_prefix(&format!("refs/remotes/{remote}/")) else {
+        let PushTarget {
+            remote,
+            server_ref,
+            tracking,
+        } = target;
+        let Some(name) = server_ref.strip_prefix("refs/heads/") else {
             return Ok(None);
         };
         let tip = git_cli::run(&self.path, &["rev-parse", "--verify", &tracking])?
@@ -52,11 +65,11 @@ impl RepoSession {
         let is_default_branch = self
             .list_branches()?
             .iter()
-            .any(|b| b.is_remote && b.is_default && b.name == destination);
+            .any(|b| b.is_remote && b.is_default && b.full_ref == tracking);
         Ok(Some(ForcePushPlan {
             removed: self.commits_between(&head.oid, &tip)?,
             added: self.commits_between(&tip, &head.oid)?,
-            destination_ref: format!("refs/heads/{name}"),
+            destination_ref: server_ref,
             expected_remote_oid: tip,
             branch,
             remote,
@@ -121,32 +134,60 @@ impl RepoSession {
         })
     }
 
-    /// The remote-tracking ref a push of `branch` updates, if it exists here. A branch with no
-    /// upstream uses the same-named branch of `remote`.
-    fn push_tracking_ref(&self, branch: &str, remote: &str) -> Option<String> {
-        let resolve = |rev: &str| {
-            git_cli::run(
-                &self.path,
-                &["rev-parse", "--verify", "--symbolic-full-name", rev],
-            )
-            .ok()
-            .map(|r| r.trim().to_owned())
-            .filter(|r| !r.is_empty())
+    /// Where Push sends `branch`, matching [`RepoSession::push`], and the remote-tracking ref
+    /// that shows what is there. `None` when there is nothing there yet, or git couldn't say.
+    fn push_target(&self, branch: &str) -> Option<PushTarget> {
+        let value = |args: &[&str]| {
+            git_cli::run(&self.path, args)
+                .ok()
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
         };
-        let tracking = match resolve(&format!("{branch}@{{push}}")) {
-            Some(tracking) => tracking,
-            // With an upstream, git couldn't say where a push goes; let the push explain.
-            None if resolve(&format!("{branch}@{{u}}")).is_some() => return None,
-            None => {
-                let remote = if remote.is_empty() {
-                    resolve_default_remote(&self.path)
-                } else {
-                    remote.to_owned()
-                };
-                format!("refs/remotes/{remote}/{branch}")
+        let resolve = |rev: String| value(&["rev-parse", "--verify", "--symbolic-full-name", &rev]);
+        let same_name = format!("refs/heads/{branch}");
+        let (remote, server_ref, tracking) = if resolve(format!("{branch}@{{u}}")).is_some() {
+            let remote = self.push_remote(branch);
+            // The local name of the ref comes from the fetch refspec, which may rename it, so
+            // the name on the server is worked out separately.
+            let tracking = resolve(format!("{branch}@{{push}}"))?;
+            let configured = value(&["for-each-ref", "--format=%(push:remoteref)", &same_name]);
+            let server_ref = configured.unwrap_or_else(|| {
+                let to_upstream = value(&["config", "--get", "push.default"])
+                    .is_some_and(|mode| mode == "upstream" || mode == "tracking");
+                to_upstream
+                    .then(|| value(&["config", "--get", &format!("branch.{branch}.merge")]))
+                    .flatten()
+                    .unwrap_or(same_name)
+            });
+            (remote, server_ref, tracking)
+        } else {
+            // A first push goes to the same name on the default remote, whatever push
+            // settings say.
+            let remote = resolve_default_remote(&self.path);
+            let tracking = self.fetched_as(&remote, &same_name)?;
+            (remote, same_name, tracking)
+        };
+        ref_exists(&self.path, &tracking).then_some(PushTarget {
+            remote,
+            server_ref,
+            tracking,
+        })
+    }
+
+    /// The local ref that `remote`'s fetch refspecs store its `server_ref` in.
+    fn fetched_as(&self, remote: &str, server_ref: &str) -> Option<String> {
+        let key = format!("remote.{remote}.fetch");
+        let specs = git_cli::run(&self.path, &["config", "--get-all", &key]).ok()?;
+        specs.lines().find_map(|spec| {
+            let (from, to) = spec.trim().trim_start_matches('+').split_once(':')?;
+            match from.split_once('*') {
+                Some((prefix, suffix)) => {
+                    let name = server_ref.strip_prefix(prefix)?.strip_suffix(suffix)?;
+                    Some(to.replacen('*', name, 1))
+                }
+                None => (from == server_ref).then(|| to.to_owned()),
             }
-        };
-        ref_exists(&self.path, &tracking).then_some(tracking)
+        })
     }
 
     /// True when `tip` was once part of `branch`, going by its reflog.

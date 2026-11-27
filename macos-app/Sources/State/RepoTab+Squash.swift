@@ -52,11 +52,18 @@ extension RepoTab {
         }
     }
 
+    /// Asks again about a multi-selection, if there is one.
+    func recheckSquash() {
+        if !selectedCommits.isEmpty { checkSquash() }
+    }
+
     /// Asks the core about the current multi-selection.
     private func checkSquash() {
         let oids = selectedCommits.map(\.oidHex)
+        squashCheckGeneration += 1
+        let generation = squashCheckGeneration
         let isCurrent: @MainActor () -> Bool = { [weak self] in
-            self?.selectedCommits.map(\.oidHex) == oids
+            self?.squashCheckGeneration == generation && self?.selectedCommits.map(\.oidHex) == oids
         }
         loadInBackground({ session in
             try session.squashPreview(oids: oids)

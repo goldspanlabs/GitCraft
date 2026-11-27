@@ -328,3 +328,98 @@ fn pushes_only_this_branch() {
     assert_eq!(fixture.remote_tip("main"), head(fixture.path()));
     assert_eq!(fixture.remote_tip("other"), other);
 }
+
+#[test]
+fn without_an_upstream_targets_where_an_ordinary_push_goes() {
+    let fixture = pushed();
+    let fork = bare();
+    let url = fork.path().to_str().unwrap();
+    run_git(fixture.path(), &["remote", "add", "fork", url]);
+    run_git(fixture.path(), &["push", "-q", "fork", "main"]);
+    run_git(fixture.path(), &["branch", "--unset-upstream"]);
+    run_git(
+        fixture.path(),
+        &["config", "branch.main.pushRemote", "fork"],
+    );
+    run_git(fixture.path(), &["config", "push.default", "current"]);
+    let published = head(fixture.path());
+    fixture.amend("C amended");
+
+    // An ordinary first push goes to the default remote, so the force push does too.
+    let plan = fixture.plan();
+    assert_eq!(plan.destination, "origin/main");
+    open(fixture.path()).force_push(plan).unwrap();
+
+    assert_eq!(fixture.remote_tip("main"), head(fixture.path()));
+    assert_eq!(rev(fork.path(), "main"), published);
+}
+
+/// `main` pushed to a server where fetching it lands in `origin/published`, with a decoy
+/// server branch of that name at the same commit.
+fn remapped_fetch() -> Fixture {
+    let fixture = pushed();
+    run_git(fixture.path(), &["push", "-q", "origin", "main:published"]);
+    run_git(
+        fixture.path(),
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/published",
+        ],
+    );
+    run_git(fixture.path(), &["fetch", "-q"]);
+    fixture
+}
+
+#[test]
+fn a_remapped_fetch_refspec_still_pushes_the_server_branch() {
+    for has_upstream in [true, false] {
+        let fixture = remapped_fetch();
+        if !has_upstream {
+            run_git(fixture.path(), &["branch", "--unset-upstream"]);
+        }
+        let decoy = fixture.remote_tip("published");
+        fixture.amend("C amended");
+
+        let plan = fixture.plan();
+        assert_eq!(plan.destination_ref, "refs/heads/main", "{has_upstream}");
+        assert_eq!(plan.destination, "origin/main");
+        open(fixture.path()).force_push(plan).unwrap();
+
+        assert_eq!(fixture.remote_tip("main"), head(fixture.path()));
+        assert_eq!(fixture.remote_tip("published"), decoy);
+    }
+}
+
+#[test]
+fn follows_an_upstream_push_to_a_differently_named_branch() {
+    let fixture = pushed();
+    run_git(
+        fixture.path(),
+        &["push", "-q", "-u", "origin", "main:deploy"],
+    );
+    run_git(fixture.path(), &["config", "push.default", "upstream"]);
+    fixture.amend("C amended");
+
+    let plan = fixture.plan();
+
+    assert_eq!(plan.destination_ref, "refs/heads/deploy");
+    assert_eq!(plan.destination, "origin/deploy");
+}
+
+#[test]
+fn follows_a_configured_push_refspec() {
+    let fixture = pushed();
+    run_git(
+        fixture.path(),
+        &[
+            "config",
+            "remote.origin.push",
+            "refs/heads/main:refs/heads/deploy",
+        ],
+    );
+    run_git(fixture.path(), &["push", "-q", "origin"]);
+    fixture.amend("C amended");
+
+    assert_eq!(fixture.plan().destination_ref, "refs/heads/deploy");
+}

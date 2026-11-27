@@ -3,6 +3,10 @@ import SwiftUI
 /// The bottom pane while several commits are selected: what they are.
 struct MultiCommitInspectorView: View {
     @ObservedObject var tab: RepoTab
+    // This view has no tab strip or maximize button, so a collapsed or maximized panel would
+    // have no way to reopen or restore.
+    @AppStorage(BottomPanelDefaults.collapsedKey) private var isCollapsed = false
+    @AppStorage(BottomPanelDefaults.maximizedKey) private var isMaximized = false
 
     private static let commitRowHeight: CGFloat = 20
 
@@ -39,5 +43,9 @@ struct MultiCommitInspectorView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            if isCollapsed { isCollapsed = false }
+            if isMaximized { isMaximized = false }
+        }
     }
 }
