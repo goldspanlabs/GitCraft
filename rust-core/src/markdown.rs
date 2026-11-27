@@ -270,6 +270,7 @@ fn is_container_html_tag(tag: &str) -> bool {
             | "picture"
             | "video"
             | "audio"
+            | "svg"
     )
 }
 
@@ -719,6 +720,14 @@ mod tests {
         let md = "<picture>\n\n<source srcset=\"a.png\">\n\n<img src=\"b.png\">\n\n</picture>\n";
         let html = render_diff_html(None, Some(md));
         assert_eq!(html.matches("diff-added").count(), 1, "{html}");
+    }
+
+    #[test]
+    fn svg_stays_together_across_blank_lines() {
+        let md = "<svg width=\"10\" height=\"10\">\n\n<rect width=\"5\" height=\"5\"/>\n\n</svg>\n\nAfter.\n";
+        let html = render_diff_html(None, Some(md));
+        assert_eq!(html.matches("diff-added").count(), 2, "{html}");
+        assert!(html.contains("<rect"), "{html}");
     }
 
     #[test]
