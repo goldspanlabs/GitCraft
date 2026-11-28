@@ -54,7 +54,21 @@ impl RepoSession {
             };
             // Resolve before mutating to reject non-commit objects.
             resolve_commit(&self.path, &oid)?;
-            git_cli::mutate(&self.path, &[command, &oid])?;
+            if action == crate::DropIntegration::Merge
+                && git_cli::run(&self.path, &["merge-base", "--is-ancestor", &oid, "HEAD"]).is_ok()
+            {
+                return Err(GitCraftError::warning(format!(
+                    "{} is already in the current branch's history, so there is nothing to merge",
+                    format_ref_display(&oid)
+                )));
+            }
+            let mut args = vec![command];
+            // Undo records only HEAD; never move other branch refs through user config.
+            if action == crate::DropIntegration::Rebase {
+                args.push("--no-update-refs");
+            }
+            args.push(&oid);
+            git_cli::mutate(&self.path, &args)?;
             Ok(Self::head_move_if_changed(
                 Some(expected),
                 self.head_position(),

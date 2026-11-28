@@ -35,7 +35,7 @@ struct SquashSheet: View {
             title: "\(fixup ? "Fixup" : "Squash") \(preview.commits.count) commits on \"\(branch)\"",
             subtitle: "Combine the selected commits into one.",
             confirmLabel: fixup ? "Fixup" : "Squash",
-            confirmDisabled: summary.trimmed.isEmpty || tab.isBusy,
+            confirmDisabled: (!fixup && summary.trimmed.isEmpty) || tab.isBusy,
             onCancel: { dismiss() },
             onConfirm: {
                 if let expectedCheckout, expectedCheckout != tab.activeCheckoutPath {
@@ -58,27 +58,33 @@ struct SquashSheet: View {
                         description = draft.description
                     }
 
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
-                    GridRow {
-                        SheetFieldLabel("Summary:")
-                        SheetInputBox(isFocused: focusedField == .summary) {
-                            TextField("Commit summary", text: $summary)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 13))
-                                .focused($focusedField, equals: .summary)
-                                .accessibilityIdentifier("squash-summary")
+                if fixup {
+                    Text("The target commit message will be preserved exactly. Switch off Fixup to edit the combined message.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("fixup-message-preserved")
+                } else {
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
+                        GridRow {
+                            SheetFieldLabel("Summary:")
+                            SheetInputBox(isFocused: focusedField == .summary) {
+                                TextField("Commit summary", text: $summary)
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13))
+                                    .focused($focusedField, equals: .summary)
+                                    .accessibilityIdentifier("squash-summary")
+                            }
                         }
-                    }
-                    GridRow(alignment: .top) {
-                        SheetFieldLabel("Description:")
-                            .padding(.top, 5)
-                        SheetInputBox(isFocused: focusedField == .description) {
-                            TextEditor(text: $description)
-                                .font(.system(size: 13))
-                                .scrollContentBackground(.hidden)
-                                .frame(height: 110)
-                                .focused($focusedField, equals: .description)
-                                .accessibilityIdentifier("squash-description")
+                        GridRow(alignment: .top) {
+                            SheetFieldLabel("Description:")
+                                .padding(.top, 5)
+                            SheetInputBox(isFocused: focusedField == .description) {
+                                TextEditor(text: $description)
+                                    .font(.system(size: 13))
+                                    .scrollContentBackground(.hidden)
+                                    .frame(height: 110)
+                                    .focused($focusedField, equals: .description)
+                                    .accessibilityIdentifier("squash-description")
+                            }
                         }
                     }
                 }

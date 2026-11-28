@@ -212,3 +212,61 @@ fn conflicts_enter_standard_recovery_and_abort_preserves_original_head() {
         assert!(session.status().unwrap().is_clean);
     }
 }
+
+#[test]
+fn already_merged_ancestor_is_a_warning_not_a_successful_noop() {
+    let dir = init_repo_with_commit();
+    let ancestor = head(dir.path());
+    run_git(dir.path(), &["branch", "feature"]);
+    commit_file(dir.path(), "later.txt", "later\n", "later");
+    let session = open(dir.path());
+    let before = session.head_position().unwrap();
+    let refs = run_git(dir.path(), &["show-ref"]);
+    let error = session
+        .integrate_drop(
+            ancestor,
+            Some("refs/heads/feature".into()),
+            DropIntegration::Merge,
+            before.clone(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("nothing to merge"));
+    assert_eq!(session.head_position().unwrap(), before);
+    assert_eq!(run_git(dir.path(), &["show-ref"]), refs);
+    assert!(session.status().unwrap().is_clean);
+}
+
+#[test]
+fn rebase_with_update_refs_enabled_leaves_other_branches_unchanged_through_undo() {
+    let (dir, source) = fixture();
+    commit_file(dir.path(), "first.txt", "first\n", "first local");
+    let first = head(dir.path());
+    run_git(dir.path(), &["branch", "midpoint"]);
+    commit_file(dir.path(), "second.txt", "second\n", "second local");
+    run_git(dir.path(), &["branch", "at-tip"]);
+    run_git(dir.path(), &["config", "rebase.updateRefs", "true"]);
+    let session = open(dir.path());
+    let before = session.head_position().unwrap();
+    let movement = session
+        .integrate_drop(
+            source.clone(),
+            Some("refs/heads/feature".into()),
+            DropIntegration::Rebase,
+            before.clone(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(rev(dir.path(), "HEAD~2"), source);
+    assert_eq!(rev(dir.path(), "midpoint"), first);
+    assert_eq!(rev(dir.path(), "at-tip"), before.oid);
+    session
+        .undo_head_move(movement.after, before.oid.clone(), ResetMode::Keep)
+        .unwrap();
+    assert_eq!(session.head_position().unwrap(), before);
+    assert_eq!(rev(dir.path(), "midpoint"), first);
+    assert_eq!(rev(dir.path(), "at-tip"), before.oid);
+    assert_eq!(
+        run_git(dir.path(), &["config", "rebase.updateRefs"]).trim(),
+        "true"
+    );
+}

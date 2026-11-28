@@ -661,3 +661,67 @@ fn refuses_to_sign_a_commit_it_cannot_keep_unchanged() {
     );
     assert_eq!(head(dir.path()), latin);
 }
+
+#[test]
+fn fixup_preserves_raw_target_message_tree_and_dirty_state_through_undo() {
+    for message in [
+        b"  Target\ncontinuation without a blank line\n\n    indented  \n# literal\n\n\n"
+            .as_slice(),
+        b"caf\xe9\n\nbody \xff\n",
+        b"",
+    ] {
+        let dir = init_repo_with_commit();
+        let target = commit_raw(dir.path(), "Ada <ada@x>", message);
+        let newer = commit_file(dir.path(), "newer.txt", "newer\n", "discard this message");
+        // Rewrite a range below HEAD so descendants must also be recreated.
+        let top = commit_file(dir.path(), "top.txt", "top\n", "keep descendant message");
+        let tree = rev(dir.path(), "HEAD^{tree}");
+        write(dir.path(), "staged.txt", "staged\n");
+        run_git(dir.path(), &["add", "staged.txt"]);
+        write(dir.path(), "staged.txt", "unstaged\n");
+        write(dir.path(), "untracked.txt", "untracked\n");
+        let status = run_git(dir.path(), &["status", "--porcelain"]);
+        let session = open(dir.path());
+        let preview = session.squash_preview(owned(&[&newer, &target])).unwrap();
+        let result = session
+            .fixup_commits(owned(&[&newer, &target]), preview.head)
+            .unwrap();
+        assert_eq!(
+            message_bytes(&commit_bytes(dir.path(), &result.squashed_oid)),
+            message
+        );
+        assert_eq!(rev(dir.path(), "HEAD^{tree}"), tree);
+        assert_eq!(
+            message_bytes(&commit_bytes(dir.path(), "HEAD")),
+            b"keep descendant message\n"
+        );
+        assert_eq!(run_git(dir.path(), &["status", "--porcelain"]), status);
+        assert_eq!(
+            header(&commit_bytes(dir.path(), &result.squashed_oid), "author "),
+            header(&commit_bytes(dir.path(), &target), "author ")
+        );
+        session
+            .undo_head_move(result.head_move.after, top.clone(), ResetMode::Soft)
+            .unwrap();
+        assert_eq!(head(dir.path()), top);
+        assert_eq!(run_git(dir.path(), &["status", "--porcelain"]), status);
+    }
+}
+
+#[test]
+fn fixup_refuses_stale_head_and_nonconsecutive_selection() {
+    let (dir, a, b, c) = three_commits();
+    let session = open(dir.path());
+    let preview = session.squash_preview(owned(&[&a, &b])).unwrap();
+    assert!(session
+        .fixup_commits(owned(&[&a, &c]), preview.head.clone())
+        .is_err());
+    commit_file(dir.path(), "later.txt", "later\n", "later");
+    let before = head(dir.path());
+    assert!(session
+        .fixup_commits(owned(&[&a, &b]), preview.head)
+        .unwrap_err()
+        .to_string()
+        .contains("branch has changed"));
+    assert_eq!(head(dir.path()), before);
+}

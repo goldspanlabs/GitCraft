@@ -13,8 +13,15 @@ final class DragDropUITests: XCTestCase {
         if let fixture { try? FileManager.default.removeItem(at: fixture.root) }
     }
 
-    private func launch(branches: Bool = false, commits: [String] = [], dirty: Bool = false) throws {
+    private func launch(branches: Bool = false, commits: [String] = [], dirty: Bool = false, fixupMessage: String? = nil) throws {
         fixture = try FixtureRepository.make(twoBranches: branches, untrackedFile: dirty, extraCommits: commits)
+        if let fixupMessage {
+            try fixture.git(["reset", "--hard", "HEAD~1"])
+            let messageURL = URL(fileURLWithPath: fixture.mainPath).appendingPathComponent(".git/fixup-message")
+            try fixupMessage.write(to: messageURL, atomically: true, encoding: .utf8)
+            try fixture.git(["commit", "--amend", "--cleanup=verbatim", "-F", messageURL.path])
+            try fixture.git(["commit", "--allow-empty", "-m", "two"])
+        }
         app = XCUIApplication(url: try GitCraftApp.bundleURL())
         app.launchArguments = ["-UITestOpenRepository", fixture.mainPath,
                                "-sidebar.localBranchesExpanded", "YES", "-sidebar.tagsExpanded", "YES",
@@ -131,14 +138,18 @@ final class DragDropUITests: XCTestCase {
     }
 
     func testOptionFixupKeepsTargetMessage() throws {
-        try launch(commits: ["one", "two"])
+        let message = "one\n\n    indented body  \n# literal\n\n\n"
+        try launch(commits: ["one", "two"], fixupMessage: message)
+        let targetObject = try fixture.git(["cat-file", "commit", "HEAD~1"])
+        let targetMessage = String(targetObject[targetObject.range(of: "\n\n")!.upperBound...])
+        XCTAssertEqual(targetMessage, message)
         drag(row("two"), to: row("one"), option: true)
-        let summary = app.sheets.textFields["squash-summary"]
-        XCTAssertTrue(summary.waitForExistence(timeout: 15))
-        XCTAssertEqual(summary.value as? String, "one")
+        XCTAssertTrue(app.sheets.staticTexts["fixup-message-preserved"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.sheets.textFields["squash-summary"].exists)
         confirm("Fixup")
         XCTAssertTrue(waitUntil(timeout: 30) { (try? self.fixture.git(["rev-list", "--count", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)) == "2" })
-        XCTAssertEqual(try fixture.git(["log", "-1", "--format=%B"]).trimmingCharacters(in: .whitespacesAndNewlines), "one")
+        let result = try fixture.git(["cat-file", "commit", "HEAD"])
+        XCTAssertEqual(String(result[result.range(of: "\n\n")!.upperBound...]), targetMessage)
     }
 
     func testMultiSelectionSquashUsesAllDraggedCommits() throws {

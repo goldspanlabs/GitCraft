@@ -462,6 +462,9 @@ interface RepoSession {
   SquashResult squash_commits(sequence<string> oids, string message, HeadPosition expected);
 
   [Throws=GitCraftError]
+  SquashResult fixup_commits(sequence<string> oids, HeadPosition expected);
+
+  [Throws=GitCraftError]
   sequence<DiffRow> diff();
 
   [Throws=GitCraftError]
