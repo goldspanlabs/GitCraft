@@ -272,3 +272,40 @@ fn moved_markdown_uses_old_directory_only_for_removed_relative_assets() {
     assert!(html.contains(r#"src="/icon.png?diff-side=old""#));
     assert!(html.contains(r#"src="diagram.png""#));
 }
+
+#[test]
+fn branch_eligibility_tracks_head_and_tip_changes() {
+    let repo = init_repo_with_commit();
+    let dir = repo.path();
+    let main = head(dir);
+    run_git(dir, &["switch", "--orphan", "other"]);
+    let other = commit_file(dir, "other.txt", "other\n", "Unrelated root");
+    run_git(dir, &["switch", "main"]);
+    let session = open(dir);
+
+    let tips = vec![main.clone(), other.clone(), main.clone()];
+    assert_eq!(
+        session.comparable_branch_tips(tips.clone()).unwrap(),
+        [main.clone()]
+    );
+    assert_eq!(
+        session.comparable_branch_tips(tips.clone()).unwrap(),
+        [main.clone()]
+    );
+
+    let next = commit_file(dir, "next.txt", "next\n", "Advance main");
+    assert_eq!(
+        session
+            .comparable_branch_tips(vec![next.clone(), other.clone()])
+            .unwrap(),
+        [next]
+    );
+
+    run_git(dir, &["switch", "other"]);
+    assert_eq!(
+        session.comparable_branch_tips(tips.clone()).unwrap(),
+        [other]
+    );
+    run_git(dir, &["switch", "--detach", "HEAD"]);
+    assert!(session.comparable_branch_tips(tips).unwrap().is_empty());
+}

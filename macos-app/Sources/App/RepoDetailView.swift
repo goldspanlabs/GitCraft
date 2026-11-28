@@ -163,7 +163,10 @@ struct RepoDetailView: View {
                 InspectorView(tab: tab)
             }
             .onChange(of: tab.compareState.isActive) {
-                if tab.compareState.isActive { isBottomCollapsed = false }
+                if tab.compareState.isActive {
+                    isBottomCollapsed = false
+                    isBottomMaximized = false
+                }
             }
             // On the split, not the graph pane, so they stay visible while the bottom pane is maximized.
             .overlay(alignment: .top) {

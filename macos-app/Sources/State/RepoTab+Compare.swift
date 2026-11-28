@@ -139,7 +139,7 @@ extension RepoTab {
         loadInBackground({ try $0.getCompareDiff(mergeBaseOid: base, headOid: head, file: file) },
             apply: { [self] rows in
                 guard compareFileRevision == revision else { return }
-                compareDiffRows = rows
+                compareDiffRows = Self.displayRows(rows)
                 compareDiffMessage = nil
             },
             onFailure: { [self] error in

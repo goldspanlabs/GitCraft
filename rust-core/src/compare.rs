@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+    path::Path,
+};
 
 use crate::{
     diff, git_cli, graph, CompareFile, CompareSummary, DiffRow, FileContentPair, GitCraftError,
@@ -6,6 +10,28 @@ use crate::{
 };
 
 const WORKTREE: &str = "WORKTREE";
+
+#[derive(Default)]
+pub(crate) struct BranchEligibility {
+    history: Option<EligibilityHistory>,
+    by_tip: HashMap<String, bool>,
+}
+
+#[derive(PartialEq, Eq)]
+struct EligibilityHistory {
+    head: String,
+    shallow: Vec<u8>,
+    grafts: Vec<u8>,
+    replacements: String,
+}
+
+fn read_optional(path: &Path) -> Result<Vec<u8>, GitCraftError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    }
+}
 
 impl RepoSession {
     pub fn compare_branches(
@@ -118,17 +144,53 @@ impl RepoSession {
         if !has_attached_head(&self.path)? {
             return Ok(Vec::new());
         }
+        // Serialize eligibility sweeps for this session. An overlapping refresh
+        // can reuse the results once the first sweep finishes.
+        let mut cache = self
+            .compare_eligibility
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let head = resolve(&self.path, "HEAD")?;
+        let repo = self.sync_repo.to_thread_local();
+        let common_dir = repo.common_dir();
+        let history = EligibilityHistory {
+            head: head.clone(),
+            shallow: read_optional(&common_dir.join("shallow"))?,
+            grafts: read_optional(&common_dir.join("info/grafts"))?,
+            replacements: git_cli::run(
+                &self.path,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/replace",
+                ],
+            )?,
+        };
+        if cache.history.as_ref() != Some(&history) {
+            cache.history = Some(history);
+            cache.by_tip.clear();
+        }
+
         let mut seen = HashSet::new();
         let mut comparable = Vec::new();
         for tip in &tips {
-            if seen.insert(tip) {
+            if seen.insert(tip.as_str()) {
                 validate_oid(tip)?;
-                if *tip == head || merge_base(&self.path, &head, tip)?.is_some() {
+                let eligible = match cache.by_tip.get(tip) {
+                    Some(&cached) => cached,
+                    None => {
+                        let eligible =
+                            *tip == head || merge_base(&self.path, &head, tip)?.is_some();
+                        cache.by_tip.insert(tip.clone(), eligible);
+                        eligible
+                    }
+                };
+                if eligible {
                     comparable.push(tip.clone());
                 }
             }
         }
+        cache.by_tip.retain(|tip, _| seen.contains(tip.as_str()));
         Ok(comparable)
     }
 

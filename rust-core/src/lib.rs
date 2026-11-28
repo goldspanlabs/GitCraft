@@ -86,6 +86,7 @@ pub struct RepoSession {
     stopped: Arc<AtomicBool>,
     commit_sort: AtomicU8,
     graph_cache: graph::SharedGraphCache,
+    compare_eligibility: Mutex<compare::BranchEligibility>,
 }
 
 impl Drop for RepoSession {
@@ -147,6 +148,7 @@ impl RepoSession {
             stopped,
             commit_sort: AtomicU8::new(0),
             graph_cache: Default::default(),
+            compare_eligibility: Mutex::default(),
         })
     }
 
