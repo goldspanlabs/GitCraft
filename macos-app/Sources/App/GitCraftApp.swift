@@ -19,12 +19,22 @@ struct GitCraftApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var commandFMonitor: Any?
+
     func applicationWillFinishLaunching(_: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
     }
 
     func applicationDidFinishLaunching(_: Notification) {
         AppearancePreference.apply(AppearancePreference.current)
+        commandFMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers?.lowercased() == "f",
+                  let controller = event.window?.windowController as? RepoWindowController
+            else { return event }
+            controller.focusSearchField()
+            return nil
+        }
 
         let workspace = WorkspaceState.shared
         // UI tests open a fixture repository with `-UITestOpenRepository <path>` instead of
@@ -120,7 +130,7 @@ struct RepoCommands: Commands {
         CommandGroup(replacing: .undoRedo) {
             UndoRedoMenuItems(tab: workspace.activeTab)
         }
-        CommandGroup(after: .textEditing) {
+        CommandGroup(after: .pasteboard) {
             Divider()
             Button("Filter Commits") { workspace.focusCommitFilter() }
                 .keyboardShortcut("f", modifiers: .command)
