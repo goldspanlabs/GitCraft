@@ -50,11 +50,7 @@ final class ShortcutUITests: XCTestCase {
     func testCommandFFocusesTheCommitFilter() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true))
 
-        app.typeKey("f", modifierFlags: .command)
-        app.typeText("feature")
-
-        let search = app.searchFields.firstMatch
-        XCTAssertTrue(wait(for: search, toSatisfy: "value == 'feature'", timeout: 10))
+        filterCommits(with: "feature")
     }
 
     func testStageAndUnstageAllShortcuts() throws {
@@ -168,14 +164,8 @@ final class ShortcutUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Create Tag"].waitForNonExistence(timeout: 10))
 
         description.click()
-        app.typeKey("f", modifierFlags: .command)
-        app.typeText("needle")
-        XCTAssertTrue(wait(for: app.searchFields.firstMatch, toSatisfy: "value == 'needle'", timeout: 10), "⌘F filters")
+        filterCommits(with: "needle")
         XCTAssertEqual(description.value as? String, "body text")
-
-        app.menuBarItems["Edit"].click()
-        print("EDIT-MENU", app.menuBarItems["Edit"].menuItems.allElementsBoundByIndex.map { "\($0.title)|\($0.isEnabled)" })
-        app.typeKey(.escape, modifierFlags: [])
     }
 
     // MARK: Closing windows and sheets
@@ -301,6 +291,21 @@ final class ShortcutUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    private func filterCommits(with query: String, file: StaticString = #filePath, line: UInt = #line) {
+        app.typeKey("f", modifierFlags: .command)
+        // AppKit expands the magnifying glass into an editable field before routing typing to it.
+        let search = app.windows.firstMatch.toolbars.firstMatch.searchFields.firstMatch
+        XCTAssertTrue(
+            waitUntil(timeout: 10) { search.exists && search.isHittable && search.frame.width > 100 },
+            "⌘F opens the commit filter for editing", file: file, line: line
+        )
+        app.typeText(query)
+        XCTAssertTrue(
+            wait(for: search, toSatisfy: "value == %@", argument: query, timeout: 10),
+            "The commit filter receives the full query", file: file, line: line
+        )
+    }
 
     private func launch(fixture: FixtureRepository) throws {
         self.fixture = fixture
