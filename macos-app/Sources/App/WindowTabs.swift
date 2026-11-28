@@ -144,12 +144,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     /// Space the toolbar keeps between the title block and the action buttons. macOS 26 needs
     /// 16; with less it pushes the buttons off centre.
     private static let titleActionsGap: CGFloat = 16
-    /// Below this width of top bar (the window, less a showing sidebar) the filter is just a button.
-    private static let searchCollapseWidth: CGFloat = 1100
-    /// A search field held this narrow makes `NSSearchToolbarItem` show its button instead.
-    private static let collapsedSearchWidth: CGFloat = 36
     private var titleWidthConstraints: [NSLayoutConstraint] = []
-    private var searchCollapseConstraint: NSLayoutConstraint?
     private weak var titleRow: NSView?
     private weak var actionsView: NSView?
     private let sidebarItem: NSSplitViewItem
@@ -225,7 +220,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         sidebarResizes = NotificationCenter.default
             .publisher(for: NSSplitView.didResizeSubviewsNotification, object: split.splitView)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateToolbarLayout() }
+            .sink { [weak self] _ in self?.updateTitleWidth() }
 
         changes = tab.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -236,8 +231,6 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         firstResponderObservation = window.observe(\.firstResponder, options: [.initial, .new]) { [weak self] window, _ in
             let editing = window.firstResponder is NSText
             DispatchQueue.main.async {
-                // Expands the filter as soon as its button puts the cursor in it.
-                self?.updateSearchCollapse()
                 guard let self, self.tab.isEditingText != editing else { return }
                 self.tab.isEditingText = editing
             }
@@ -297,31 +290,10 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         return size.width >= 1040 && size.height >= 680 ? size : fallback
     }
 
-    private func updateToolbarLayout() {
-        updateTitleWidth()
-        updateSearchCollapse()
-    }
-
     /// Where the top bar starts: the sidebar's edge, or the window's while the sidebar is hidden.
     private var topBarLeadingEdge: CGFloat {
         let sidebar = sidebarItem.viewController.view
         return sidebarItem.isCollapsed ? 0 : sidebar.convert(sidebar.bounds, to: nil).maxX
-    }
-
-    /// Shrinks the filter to a button on a narrow window, unless it's being typed in or holds a filter.
-    private func updateSearchCollapse() {
-        guard let window, let field = searchField, let constraint = searchCollapseConstraint else { return }
-        let collapsed = window.frame.width - topBarLeadingEdge < Self.searchCollapseWidth
-            && field.currentEditor() == nil
-            && field.stringValue.isEmpty
-        if constraint.isActive != collapsed { constraint.isActive = collapsed }
-    }
-
-    /// Lifts the collapsed width ahead of a search: macOS 26 won't put the cursor in a field
-    /// still held to the size of its button.
-    private func expandSearchField() {
-        searchCollapseConstraint?.isActive = false
-        window?.layoutIfNeeded()
     }
 
     /// Scales the title block with the window, so it is the same for every name at a given width,
@@ -345,11 +317,11 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
 
     /// Catches the first toolbar layout, which neither a window nor a sidebar resize reports.
     func windowDidUpdate(_: Notification) {
-        updateToolbarLayout()
+        updateTitleWidth()
     }
 
     func windowDidResize(_ notification: Notification) {
-        updateToolbarLayout()
+        updateTitleWidth()
         guard let window = notification.object as? NSWindow,
               !window.styleMask.contains(.fullScreen)
         else { return }
@@ -429,16 +401,13 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
             item.label = "Busy"
             return item
         case .repoSearch:
-            let item = CommitFilterToolbarItem(itemIdentifier: identifier)
-            item.willBeginSearch = { [weak self] in self?.expandSearchField() }
+            // AppKit changes the item's width as it moves focus into the field.
+            let item = NSSearchToolbarItem(itemIdentifier: identifier)
             item.searchField.placeholderString = "Filter commits"
             item.searchField.stringValue = tab.searchQuery
             item.searchField.delegate = self
             item.label = "Filter"
             searchField = item.searchField
-            searchCollapseConstraint = item.searchField.widthAnchor
-                .constraint(lessThanOrEqualToConstant: Self.collapsedSearchWidth)
-            updateSearchCollapse()
             return item
         default:
             return nil
@@ -448,16 +417,6 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSSearchField, field === searchField else { return }
         tab.updateSearchDebounced(field.stringValue)
-    }
-}
-
-/// The commit filter, which says when a search is about to begin, from its button or a command.
-private final class CommitFilterToolbarItem: NSSearchToolbarItem {
-    var willBeginSearch: (() -> Void)?
-
-    override func beginSearchInteraction() {
-        willBeginSearch?()
-        super.beginSearchInteraction()
     }
 }
 
