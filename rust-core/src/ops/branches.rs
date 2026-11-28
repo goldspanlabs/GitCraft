@@ -44,7 +44,19 @@ impl RepoSession {
             {
                 return Err(GitCraftError::warning("Finish the current operation first"));
             }
-            if !status.is_clean {
+            // The mutation guard must not inherit display preferences such as
+            // status.showUntrackedFiles=no or submodule.<name>.ignore=all.
+            let changes = git_cli::run(
+                &self.path,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=all",
+                    "--ignore-submodules=none",
+                ],
+            )?;
+            if !changes.is_empty() {
                 return Err(GitCraftError::warning("Commit or stash your changes first"));
             }
             let command = match action {

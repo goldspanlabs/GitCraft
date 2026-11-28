@@ -336,3 +336,117 @@ fn unchanged_rebase_is_a_warning_and_leaves_refs_index_and_files_unchanged() {
         assert!(!status.is_rebasing);
     }
 }
+
+#[test]
+fn hidden_untracked_files_still_refuse_every_drop_integration() {
+    for action in [
+        DropIntegration::Merge,
+        DropIntegration::Rebase,
+        DropIntegration::CherryPick,
+    ] {
+        let (dir, source) = fixture();
+        run_git(dir.path(), &["config", "status.showUntrackedFiles", "no"]);
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        write(dir.path(), "nested/untracked.txt", "keep this file\n");
+        assert!(run_git(dir.path(), &["status", "--porcelain"]).is_empty());
+        let session = open(dir.path());
+        assert!(
+            session.status().unwrap().is_clean,
+            "reproduce the display-status bypass"
+        );
+        let before = session.head_position().unwrap();
+        let refs = run_git(dir.path(), &["show-ref"]);
+        let index_tree = run_git(dir.path(), &["write-tree"]);
+        let error = session
+            .integrate_drop(
+                source,
+                Some("refs/heads/feature".into()),
+                action,
+                before.clone(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("Commit or stash"));
+        assert_eq!(session.head_position().unwrap(), before);
+        assert_eq!(run_git(dir.path(), &["show-ref"]), refs);
+        assert_eq!(run_git(dir.path(), &["write-tree"]), index_tree);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("nested/untracked.txt")).unwrap(),
+            "keep this file\n"
+        );
+        assert!(!dir.path().join("feature.txt").exists());
+        assert!(run_git(dir.path(), &["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn hidden_submodule_changes_still_refuse_every_drop_integration() {
+    for untracked in [false, true] {
+        for action in [
+            DropIntegration::Merge,
+            DropIntegration::Rebase,
+            DropIntegration::CherryPick,
+        ] {
+            let module_source = init_repo_with_commit();
+            let (dir, source) = fixture();
+            run_git(
+                dir.path(),
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    module_source.path().to_str().unwrap(),
+                    "module",
+                ],
+            );
+            run_git(dir.path(), &["commit", "-m", "add module"]);
+            run_git(dir.path(), &["config", "status.showUntrackedFiles", "no"]);
+            run_git(dir.path(), &["config", "submodule.module.ignore", "all"]);
+            run_git(dir.path(), &["config", "diff.ignoreSubmodules", "all"]);
+            let module = dir.path().join("module");
+            let filename = if untracked { "untracked.txt" } else { "a.txt" };
+            write(&module, filename, "keep module change\n");
+            assert!(run_git(dir.path(), &["status", "--porcelain"]).is_empty());
+            let session = open(dir.path());
+            let before = session.head_position().unwrap();
+            let refs = run_git(dir.path(), &["show-ref"]);
+            let index_tree = run_git(dir.path(), &["write-tree"]);
+            let module_head = head(&module);
+            let error = session
+                .integrate_drop(
+                    source,
+                    Some("refs/heads/feature".into()),
+                    action,
+                    before.clone(),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("Commit or stash"));
+            assert_eq!(session.head_position().unwrap(), before);
+            assert_eq!(run_git(dir.path(), &["show-ref"]), refs);
+            assert_eq!(run_git(dir.path(), &["write-tree"]), index_tree);
+            assert_eq!(head(&module), module_head);
+            assert_eq!(
+                std::fs::read_to_string(module.join(filename)).unwrap(),
+                "keep module change\n"
+            );
+            assert!(!dir.path().join("feature.txt").exists());
+        }
+    }
+}
+
+#[test]
+fn ignored_files_do_not_block_an_otherwise_clean_drop() {
+    let (dir, source) = fixture();
+    write(dir.path(), ".git/info/exclude", "ignored.txt\n");
+    write(dir.path(), "ignored.txt", "keep ignored file\n");
+    let session = open(dir.path());
+    let expected = session.head_position().unwrap();
+    assert!(session
+        .integrate_drop(source, None, DropIntegration::Merge, expected)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("ignored.txt")).unwrap(),
+        "keep ignored file\n"
+    );
+}
