@@ -179,7 +179,7 @@ final class GitDropTabTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: repo.appendingPathComponent("feature.txt").path))
     }
     @MainActor
-    func testAlreadyMergedDropPreservesRedoHistory() async throws {
+    func testUnchangedMergeAndRebaseDropsPreserveRedoHistory() async throws {
         let tab = try await loadedTab()
         defer { tab.stopWatcher() }
         let headBefore = try XCTUnwrap(tab.session.headPosition())
@@ -192,12 +192,14 @@ final class GitDropTabTests: XCTestCase {
         let redoID = try XCTUnwrap(tab.latestRedo?.id)
         let payload = GitDragPayload(checkout: tab.activeCheckoutPath, headOID: headBefore.oid,
                                      branch: "main", oids: [target], sourceRef: "refs/heads/feature", label: "feature")
-        let plan = GitDropPlan(payload: payload, target: .head, action: .merge, message: "Merge feature into main")
-        tab.executeGitDrop(plan, action: .merge)
-        try await waitFor { !tab.isBusy && tab.toasts.contains { $0.message.contains("nothing to merge") } }
-        XCTAssertEqual(tab.latestRedo?.id, redoID)
-        XCTAssertTrue(tab.undoStack.isEmpty)
-        XCTAssertEqual(tab.session.headPosition(), headBefore)
+        for (action, warning) in [(GitDropAction.merge, "nothing to merge"), (.rebase, "nothing to rebase")] {
+            let plan = GitDropPlan(payload: payload, target: .head, action: action, message: "Integrate feature into main")
+            tab.executeGitDrop(plan, action: action)
+            try await waitFor { !tab.isBusy && tab.toasts.contains { $0.message.contains(warning) } }
+            XCTAssertEqual(tab.latestRedo?.id, redoID)
+            XCTAssertTrue(tab.undoStack.isEmpty)
+            XCTAssertEqual(tab.session.headPosition(), headBefore)
+        }
     }
 
     @MainActor
@@ -205,18 +207,28 @@ final class GitDropTabTests: XCTestCase {
         let message = "  target\ncontinuation\n\n    indented  \n\n\n"
         let messageURL = repo.appendingPathComponent(".git/fixup-message")
         try message.write(to: messageURL, atomically: true, encoding: .utf8)
-        try git(["commit", "--allow-empty", "--cleanup=verbatim", "-F", messageURL.path], in: repo)
+        let changedFile = repo.appendingPathComponent("fixup-change.txt")
+        try "a real change\n".write(to: changedFile, atomically: true, encoding: .utf8)
+        try git(["add", "fixup-change.txt"], in: repo)
+        try git(["commit", "--cleanup=verbatim", "-F", messageURL.path], in: repo)
         let target = try git(["rev-parse", "HEAD"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
         try git(["commit", "--allow-empty", "-m", "newer"], in: repo)
         let newer = try git(["rev-parse", "HEAD"], in: repo).trimmingCharacters(in: .whitespacesAndNewlines)
         let tab = try await loadedTab()
         defer { tab.stopWatcher() }
+        let before = try XCTUnwrap(tab.session.headPosition())
+        let treeBefore = try git(["rev-parse", "HEAD^{tree}"], in: repo)
         let preview = try tab.session.squashPreview(oids: [newer, target])
         tab.squash(preview, summary: "", description: "edited display text must be ignored", fixup: true)
         try await waitFor { !tab.isBusy && !tab.undoStack.isEmpty }
         let result = try git(["cat-file", "commit", "HEAD"], in: repo)
         XCTAssertEqual(String(result[result.range(of: "\n\n")!.upperBound...]), message)
         XCTAssertEqual(tab.latestUndo?.actionName, "Fixup")
+        XCTAssertEqual(try git(["rev-parse", "HEAD^{tree}"], in: repo), treeBefore)
+        XCTAssertEqual(try String(contentsOf: changedFile, encoding: .utf8), "a real change\n")
+        tab.undo()
+        try await waitFor { !tab.isBusy && tab.undoStack.isEmpty }
+        XCTAssertEqual(tab.session.headPosition(), before)
     }
 
 }

@@ -270,3 +270,69 @@ fn rebase_with_update_refs_enabled_leaves_other_branches_unchanged_through_undo(
         "true"
     );
 }
+
+#[test]
+fn merge_drop_overrides_squash_and_no_commit_configuration_and_remains_undoable() {
+    for options in ["--squash", "--no-commit", "--squash --no-commit"] {
+        let (dir, source) = fixture();
+        commit_file(dir.path(), "main.txt", "main\n", "main local change");
+        run_git(dir.path(), &["config", "branch.main.mergeOptions", options]);
+        let session = open(dir.path());
+        let before = session.head_position().unwrap();
+        let movement = session
+            .integrate_drop(
+                source.clone(),
+                Some("refs/heads/feature".into()),
+                DropIntegration::Merge,
+                before.clone(),
+            )
+            .unwrap()
+            .expect("a completed, undoable merge");
+        assert_eq!(rev(dir.path(), "HEAD^1"), before.oid);
+        assert_eq!(rev(dir.path(), "HEAD^2"), source);
+        let status = session.status().unwrap();
+        assert!(status.is_clean);
+        assert!(!status.is_merging);
+        session
+            .undo_head_move(movement.after, before.oid.clone(), ResetMode::Keep)
+            .unwrap();
+        assert_eq!(session.head_position().unwrap(), before);
+        assert_eq!(rev(dir.path(), "feature"), source);
+        assert!(!dir.path().join("feature.txt").exists());
+        assert_eq!(
+            run_git(dir.path(), &["config", "branch.main.mergeOptions"]).trim(),
+            options
+        );
+    }
+}
+
+#[test]
+fn unchanged_rebase_is_a_warning_and_leaves_refs_index_and_files_unchanged() {
+    for same_tip in [false, true] {
+        let dir = init_repo_with_commit();
+        let source = head(dir.path());
+        run_git(dir.path(), &["branch", "feature"]);
+        if !same_tip {
+            commit_file(dir.path(), "later.txt", "later\n", "later local change");
+        }
+        let session = open(dir.path());
+        let before = session.head_position().unwrap();
+        let refs = run_git(dir.path(), &["show-ref"]);
+        let tree = rev(dir.path(), "HEAD^{tree}");
+        let error = session
+            .integrate_drop(
+                source,
+                Some("refs/heads/feature".into()),
+                DropIntegration::Rebase,
+                before.clone(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("nothing to rebase"));
+        assert_eq!(session.head_position().unwrap(), before);
+        assert_eq!(run_git(dir.path(), &["show-ref"]), refs);
+        assert_eq!(rev(dir.path(), "HEAD^{tree}"), tree);
+        let status = session.status().unwrap();
+        assert!(status.is_clean);
+        assert!(!status.is_rebasing);
+    }
+}

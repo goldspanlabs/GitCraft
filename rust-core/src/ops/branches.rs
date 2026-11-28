@@ -64,15 +64,22 @@ impl RepoSession {
             }
             let mut args = vec![command];
             // Undo records only HEAD; never move other branch refs through user config.
-            if action == crate::DropIntegration::Rebase {
-                args.push("--no-update-refs");
+            match action {
+                crate::DropIntegration::Rebase => args.push("--no-update-refs"),
+                // A confirmed Merge must complete and produce an undoable HEAD move even
+                // when branch.<name>.mergeOptions requests --squash or --no-commit.
+                crate::DropIntegration::Merge => args.extend(["--no-squash", "--commit"]),
+                crate::DropIntegration::CherryPick => {}
             }
             args.push(&oid);
             git_cli::mutate(&self.path, &args)?;
-            Ok(Self::head_move_if_changed(
-                Some(expected),
-                self.head_position(),
-            ))
+            let movement = Self::head_move_if_changed(Some(expected), self.head_position());
+            if action == crate::DropIntegration::Rebase && movement.is_none() {
+                return Err(GitCraftError::warning(
+                    "Rebase left the branch unchanged; there is nothing to rebase.",
+                ));
+            }
+            Ok(movement)
         })
     }
 
