@@ -14,7 +14,8 @@ pub use refs::{list_branches, list_tags};
 
 pub(crate) use detail::extract_commit_metadata;
 use lanes::{CommitParents, LaneState, RawCommit};
-use refs::{collect_refs_and_tips, default_base, upstream_is_gone};
+pub(crate) use refs::default_base;
+use refs::{collect_refs_and_tips, upstream_is_gone};
 
 /// A commit SHA abbreviated to seven characters, as git shows it.
 pub(crate) fn short_oid(oid_hex: &str) -> String {

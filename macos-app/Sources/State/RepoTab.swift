@@ -104,6 +104,18 @@ final class RepoTab: ObservableObject, Identifiable {
         didSet { diffRevision = UUID() }
     }
     private(set) var diffRevision = UUID()
+    @Published var compareState = CompareState.idle
+    @Published var compareFile: CompareFile?
+    @Published var compareDiffRows: [DiffRow] = []
+    @Published var compareDiffMessage: String?
+    @Published var compareShowsMarkdown = false
+    @Published var compareMarkdownState: MarkdownPreviewState = .idle
+    @Published var comparableBranchTips: Set<String> = []
+    var compareDefaultBranch: String?
+    var compareRequest: CompareRequest?
+    var compareRevision = UUID()
+    var compareFileRevision = UUID()
+    var compareBranchesRevision = UUID()
     @Published var selectedFilePath: String?
     @Published var selectedFileStaged = false
     @Published var isMarkdownPreview = false
@@ -463,7 +475,10 @@ final class RepoTab: ObservableObject, Identifiable {
                 let (graphDirty, dirty, worktreesDirty) = await Task.detached {
                     (session.takeGraphDirty(), session.takeDirty(), session.takeWorktreesDirty())
                 }.value
+                if Task.isCancelled { break }
                 if graphDirty {
+                    self?.comparableBranchTips = []
+                    self?.compareBranchesRevision = UUID()
                     self?.refresh()
                 } else {
                     if dirty {
@@ -628,6 +643,9 @@ final class RepoTab: ObservableObject, Identifiable {
         worktreesRefreshTask?.cancel()
         worktreesRefreshTask = nil
         worktreesRefreshPending = false
+        closeCompare()
+        comparableBranchTips = []
+        compareDefaultBranch = nil
         session = next
         activeCheckoutPath = canonical
         // Steps name a commit and branch, not a checkout, so they mustn't follow the tab to
@@ -697,6 +715,7 @@ final class RepoTab: ObservableObject, Identifiable {
 
     /// Re-reads only the working-tree status (staged/unstaged lists and merge state).
     func refreshStatus() {
+        refreshCompare(workingTreeOnly: true)
         loadInBackground({ try $0.status() }, apply: { [self] status in
             applyStatus(status)
             if selectedCommit == nil {
@@ -769,6 +788,7 @@ final class RepoTab: ObservableObject, Identifiable {
         let scoped = scopeToCurrentBranch
 
         refreshWorktrees()
+        refreshCompare()
 
         Task {
             defer {
@@ -819,6 +839,7 @@ final class RepoTab: ObservableObject, Identifiable {
                 )
                 guard self.session === session else { return }
                 branches = branchList
+                refreshCompareBranches(branchList)
                 // The core already returns tags newest-created first.
                 tags = tagList
                 stashes = stashList

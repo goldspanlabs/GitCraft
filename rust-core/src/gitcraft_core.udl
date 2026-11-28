@@ -10,6 +10,7 @@ namespace gitcraft_core {
 
   string render_markdown_html(string markdown);
   string render_markdown_diff_html(string? old_markdown, string? new_markdown);
+  string render_compare_markdown_html(string? old_markdown, string? new_markdown, string? old_path);
 };
 
 [Error]
@@ -17,6 +18,7 @@ interface GitCraftError {
   Message(string msg);
   Warning(string msg);
   GitNotFound();
+  UnknownCompareRef(string name);
 };
 
 enum GitAvailability {
@@ -90,6 +92,23 @@ dictionary FileChange {
   string path;
   string status;
   boolean staged;
+};
+
+dictionary CompareFile {
+  string path;
+  string? old_path;
+  string status;
+};
+
+dictionary CompareSummary {
+  string target_ref;
+  string source_ref;
+  string base_oid;
+  string head_oid;
+  string merge_base_oid;
+  u32 ahead;
+  u32 behind;
+  sequence<CompareFile> files;
 };
 
 dictionary GraphIndexSummary {
@@ -310,6 +329,23 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   sequence<BranchInfo> list_branches();
+
+  [Throws=GitCraftError]
+  CompareSummary compare_branches(string base_ref, string head_ref);
+
+  [Throws=GitCraftError]
+  CompareSummary compare_working_tree(string base_ref);
+
+  [Throws=GitCraftError]
+  sequence<DiffRow> get_compare_diff(string merge_base_oid, string head_oid, CompareFile file);
+
+  [Throws=GitCraftError]
+  FileContentPair get_compare_file_contents(string merge_base_oid, string head_oid, CompareFile file);
+
+  [Throws=GitCraftError]
+  sequence<string> comparable_branch_tips(sequence<string> tips);
+
+  string? compare_default_branch();
 
   [Throws=GitCraftError]
   sequence<TagInfo> list_tags();

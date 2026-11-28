@@ -8,6 +8,8 @@ extension Error {
             switch error {
             case let .Message(msg), let .Warning(msg):
                 return msg.trimmed
+            case let .UnknownCompareRef(name):
+                return "Unknown ref: \(name)"
             case .GitNotFound:
                 return "Git is not installed or could not be found. Install Git or Xcode Command Line Tools, then try again."
             }

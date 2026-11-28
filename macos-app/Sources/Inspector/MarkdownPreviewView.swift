@@ -11,10 +11,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let filePath: String?
     var session: RepoSession? = nil
     var commitOid: String? = nil
+    var compareBaseOid: String? = nil
     var staged: Bool = false
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(repoRootPath: repoRootPath, session: session, commitOid: commitOid, staged: staged)
+        Coordinator(
+            repoRootPath: repoRootPath, session: session, commitOid: commitOid,
+            compareBaseOid: compareBaseOid, staged: staged
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -35,6 +39,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             repoRootPath: repoRootPath,
             session: session,
             commitOid: commitOid,
+            compareBaseOid: compareBaseOid,
             staged: staged
         )
         let baseURL = Self.baseURL(for: filePath)
@@ -57,11 +62,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
         var loadedBaseURL: URL?
         fileprivate let schemeHandler: RepoAssetSchemeHandler
 
-        init(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
+        init(repoRootPath: String?, session: RepoSession?, commitOid: String?, compareBaseOid: String?, staged: Bool) {
             self.schemeHandler = RepoAssetSchemeHandler(
                 repoRootPath: repoRootPath,
                 session: session,
                 commitOid: commitOid,
+                compareBaseOid: compareBaseOid,
                 staged: staged
             )
         }
@@ -286,15 +292,19 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     private var resolvedRootPrefix: String = ""
     private var session: RepoSession?
     private var commitOid: String?
+    private var compareBaseOid: String?
     private var staged: Bool = false
     private var activeTasks = Set<ObjectIdentifier>()
 
-    init(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
+    init(repoRootPath: String?, session: RepoSession?, commitOid: String?, compareBaseOid: String?, staged: Bool) {
         super.init()
-        update(repoRootPath: repoRootPath, session: session, commitOid: commitOid, staged: staged)
+        update(
+            repoRootPath: repoRootPath, session: session, commitOid: commitOid,
+            compareBaseOid: compareBaseOid, staged: staged
+        )
     }
 
-    func update(repoRootPath: String?, session: RepoSession?, commitOid: String?, staged: Bool) {
+    func update(repoRootPath: String?, session: RepoSession?, commitOid: String?, compareBaseOid: String?, staged: Bool) {
         let normalized = repoRootPath.map {
             URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
         }
@@ -305,6 +315,7 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         resolvedRootPrefix = prefix
         self.session = session
         self.commitOid = commitOid
+        self.compareBaseOid = compareBaseOid
         self.staged = staged
         lock.unlock()
     }
@@ -320,6 +331,7 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         activeTasks.insert(taskID)
         let currentSession = session
         let currentCommitOid = commitOid
+        let currentCompareBase = compareBaseOid
         let currentStaged = staged
         let rootURL = resolvedRootURL
         let rootPrefix = resolvedRootPrefix
@@ -336,9 +348,9 @@ fileprivate final class RepoAssetSchemeHandler: NSObject, WKURLSchemeHandler {
             if let currentSession {
                 data = try? currentSession.getRepoAsset(
                     path: relativePath,
-                    commitOid: currentCommitOid,
+                    commitOid: (isOldSide ? currentCompareBase : nil) ?? currentCommitOid,
                     staged: currentStaged,
-                    oldSide: isOldSide
+                    oldSide: isOldSide && currentCompareBase == nil
                 )
             } else if let rootURL, !isOldSide {
                 data = Self.boundedFileData(

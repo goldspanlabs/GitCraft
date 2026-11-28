@@ -37,6 +37,17 @@ pub fn run_status_with_input(
     execute_raw(repo, args, READ_TIMEOUT, false, Some(input), &[])
 }
 
+/// Runs a query with an isolated index or other caller-provided environment.
+pub(crate) fn run_with_env(
+    repo: &Path,
+    args: &[&str],
+    env: &[(&str, OsString)],
+    input: Option<Vec<u8>>,
+) -> Result<String, crate::GitCraftError> {
+    let output = execute_raw(repo, args, READ_TIMEOUT, false, input, env)?;
+    successful_stdout(args, output)
+}
+
 /// Runs a read-only git command and returns its stdout.
 ///
 /// Sets `GIT_OPTIONAL_LOCKS=0` so queries like `git status` never rewrite the index,

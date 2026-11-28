@@ -72,7 +72,7 @@ struct RepoDetailView: View {
             PersistentVSplit(
                 minTop: 200,
                 minBottom: 312,
-                canCollapse: tab.selectedCommit != nil,
+                canCollapse: tab.selectedCommit != nil && !tab.compareState.isActive,
                 isExpandedToMax: $isBottomExpandedToMax
             ) {
                 ZStack(alignment: .bottom) {
@@ -144,7 +144,8 @@ struct RepoDetailView: View {
                             isBottomCollapsed = false
                             isBottomMaximized = false
                             isBottomExpandedToMax = true
-                        }
+                        },
+                        workingChangesMenu: { tab.workingTreeCompareMenu }
                     )
 
                     if tab.commits.isEmpty {
@@ -160,6 +161,12 @@ struct RepoDetailView: View {
                 }
             } bottom: {
                 InspectorView(tab: tab)
+            }
+            .onChange(of: tab.compareState.isActive) {
+                if tab.compareState.isActive {
+                    isBottomCollapsed = false
+                    isBottomMaximized = false
+                }
             }
             // On the split, not the graph pane, so they stay visible while the bottom pane is maximized.
             .overlay(alignment: .top) {

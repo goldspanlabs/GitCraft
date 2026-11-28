@@ -1,5 +1,6 @@
 #![allow(clippy::empty_line_after_doc_comments)]
 
+mod compare;
 mod diff;
 mod git_cli;
 mod graph;
@@ -39,6 +40,19 @@ pub fn render_markdown_diff_html(
     markdown::render_diff_html(old_markdown.as_deref(), new_markdown.as_deref())
 }
 
+/// Renders a Markdown comparison, resolving removed assets from a renamed file's original path.
+pub fn render_compare_markdown_html(
+    old_markdown: Option<String>,
+    new_markdown: Option<String>,
+    old_path: Option<String>,
+) -> String {
+    markdown::render_diff_with_old_path(
+        old_markdown.as_deref(),
+        new_markdown.as_deref(),
+        old_path.as_deref(),
+    )
+}
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -72,6 +86,7 @@ pub struct RepoSession {
     stopped: Arc<AtomicBool>,
     commit_sort: AtomicU8,
     graph_cache: graph::SharedGraphCache,
+    compare_eligibility: Mutex<compare::BranchEligibility>,
 }
 
 impl Drop for RepoSession {
@@ -133,6 +148,7 @@ impl RepoSession {
             stopped,
             commit_sort: AtomicU8::new(0),
             graph_cache: Default::default(),
+            compare_eligibility: Mutex::default(),
         })
     }
 

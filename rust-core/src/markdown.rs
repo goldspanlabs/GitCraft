@@ -13,15 +13,24 @@ pub fn render_html(markdown: &str) -> String {
 /// Unchanged blocks render normally; removed blocks are wrapped in `.diff-deleted` and added
 /// blocks in `.diff-added`.
 pub fn render_diff_html(old_markdown: Option<&str>, new_markdown: Option<&str>) -> String {
+    render_diff_with_old_path(old_markdown, new_markdown, None)
+}
+
+pub(crate) fn render_diff_with_old_path(
+    old_markdown: Option<&str>,
+    new_markdown: Option<&str>,
+    old_path: Option<&str>,
+) -> String {
+    let old_prefix = old_path.map(repo_asset_prefix).unwrap_or_default();
     match (old_markdown, new_markdown) {
         (None, None) => String::new(),
         (None, Some(new_md)) => {
             let blocks = render_blocks(new_md);
-            wrap_all(&blocks, "diff-added", false)
+            wrap_all(&blocks, "diff-added", None)
         }
         (Some(old_md), None) => {
             let blocks = render_blocks(old_md);
-            wrap_all(&blocks, "diff-deleted", true)
+            wrap_all(&blocks, "diff-deleted", Some(&old_prefix))
         }
         (Some(old_md), Some(new_md)) => {
             if old_md == new_md {
@@ -29,7 +38,7 @@ pub fn render_diff_html(old_markdown: Option<&str>, new_markdown: Option<&str>) 
             }
             let old_blocks = render_blocks(old_md);
             let new_blocks = render_blocks(new_md);
-            diff_blocks_html(&old_blocks, &new_blocks)
+            diff_blocks_html(&old_blocks, &new_blocks, &old_prefix)
         }
     }
 }
@@ -280,20 +289,20 @@ fn events_to_html(events: Vec<Event<'_>>) -> String {
     out
 }
 
-fn wrap_all(blocks: &[String], class_name: &str, is_deleted: bool) -> String {
+fn wrap_all(blocks: &[String], class_name: &str, old_prefix: Option<&str>) -> String {
     let mut out = String::new();
     for block in blocks {
-        push_diff_block(&mut out, class_name, block, is_deleted);
+        push_diff_block(&mut out, class_name, block, old_prefix);
     }
     out
 }
 
-fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: bool) {
+fn push_diff_block(out: &mut String, class_name: &str, block: &str, old_prefix: Option<&str>) {
     out.push_str("<div class=\"diff-block ");
     out.push_str(class_name);
     out.push_str("\">");
-    if is_deleted {
-        out.push_str(&tag_deleted_assets(block));
+    if let Some(prefix) = old_prefix {
+        out.push_str(&tag_deleted_assets(block, prefix));
     } else {
         out.push_str(block);
     }
@@ -302,7 +311,7 @@ fn push_diff_block(out: &mut String, class_name: &str, block: &str, is_deleted: 
 
 /// Appends `diff-side=old` to relative `src` and `srcset` attributes inside deleted diff blocks
 /// and renames heading `id`s to `data-old-id` (so no anchor can target a deleted copy), regardless of quoting (`"..."`, `'...'`, unquoted), spacing around `=`, or attribute casing.
-fn tag_deleted_assets(html: &str) -> String {
+fn tag_deleted_assets(html: &str, prefix: &str) -> String {
     let bytes = html.as_bytes();
     let len = bytes.len();
     let mut out = String::with_capacity(len);
@@ -427,9 +436,9 @@ fn tag_deleted_assets(html: &str) -> String {
             };
 
             let rewritten = if is_srcset {
-                rewrite_srcset(val)
+                rewrite_srcset(val, prefix)
             } else if is_src {
-                append_old_side_param(val)
+                append_old_side_param(val, prefix)
             } else {
                 val.to_owned()
             };
@@ -449,14 +458,14 @@ fn tag_deleted_assets(html: &str) -> String {
     out
 }
 
-fn rewrite_srcset(val: &str) -> String {
+fn rewrite_srcset(val: &str, prefix: &str) -> String {
     val.split(',')
         .map(|entry| {
             let trimmed = entry.trim();
             let mut parts = trimmed.splitn(2, char::is_whitespace);
             let url_part = parts.next().unwrap_or("");
             let desc = parts.next();
-            let tagged_url = append_old_side_param(url_part);
+            let tagged_url = append_old_side_param(url_part, prefix);
             match desc {
                 Some(d) => format!("{tagged_url} {d}"),
                 None => tagged_url,
@@ -466,12 +475,32 @@ fn rewrite_srcset(val: &str) -> String {
         .join(", ")
 }
 
-fn append_old_side_param(url: &str) -> String {
+/// Builds a root-relative URL prefix so WebKit resolves parent segments from the old directory.
+fn repo_asset_prefix(path: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut prefix = String::from("/");
+    if let Some((directory, _)) = path.rsplit_once('/') {
+        for byte in directory.bytes() {
+            if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+                prefix.push(char::from(byte));
+            } else {
+                let _ = write!(prefix, "%{byte:02X}");
+            }
+        }
+        prefix.push('/');
+    }
+    prefix
+}
+
+fn append_old_side_param(url: &str, prefix: &str) -> String {
     let trimmed = url.trim();
     if trimmed.is_empty()
-        || trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
-        || trimmed.starts_with("data:")
+        || trimmed.starts_with("//")
+        || trimmed
+            .split(['/', '?', '#'])
+            .next()
+            .is_some_and(|part| part.contains(':'))
         || trimmed.starts_with('#')
     {
         return trimmed.to_owned();
@@ -480,10 +509,11 @@ fn append_old_side_param(url: &str) -> String {
         Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
         None => (trimmed, None),
     };
+    let prefix = if base.starts_with('/') { "" } else { prefix };
     let sep = if base.contains('?') { '&' } else { '?' };
     match frag {
-        Some(f) => format!("{base}{sep}diff-side=old{f}"),
-        None => format!("{base}{sep}diff-side=old"),
+        Some(f) => format!("{prefix}{base}{sep}diff-side=old{f}"),
+        None => format!("{prefix}{base}{sep}diff-side=old"),
     }
 }
 
@@ -491,7 +521,7 @@ const MAX_LCS_BLOCKS: usize = 1500;
 
 const LARGE_DIFF_NOTICE: &str = "<div class=\"diff-notice\">This change is too large to align block by block, so the changed region is shown as removed and re-added.</div>\n";
 
-fn diff_blocks_html(old: &[String], new: &[String]) -> String {
+fn diff_blocks_html(old: &[String], new: &[String], old_prefix: &str) -> String {
     // Unchanged leading and trailing blocks need no alignment, which keeps the quadratic
     // step below limited to the region that actually changed.
     let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
@@ -513,10 +543,10 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
     }
     if old_mid.len() > MAX_LCS_BLOCKS || new_mid.len() > MAX_LCS_BLOCKS {
         out.push_str(LARGE_DIFF_NOTICE);
-        out.push_str(&wrap_all(old_mid, "diff-deleted", true));
-        out.push_str(&wrap_all(new_mid, "diff-added", false));
+        out.push_str(&wrap_all(old_mid, "diff-deleted", Some(old_prefix)));
+        out.push_str(&wrap_all(new_mid, "diff-added", None));
     } else {
-        lcs_diff_blocks(old_mid, new_mid, &mut out);
+        lcs_diff_blocks(old_mid, new_mid, &mut out, old_prefix);
     }
     for block in &new[new.len() - suffix..] {
         out.push_str(block);
@@ -524,7 +554,7 @@ fn diff_blocks_html(old: &[String], new: &[String]) -> String {
     out
 }
 
-fn lcs_diff_blocks(old: &[String], new: &[String], out: &mut String) {
+fn lcs_diff_blocks(old: &[String], new: &[String], out: &mut String, old_prefix: &str) {
     let n = old.len();
     let m = new.len();
     let mut dp = vec![0usize; (n + 1) * (m + 1)];
@@ -548,19 +578,19 @@ fn lcs_diff_blocks(old: &[String], new: &[String], out: &mut String) {
             i += 1;
             j += 1;
         } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
-            push_diff_block(out, "diff-deleted", &old[i], true);
+            push_diff_block(out, "diff-deleted", &old[i], Some(old_prefix));
             i += 1;
         } else {
-            push_diff_block(out, "diff-added", &new[j], false);
+            push_diff_block(out, "diff-added", &new[j], None);
             j += 1;
         }
     }
     while i < n {
-        push_diff_block(out, "diff-deleted", &old[i], true);
+        push_diff_block(out, "diff-deleted", &old[i], Some(old_prefix));
         i += 1;
     }
     while j < m {
-        push_diff_block(out, "diff-added", &new[j], false);
+        push_diff_block(out, "diff-added", &new[j], None);
         j += 1;
     }
 }
