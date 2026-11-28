@@ -51,6 +51,10 @@ struct CommitTableView: NSViewRepresentable {
     let onCommitAction: (CommitAction, String) -> Void
     var onClickWorkingChanges: () -> Void = {}
     var workingChangesMenu: () -> [MenuEntry] = { [] }
+    var onMakeGitDrag: ([String]) -> GitDragPayload? = { _ in nil }
+    var onValidateGitDrop: (GitDragPayload, GitDropTarget, Bool) -> Bool = { _, _, _ in false }
+    var onGitDrop: (GitDragPayload, GitDropTarget, Bool) -> Void = { _, _, _ in }
+    var onEndGitDrag: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -88,10 +92,14 @@ struct CommitTableView: NSViewRepresentable {
         table.backgroundColor = .textBackgroundColor
         table.delegate = context.coordinator
         table.dataSource = context.coordinator
+        table.registerForDraggedTypes([GitDragPayload.pasteboardType])
+        table.setDraggingSourceOperationMask(.copy, forLocal: true)
+        table.setDraggingSourceOperationMask([], forLocal: false)
         table.oidsForCopy = { [weak table, weak coordinator = context.coordinator] in
             guard let table, let coordinator else { return [] }
             return table.selectedRowIndexes.compactMap { coordinator.commitOid(atRow: $0) }
         }
+        table.onExitGitDrop = { [weak coordinator = context.coordinator] in coordinator?.onEndGitDrag() }
         table.onCopy = { [weak coordinator = context.coordinator] in coordinator?.onCopyOids($0) }
         table.onClickWorkingChanges = { [weak coordinator = context.coordinator] in coordinator?.onClickWorkingChanges() }
 
@@ -180,6 +188,10 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.onCommitAction = onCommitAction
         coordinator.onClickWorkingChanges = onClickWorkingChanges
         coordinator.workingChangesMenu = workingChangesMenu
+        coordinator.onMakeGitDrag = onMakeGitDrag
+        coordinator.onValidateGitDrop = onValidateGitDrop
+        coordinator.onGitDrop = onGitDrop
+        coordinator.onEndGitDrag = onEndGitDrag
 
         if isAppendOnly {
             // Pagination or background indexing only grows the list at the bottom; inserting
@@ -268,6 +280,11 @@ struct CommitTableView: NSViewRepresentable {
         var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
         var onClickWorkingChanges: () -> Void = {}
         var workingChangesMenu: () -> [MenuEntry] = { [] }
+        var onMakeGitDrag: ([String]) -> GitDragPayload? = { _ in nil }
+        var onValidateGitDrop: (GitDragPayload, GitDropTarget, Bool) -> Bool = { _, _, _ in false }
+        var onGitDrop: (GitDragPayload, GitDropTarget, Bool) -> Void = { _, _, _ in }
+        var onEndGitDrag: () -> Void = {}
+
         var lastHandledScrollID: UUID?
         var isRestoringSelection = false
         weak var tableView: NSTableView?
@@ -347,6 +364,51 @@ struct CommitTableView: NSViewRepresentable {
                 return rows[idx]
             }
             return windowCache[idx]
+        }
+
+        func tableView(_ tableView: NSTableView, writeRowsWith rowIndexes: IndexSet,
+                       to pasteboard: NSPasteboard) -> Bool {
+            guard !isBusy, !rowIndexes.contains(0) else { return false }
+            let oids = rowIndexes.compactMap { commitOid(atRow: $0) }
+            guard oids.count == rowIndexes.count, let payload = onMakeGitDrag(oids),
+                  let data = payload.data else { return false }
+            pasteboard.declareTypes([GitDragPayload.pasteboardType], owner: nil)
+            return pasteboard.setData(data, forType: GitDragPayload.pasteboardType)
+        }
+
+        private func dropTarget(_ table: NSTableView, info: NSDraggingInfo) -> (Int, GitDropTarget)? {
+            let row = table.row(at: table.convert(info.draggingLocation, from: nil))
+            if row == 0 { return (row, .head) }
+            guard let oid = commitOid(atRow: row) else { return nil }
+            return (row, .commit(oid))
+        }
+
+        func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
+                       proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+            guard let payload = GitDragPayload.read(from: info.draggingPasteboard),
+                  let (targetRow, target) = dropTarget(tableView, info: info) else {
+                onEndGitDrag()
+                return []
+            }
+            let option = NSEvent.modifierFlags.contains(.option)
+            guard onValidateGitDrop(payload, target, option) else { return [] }
+            tableView.setDropRow(targetRow, dropOperation: .on)
+            return .copy
+        }
+
+        func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
+                       row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+            guard let payload = GitDragPayload.read(from: info.draggingPasteboard),
+                  let (_, target) = dropTarget(tableView, info: info) else { return false }
+            let option = NSEvent.modifierFlags.contains(.option)
+            guard onValidateGitDrop(payload, target, option) else { onEndGitDrag(); return false }
+            onGitDrop(payload, target, option)
+            return true
+        }
+
+        func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession,
+                       endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            onEndGitDrag()
         }
 
         func commitOid(atRow row: Int) -> String? {

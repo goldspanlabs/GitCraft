@@ -84,26 +84,30 @@ extension RepoTab {
     }
 
     /// Combines `preview`'s commits into one with the given message. Undoable.
-    func squash(_ preview: SquashPreview, summary: String, description: String) {
+    func squash(_ preview: SquashPreview, summary: String, description: String, fixup: Bool = false) {
         let summary = summary.trimmed
-        guard !isBusy, !summary.isEmpty else { return }
+        guard !isBusy, fixup || !summary.isEmpty else { return }
         let body = description.trimmed
         let message = body.isEmpty ? summary : "\(summary)\n\n\(body)"
         let oids = preview.commits.map(\.oidHex)
         let branch = (preview.head.branch ?? "").replacingOccurrences(of: "refs/heads/", with: "")
         let outcome = SendableBox<SquashResult?>(nil)
         let expected = SendableBox(preview.head)
-        performMutation(busyLabel: "Squashing…", { session in
-            outcome.value = try session.squashCommits(oids: oids, message: message, expected: expected.value)
+        performMutation(busyLabel: fixup ? "Fixing up…" : "Squashing…", { session in
+            if fixup {
+                outcome.value = try session.fixupCommits(oids: oids, expected: expected.value)
+            } else {
+                outcome.value = try session.squashCommits(oids: oids, message: message, expected: expected.value)
+            }
         }, onSuccess: { [weak self] in
             guard let self, let result = outcome.value else { return }
             self.selectCommit(nil)
             self.pendingSelectionOid = result.squashedOid
             // A soft reset moves back without touching the index or files, as the squash did.
             self.recordUndo(
-                actionName: "Squash",
+                actionName: fixup ? "Fixup" : "Squash",
                 step: .moveHead(result.headMove, mode: .soft),
-                message: "Squashed \(oids.count) commits on \"\(branch)\"."
+                message: "\(fixup ? "Fixed up" : "Squashed") \(oids.count) commits on \"\(branch)\"."
             )
         })
     }

@@ -24,6 +24,8 @@ extension RepoTab {
         case checkoutCommit(oid: String)
         case mergeCommit(oid: String)
         case newTag(target: String?)
+        case gitDrop(GitDropPlan)
+        case dropSquash(SquashPreview, checkout: String, fixup: Bool)
         case squash(SquashPreview)
         case forcePush(ForcePushPlan)
         case newStash
@@ -37,6 +39,8 @@ extension RepoTab {
             case let .checkoutCommit(oid): return "checkout-commit-\(oid)"
             case let .mergeCommit(oid): return "merge-commit-\(oid)"
             case let .newTag(target): return "new-tag-\(target ?? "head")"
+            case let .gitDrop(plan): return "git-drop-\(plan.id)"
+            case let .dropSquash(preview, checkout, fixup): return "drop-squash-\(checkout)-\(preview.head.oid)-\(fixup)"
             case let .squash(preview):
                 return "squash-\(preview.head.oid)-\(preview.commits.map(\.oidHex).joined(separator: "-"))"
             case let .forcePush(plan):

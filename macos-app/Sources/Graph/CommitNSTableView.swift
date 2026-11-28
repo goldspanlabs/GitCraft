@@ -7,6 +7,13 @@ final class CommitNSTableView: NSTableView, NSMenuItemValidation {
     var onCopy: ([String]) -> Void = { _ in }
     var onClickWorkingChanges: () -> Void = {}
 
+    var onExitGitDrop: () -> Void = {}
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        onExitGitDrop()
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let clickedRow = row(at: point)

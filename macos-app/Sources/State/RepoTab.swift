@@ -94,6 +94,8 @@ final class RepoTab: ObservableObject, Identifiable {
     /// and then `selectedCommit` is nil. Change it through `selectCommitsFromTable`.
     @Published var selectedCommits: [CommitRow] = []
     /// Whether `selectedCommits` can be squashed.
+    @Published var gitDragHint: String?
+    @Published var isPreparingGitDrop = false
     @Published var squashCheck = SquashCheck.checking
     /// A commit to select once the history lists it, such as one a squash just made.
     var pendingSelectionOid: String?

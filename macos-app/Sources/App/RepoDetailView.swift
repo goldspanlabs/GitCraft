@@ -145,9 +145,28 @@ struct RepoDetailView: View {
                             isBottomMaximized = false
                             isBottomExpandedToMax = true
                         },
-                        workingChangesMenu: { tab.workingTreeCompareMenu }
+                        workingChangesMenu: { tab.workingTreeCompareMenu },
+                        onMakeGitDrag: { oids in
+                            tab.makeGitDrag(oids: oids, label: oids.count == 1 ? String(oids[0].prefix(7)) : "\(oids.count) commits")
+                        },
+                        onValidateGitDrop: { payload, target, option in
+                            let result = tab.gitDropResolution(payload, target: target, option: option)
+                            tab.gitDragHint = result.hint
+                            return result.isAllowed
+                        },
+                        onGitDrop: { tab.receiveGitDrop($0, target: $1, option: $2) },
+                        onEndGitDrag: { tab.gitDragHint = nil }
                     )
 
+                    if let hint = tab.gitDragHint {
+                        Text(hint)
+                            .font(.callout)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(12)
+                            .allowsHitTesting(false)
+                            .accessibilityIdentifier("git-drag-hint")
+                    }
                     if tab.commits.isEmpty {
                         switch tab.historyState {
                         case .loading:
@@ -239,6 +258,10 @@ private struct RepoSheets: ViewModifier {
                     MergeCommitSheet(tab: tab, oid: oid)
                 case let .newTag(target):
                     NewTagSheet(tab: tab, target: target)
+                case let .gitDrop(plan):
+                    GitDropSheet(tab: tab, plan: plan)
+                case let .dropSquash(preview, checkout, fixup):
+                    SquashSheet(tab: tab, preview: preview, fixup: fixup, expectedCheckout: checkout)
                 case let .squash(preview):
                     SquashSheet(tab: tab, preview: preview)
                 case let .forcePush(plan):

@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::{
     git_cli,
     validation::{
@@ -8,6 +10,146 @@ use crate::{
 };
 
 impl RepoSession {
+    /// Executes a pinned drop plan. Rechecks HEAD, source ref and working state under the
+    /// session mutation lock, so another app action cannot retarget a confirmed operation.
+    pub fn integrate_drop(
+        &self,
+        commit: String,
+        source_ref: Option<String>,
+        action: crate::DropIntegration,
+        expected: HeadPosition,
+    ) -> Result<Option<HeadMove>, GitCraftError> {
+        let oid = gix::ObjectId::from_hex(commit.as_bytes())
+            .map_err(GitCraftError::from_display)?
+            .to_string();
+        self.with_mutation_lock(|| {
+            if expected.branch.is_none() || self.head_position().as_ref() != Some(&expected) {
+                return Err(GitCraftError::warning(
+                    "The branch changed. Start the drag again.",
+                ));
+            }
+            if let Some(source) = source_ref {
+                if !(source.starts_with("refs/heads/") || source.starts_with("refs/remotes/"))
+                    || self.ref_oid(source).as_deref() != Some(oid.as_str())
+                {
+                    return Err(GitCraftError::warning(
+                        "The source branch changed. Start the drag again.",
+                    ));
+                }
+            }
+            let status = self.status()?;
+            if status.is_merging
+                || status.is_rebasing
+                || status.is_cherry_picking
+                || status.is_reverting
+                || status.has_conflicts
+            {
+                return Err(GitCraftError::warning("Finish the current operation first"));
+            }
+            // The mutation guard must not inherit display preferences such as
+            // status.showUntrackedFiles=no or submodule.<name>.ignore=all.
+            let changes = git_cli::run(
+                &self.path,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=all",
+                    "--ignore-submodules=none",
+                ],
+            )?;
+            if !changes.is_empty() {
+                return Err(GitCraftError::warning("Commit or stash your changes first"));
+            }
+            let command = match action {
+                crate::DropIntegration::Merge => "merge",
+                crate::DropIntegration::Rebase => "rebase",
+                crate::DropIntegration::CherryPick => "cherry-pick",
+            };
+            // Resolve before mutating to reject non-commit objects.
+            resolve_commit(&self.path, &oid)?;
+            if action == crate::DropIntegration::Merge
+                && git_cli::run(&self.path, &["merge-base", "--is-ancestor", &oid, "HEAD"]).is_ok()
+            {
+                return Err(GitCraftError::warning(format!(
+                    "{} is already in the current branch's history, so there is nothing to merge",
+                    format_ref_display(&oid)
+                )));
+            }
+            if action == crate::DropIntegration::Merge {
+                self.refuse_ignored_merge_collisions(&oid)?;
+            }
+            let mut args = vec![command];
+            // Undo records only HEAD; never move other branch refs through user config.
+            match action {
+                crate::DropIntegration::Rebase => args.push("--no-update-refs"),
+                // A confirmed Merge must complete and produce an undoable HEAD move even
+                // when branch.<name>.mergeOptions requests --squash or --no-commit.
+                crate::DropIntegration::Merge => {
+                    // Ignored local files are absent from status and HEAD-only Undo cannot
+                    // recover them. Refuse a collision rather than Git's default overwrite.
+                    args.extend(["--no-squash", "--commit", "--no-overwrite-ignore"]);
+                }
+                crate::DropIntegration::CherryPick => {}
+            }
+            args.push(&oid);
+            git_cli::mutate(&self.path, &args)?;
+            let movement = Self::head_move_if_changed(Some(expected), self.head_position());
+            if action == crate::DropIntegration::Rebase && movement.is_none() {
+                return Err(GitCraftError::warning(
+                    "Rebase left the branch unchanged; there is nothing to rebase.",
+                ));
+            }
+            Ok(movement)
+        })
+    }
+
+    /// `--no-overwrite-ignore` alone does not protect a divergent merge's strategy.
+    /// Refuse overlapping ignored data before starting either kind of merge. Collapsing
+    /// ignored directories keeps this check cheap for build trees such as node_modules.
+    fn refuse_ignored_merge_collisions(&self, commit: &str) -> Result<(), GitCraftError> {
+        let output = git_cli::run(
+            &self.path,
+            &[
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+                "-z",
+            ],
+        )?;
+        let ignored: BTreeSet<String> = output
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(|p| p.trim_end_matches('/').to_owned())
+            .collect();
+        if ignored.is_empty() {
+            return Ok(());
+        }
+        let tree = git_cli::run(
+            &self.path,
+            &["ls-tree", "--full-tree", "-r", "--name-only", "-z", commit],
+        )?;
+        for path in tree.split('\0').filter(|p| !p.is_empty()) {
+            let prefix = format!("{path}/");
+            let collision = ignored.contains(path)
+                || path
+                    .match_indices('/')
+                    .any(|(at, _)| ignored.contains(&path[..at]))
+                || ignored
+                    .range(prefix.clone()..)
+                    .next()
+                    .is_some_and(|p| p.starts_with(&prefix));
+            if collision {
+                return Err(GitCraftError::warning(
+                    "Ignored local files could be overwritten by this merge. Move them outside the repository before merging.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn checkout_branch(&self, branch_name: String) -> Result<Option<HeadMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {

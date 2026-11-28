@@ -73,6 +73,25 @@ impl RepoSession {
         if message.trim().is_empty() {
             return Err(GitCraftError::message("Enter a commit message"));
         }
+        self.combine_commits(oids, Some(format!("{message}\n").into_bytes()), expected)
+    }
+
+    /// Fixup preserves the oldest selected commit's raw message, including whitespace and
+    /// encoding. Display metadata is deliberately never used to reconstruct it.
+    pub fn fixup_commits(
+        &self,
+        oids: Vec<String>,
+        expected: HeadPosition,
+    ) -> Result<SquashResult, GitCraftError> {
+        self.combine_commits(oids, None, expected)
+    }
+
+    fn combine_commits(
+        &self,
+        oids: Vec<String>,
+        message: Option<Vec<u8>>,
+        expected: HeadPosition,
+    ) -> Result<SquashResult, GitCraftError> {
         self.with_mutation_lock(|| {
             if self.head_position().as_ref() != Some(&expected) {
                 return Err(GitCraftError::message(BRANCH_MOVED));
@@ -89,14 +108,10 @@ impl RepoSession {
             let sign = git_cli::run(&self.path, &["config", "--bool", "commit.gpgsign"])
                 .is_ok_and(|value| value.trim() == "true");
 
+            let operation = if message.is_some() { "squash" } else { "fixup" };
             let newest = *chain.selected.last().expect("at least two commits");
-            let mut squashed = self.rewrite_commit(
-                chain.selected[0],
-                newest,
-                chain.base,
-                Some(format!("{message}\n").into_bytes()),
-                sign,
-            )?;
+            let mut squashed =
+                self.rewrite_commit(chain.selected[0], newest, chain.base, message, sign)?;
             let squashed_oid = squashed.to_string();
             for &id in &chain.above {
                 squashed = self.rewrite_commit(id, id, Some(squashed), None, sign)?;
@@ -104,7 +119,7 @@ impl RepoSession {
             let tip = squashed.to_string();
 
             // Moves the branch only if it is still where it was read.
-            let reason = format!("squash: {} commits", chain.selected.len());
+            let reason = format!("{operation}: {} commits", chain.selected.len());
             git_cli::mutate(
                 &self.path,
                 &["update-ref", "-m", &reason, branch, &tip, &head.oid],
