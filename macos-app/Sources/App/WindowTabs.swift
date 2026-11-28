@@ -244,8 +244,19 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
 
     /// Puts the cursor in the toolbar's commit filter, expanding it if the toolbar collapsed it.
     func focusSearchField() {
-        let search = window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first
-        search?.beginSearchInteraction()
+        guard let window,
+              let search = window.toolbar?.items.first(where: { $0.itemIdentifier == .repoSearch }) as? NSSearchToolbarItem
+        else { return }
+
+        let field = search.searchField
+        // The native interaction can move focus after its animation starts. When the field
+        // is already visible, hand it the keyboard before the next keystroke arrives.
+        if field.window === window, !field.isHiddenOrHasHiddenAncestor,
+           window.makeFirstResponder(field), let editor = field.currentEditor() {
+            editor.selectAll(nil)
+        } else {
+            search.beginSearchInteraction()
+        }
     }
 
     private func refreshChrome() {
