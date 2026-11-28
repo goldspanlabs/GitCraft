@@ -683,8 +683,10 @@ private struct LocalBranchRowView: View {
             entries.append(.item("Merge into '\(tab.currentBranch)'…") {
                 tab.requestMergeCommit(branch.targetOidHex)
             })
+            entries.append(.separator)
         }
         entries.append(tab.branchCompareMenuItem(branch))
+        entries.append(.separator)
         entries.append(.item("New Branch…") {
             tab.presentNewBranch(startPoint: branch.name)
         })
