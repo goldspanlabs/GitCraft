@@ -684,6 +684,7 @@ private struct LocalBranchRowView: View {
                 tab.requestMergeCommit(branch.targetOidHex)
             })
         }
+        entries.append(tab.branchCompareMenuItem(branch))
         entries.append(.item("New Branch…") {
             tab.presentNewBranch(startPoint: branch.name)
         })
@@ -722,6 +723,7 @@ private struct RemoteBranchRowView: View {
                 .item("Checkout") {
                     tab.checkoutBranch(branch.name)
                 },
+                tab.branchCompareMenuItem(branch),
                 .item("New Branch…") {
                     tab.presentNewBranch(startPoint: branch.name)
                 },

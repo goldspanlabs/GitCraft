@@ -1,6 +1,9 @@
 use std::{io, path::Path};
 
-use crate::{git_cli, highlight, validation::is_tracked, DiffRow};
+use crate::{
+    git_cli, highlight, validation::is_tracked, CompareFile, DiffRow, FileContentPair,
+    GitCraftError,
+};
 
 pub fn working_tree(repo: &Path) -> Result<Vec<DiffRow>, crate::GitCraftError> {
     working_tree_file(repo, None, false)
@@ -48,10 +51,26 @@ fn file_ext(path: &str) -> Option<&str> {
 /// tracked, not a regular file, or can't be read.
 fn untracked_file_rows(repo: &Path, rel_path: &str, ext: Option<&str>) -> Option<Vec<DiffRow>> {
     let full_path = repo.join(rel_path);
-    if is_tracked(repo, rel_path) || !full_path.is_file() {
+    if is_tracked(repo, rel_path) {
         return None;
     }
-    let bytes = std::fs::read(&full_path).ok()?;
+    let canonical_root = std::fs::canonicalize(repo).ok()?;
+    let parent = std::fs::canonicalize(full_path.parent()?).ok()?;
+    if !parent.starts_with(canonical_root) {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(&full_path).ok()?;
+    let bytes = if meta.is_symlink() {
+        std::fs::read_link(&full_path)
+            .ok()?
+            .to_string_lossy()
+            .as_bytes()
+            .to_vec()
+    } else if meta.is_file() {
+        std::fs::read(&full_path).ok()?
+    } else {
+        return None;
+    };
     if bytes.len() > 256 * 1024 || bytes.contains(&0) {
         return Some(vec![DiffRow::meta(
             "hunk",
@@ -102,6 +121,110 @@ pub fn commit_diff(
     let raw = git_cli::run(repo, &args)?;
     let ext = path.and_then(file_ext);
     Ok(parse_with_ext(&raw, ext)?)
+}
+
+/// Diffs a file against a pinned comparison base, with both names for rename detection.
+pub(crate) fn compare_file_diff(
+    repo: &Path,
+    base: &str,
+    head: Option<&str>,
+    file: &CompareFile,
+) -> Result<Vec<DiffRow>, GitCraftError> {
+    let ext = file_ext(&file.path);
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "-M",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--unified=3",
+        base,
+    ];
+    args.extend(head);
+    args.extend(["--", &file.path]);
+    args.extend(file.old_path.as_deref());
+    let raw = if head.is_none() && file.status != "A" {
+        let restored: Vec<_> = std::iter::once(file.path.as_str())
+            .chain(file.old_path.as_deref())
+            .filter(|path| repo.join(path).symlink_metadata().is_ok() && !is_tracked(repo, path))
+            .collect();
+        run_compare_worktree_diff(repo, &args, base, &restored)?
+    } else {
+        git_cli::run(repo, &args)?
+    };
+    if raw.is_empty() && head.is_none() && file.status == "A" {
+        if let Some(rows) = untracked_file_rows(repo, &file.path, ext) {
+            return Ok(rows);
+        }
+    }
+    Ok(parse_with_ext(&raw, ext)?)
+}
+
+/// Supplies a temporary index when a path from the base has been staged for
+/// removal and recreated. Git can then diff its on-disk version as usual.
+pub(crate) fn run_compare_worktree_diff(
+    repo: &Path,
+    args: &[&str],
+    base: &str,
+    restored_paths: &[&str],
+) -> Result<String, GitCraftError> {
+    if restored_paths.is_empty() {
+        return git_cli::run(repo, args);
+    }
+    let temp = tempfile::tempdir()?;
+    let temp_index = temp.path().join("index");
+    let index = git_cli::run(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    )?;
+    match std::fs::copy(index.strip_suffix('\n').unwrap_or(&index), &temp_index) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let mut tree_args = vec!["--literal-pathspecs", "ls-tree", "-r", "-z", base, "--"];
+    tree_args.extend_from_slice(restored_paths);
+    let entries = git_cli::run(repo, &tree_args)?;
+    let env = [("GIT_INDEX_FILE", temp_index.into_os_string())];
+    git_cli::run_with_env(
+        repo,
+        &[
+            "-c",
+            "core.splitIndex=false",
+            "-c",
+            "core.fsmonitor=false",
+            "update-index",
+            "-z",
+            "--index-info",
+        ],
+        &env,
+        Some(entries.into_bytes()),
+    )?;
+    git_cli::run_with_env(repo, args, &env, None)
+}
+
+pub(crate) fn compare_file_content_pair(
+    repo_path: &Path,
+    sync_repo: &gix::ThreadSafeRepository,
+    base: &str,
+    head: Option<&str>,
+    file: &CompareFile,
+) -> Result<FileContentPair, GitCraftError> {
+    let old_path = file.old_path.as_deref().unwrap_or(&file.path);
+    let old_content = if file.status == "A" {
+        None
+    } else {
+        commit_file_content(sync_repo, base, old_path)?
+    };
+    let new_content = match head {
+        Some(oid) => commit_file_content(sync_repo, oid, &file.path)?,
+        None => working_file_content(repo_path, sync_repo, &file.path, false)?,
+    };
+    Ok(FileContentPair {
+        old_content,
+        new_content,
+    })
 }
 
 /// Maximum file size (1 MiB) allowed for full-file preview.

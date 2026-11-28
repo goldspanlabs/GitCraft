@@ -31,7 +31,9 @@ struct InspectorView: View {
     @ObservedObject var tab: RepoTab
 
     var body: some View {
-        if !tab.selectedCommits.isEmpty {
+        if tab.compareState.isActive {
+            CompareInspectorView(tab: tab)
+        } else if !tab.selectedCommits.isEmpty {
             MultiCommitInspectorView(tab: tab)
         } else if let commit = tab.selectedCommit {
             CommitInspectorView(tab: tab, commit: commit)
@@ -526,6 +528,7 @@ struct DiffPaneContainer: View {
     var repoRootPath: String? = nil
     var previewSession: RepoSession? = nil
     var previewCommitOid: String? = nil
+    var previewBaseOid: String? = nil
     var previewStaged: Bool = false
     var onToggleMarkdownPreview: (() -> Void)? = nil
 
@@ -551,6 +554,7 @@ struct DiffPaneContainer: View {
                         filePath: filePath,
                         session: previewSession,
                         commitOid: previewCommitOid,
+                        compareBaseOid: previewBaseOid,
                         staged: previewStaged
                     )
                     .background(Color(nsColor: .textBackgroundColor))
@@ -632,7 +636,7 @@ private struct DiffHeaderBar: View {
     }
 }
 
-private struct EmptyDiffView: View {
+struct EmptyDiffView: View {
     let message: String
 
     var body: some View {

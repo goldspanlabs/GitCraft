@@ -1,5 +1,6 @@
 #![allow(clippy::empty_line_after_doc_comments)]
 
+mod compare;
 mod diff;
 mod git_cli;
 mod graph;

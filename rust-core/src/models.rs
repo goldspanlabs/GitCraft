@@ -10,6 +10,8 @@ pub enum GitCraftError {
     /// The `git` executable could not be found in PATH or standard macOS locations.
     #[error("Git is not installed or could not be found.")]
     GitNotFound,
+    #[error("Unknown ref: {name}")]
+    UnknownCompareRef { name: String },
 }
 
 impl GitCraftError {
@@ -169,6 +171,28 @@ pub struct FileChange {
     pub path: String,
     pub status: String,
     pub staged: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompareFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompareSummary {
+    /// The sidebar branch, or the selected target for a working-tree comparison.
+    pub target_ref: String,
+    pub source_ref: String,
+    pub base_oid: String,
+    /// The right-hand commit, or WORKTREE for a working-tree comparison.
+    pub head_oid: String,
+    pub merge_base_oid: String,
+    /// Commit counts for the right-hand tip (HEAD for WORKTREE) relative to base_oid.
+    pub ahead: u32,
+    pub behind: u32,
+    pub files: Vec<CompareFile>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

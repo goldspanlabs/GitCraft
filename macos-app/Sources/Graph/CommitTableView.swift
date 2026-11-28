@@ -50,6 +50,7 @@ struct CommitTableView: NSViewRepresentable {
     let currentBranch: String
     let onCommitAction: (CommitAction, String) -> Void
     var onClickWorkingChanges: () -> Void = {}
+    var workingChangesMenu: () -> [MenuEntry] = { [] }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -178,6 +179,7 @@ struct CommitTableView: NSViewRepresentable {
         coordinator.currentBranch = currentBranch
         coordinator.onCommitAction = onCommitAction
         coordinator.onClickWorkingChanges = onClickWorkingChanges
+        coordinator.workingChangesMenu = workingChangesMenu
 
         if isAppendOnly {
             // Pagination or background indexing only grows the list at the bottom; inserting
@@ -265,6 +267,7 @@ struct CommitTableView: NSViewRepresentable {
         var currentBranch = ""
         var onCommitAction: (CommitAction, String) -> Void = { _, _ in }
         var onClickWorkingChanges: () -> Void = {}
+        var workingChangesMenu: () -> [MenuEntry] = { [] }
         var lastHandledScrollID: UUID?
         var isRestoringSelection = false
         weak var tableView: NSTableView?
@@ -353,6 +356,10 @@ struct CommitTableView: NSViewRepresentable {
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.removeAllItems()
             guard let tableView else { return }
+            if tableView.clickedRow == 0 {
+                menu.populate(with: workingChangesMenu())
+                return
+            }
             guard let commit = commit(atRow: tableView.clickedRow) else { return }
             let selected = tableView.selectedRowIndexes
             if selected.count > 1, selected.contains(tableView.clickedRow) {
