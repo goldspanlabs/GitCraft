@@ -75,7 +75,6 @@ struct CommitTableView: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
 
@@ -105,6 +104,7 @@ struct CommitTableView: NSViewRepresentable {
         table.menu = menu
 
         scrollView.documentView = table
+        PaneScrollerVisibility.install(on: scrollView)
         scrollView.contentView.postsBoundsChangedNotifications = true
 
         context.coordinator.tableView = table

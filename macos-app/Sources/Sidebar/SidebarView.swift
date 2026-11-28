@@ -9,13 +9,16 @@ struct SidebarView: View {
     @AppStorage("sidebar.remotesExpanded") private var isRemotesExpanded = false
     @AppStorage("sidebar.tagsExpanded") private var isTagsExpanded = false
     @AppStorage("sidebar.stashesExpanded") private var isStashesExpanded = false
+    @State private var sidebarFilter = ""
+    @State private var isSidebarFilterPresented = false
+    @FocusState private var sidebarFilterFocused: Bool
     /// Folders the user flipped away from their default state (local folders start expanded,
     /// remote folders start collapsed). Folder IDs are scope-prefixed, so one set serves both.
     @State private var toggledFolderIDs: Set<String> = []
 
     /// The default branch is pinned above the rest of Local Branches, so it's kept out of the tree.
     private var localBranches: [BranchInfo] {
-        tab.branches.filter { !$0.isRemote && !$0.isDefault }
+        tab.branches.filter { !$0.isRemote && !$0.isDefault && matchesSidebarFilter($0.name) }
     }
 
     private var defaultLocalBranch: BranchInfo? {
@@ -23,13 +26,27 @@ struct SidebarView: View {
     }
 
     private var remoteBranches: [BranchInfo] {
-        tab.branches.filter { $0.isRemote }
+        tab.branches.filter { $0.isRemote && matchesSidebarFilter($0.name) }
+    }
+
+    private var filteredTags: [TagInfo] {
+        tab.tags.filter { matchesSidebarFilter($0.name) }
+    }
+
+    private var isFilteringSidebar: Bool {
+        !sidebarFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func matchesSidebarFilter(_ value: String) -> Bool {
+        let filter = sidebarFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        return filter.isEmpty || value.localizedStandardContains(filter)
     }
 
     private var localBranchRows: [FlatBranchRow] {
         BranchTreeNode.buildFlattenedRows(
             from: localBranches,
             scope: "local",
+            expandFolders: isFilteringSidebar,
             toggledFolderIDs: toggledFolderIDs
         )
     }
@@ -44,8 +61,52 @@ struct SidebarView: View {
             from: remoteBranches,
             scope: "remote",
             foldersStartCollapsed: true,
+            expandFolders: isFilteringSidebar,
             toggledFolderIDs: toggledFolderIDs
         )
+    }
+
+    private var filterField: some View {
+        HStack {
+            if isSidebarFilterPresented {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.tertiary)
+                    TextField("Filter branches and tags", text: $sidebarFilter)
+                        .textFieldStyle(.plain)
+                        .focused($sidebarFilterFocused)
+                        .accessibilityIdentifier("sidebar-filter")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                .frame(maxWidth: .infinity)
+            } else {
+                Button {
+                    isSidebarFilterPresented = true
+                    sidebarFilterFocused = true
+                } label: {
+                    Image(systemName: isFilteringSidebar
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isFilteringSidebar ? "Show Active Filter" : "Filter Branches and Tags")
+                .accessibilityLabel(isFilteringSidebar ? "Show Active Filter" : "Filter Branches and Tags")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .onChange(of: sidebarFilterFocused) { _, isFocused in
+            if !isFocused {
+                isSidebarFilterPresented = false
+            }
+        }
     }
 
     private func toggleFolder(_ folderID: String) {
@@ -85,154 +146,195 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        List {
-            Section(isExpanded: $isLocalBranchesExpanded) {
-                if isLocalBranchesExpanded {
-                    if let headOid = detachedHeadOid {
-                        DetachedHeadRowView(tab: tab, oidHex: headOid)
-                    }
-                    if let pinned = defaultLocalBranch {
-                        LocalBranchRowView(
-                            tab: tab,
-                            branch: pinned,
-                            displayName: pinned.name,
-                            depth: 0
-                        )
-                    }
-                    ForEach(localBranchRows) { row in
-                        switch row.kind {
-                        case let .folder(name, folderID, isExpanded):
-                            BranchFolderRowView(
-                                name: name,
-                                depth: row.depth,
-                                isExpanded: isExpanded,
-                                isTopLevelRemote: false
-                            ) {
-                                toggleFolder(folderID)
-                            }
-                        case let .branch(branch, leafName):
+        VStack(spacing: 0) {
+            List {
+                Section(isExpanded: isFilteringSidebar ? .constant(true) : $isLocalBranchesExpanded) {
+                    if isFilteringSidebar || isLocalBranchesExpanded {
+                        if let headOid = detachedHeadOid {
+                            DetachedHeadRowView(tab: tab, oidHex: headOid)
+                        }
+                        if let pinned = defaultLocalBranch {
                             LocalBranchRowView(
                                 tab: tab,
-                                branch: branch,
-                                displayName: leafName,
-                                depth: row.depth
+                                branch: pinned,
+                                displayName: pinned.name,
+                                depth: 0
                             )
                         }
+                        ForEach(localBranchRows) { row in
+                            switch row.kind {
+                            case let .folder(name, folderID, isExpanded):
+                                BranchFolderRowView(
+                                    name: name,
+                                    depth: row.depth,
+                                    isExpanded: isExpanded,
+                                    isTopLevelRemote: false
+                                ) {
+                                    toggleFolder(folderID)
+                                }
+                            case let .branch(branch, leafName):
+                                LocalBranchRowView(
+                                    tab: tab,
+                                    branch: branch,
+                                    displayName: leafName,
+                                    depth: row.depth
+                                )
+                            }
+                        }
+                    }
+                } header: {
+                    SectionHeaderLabel(title: "LOCAL BRANCHES") {
+                        [.item("New Branch…") {
+                            tab.presentNewBranch()
+                        }]
+                    }
+                    .background(alignment: .topLeading) {
+                        SidebarScrollerSetup()
+                            .frame(width: 0, height: 0)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
-            } header: {
-                SectionHeaderLabel(title: "LOCAL BRANCHES") {
-                    [.item("New Branch…") {
-                        tab.presentNewBranch()
-                    }]
-                }
-            }
 
-            Section(isExpanded: $isRemotesExpanded) {
-                if isRemotesExpanded {
-                    if tab.remotes.isEmpty {
-                        EmptySectionLabel(text: "No remotes")
+                Section(isExpanded: isFilteringSidebar ? .constant(true) : $isRemotesExpanded) {
+                    if isFilteringSidebar || isRemotesExpanded {
+                        if isFilteringSidebar && remoteBranches.isEmpty {
+                            EmptySectionLabel(text: "No matching branches")
+                        } else if !isFilteringSidebar && tab.remotes.isEmpty {
+                            EmptySectionLabel(text: "No remotes")
+                        } else if remoteBranches.isEmpty {
+                            EmptySectionLabel(text: "No branches")
+                        }
+                        ForEach(remoteBranchRows) { row in
+                            switch row.kind {
+                            case let .folder(name, folderID, isExpanded):
+                                BranchFolderRowView(
+                                    name: name,
+                                    depth: row.depth,
+                                    isExpanded: isExpanded,
+                                    isTopLevelRemote: row.depth == 0
+                                ) {
+                                    toggleFolder(folderID)
+                                }
+                                .nativeContextMenu {
+                                    guard row.depth == 0,
+                                          let remote = tab.remotes.first(where: { $0.name == name })
+                                    else { return [] }
+                                    return remoteContextMenuEntries(for: remote)
+                                }
+                            case let .branch(branch, leafName):
+                                RemoteBranchRowView(
+                                    tab: tab,
+                                    branch: branch,
+                                    displayName: leafName,
+                                    depth: row.depth
+                                )
+                            }
+                        }
                     }
-                    ForEach(remoteBranchRows) { row in
-                        switch row.kind {
-                        case let .folder(name, folderID, isExpanded):
-                            BranchFolderRowView(
-                                name: name,
-                                depth: row.depth,
-                                isExpanded: isExpanded,
-                                isTopLevelRemote: row.depth == 0
+                } header: {
+                    SectionHeaderLabel(title: "REMOTES") {
+                        [
+                            .item("Add Remote…", enabled: !tab.isBusy) {
+                                tab.presentAddRemote()
+                            },
+                        ]
+                    }
+                }
+
+                Section(isExpanded: $isWorktreesExpanded) {
+                    if isWorktreesExpanded {
+                        if !tab.worktrees.contains(where: { !$0.isMain }) {
+                            EmptySectionLabel(text: "No worktrees")
+                        } else {
+                            ForEach(tab.worktrees, id: \.path) { worktree in
+                                WorktreeRowView(tab: tab, worktree: worktree)
+                            }
+                        }
+                    }
+                } header: {
+                    SectionHeaderLabel(title: "WORKTREES") {
+                        [
+                            .item("New Worktree…", enabled: !tab.isBusy) {
+                                tab.presentNewWorktree(source: .head)
+                            },
+                            .item(
+                                "Prune Stale Worktrees",
+                                enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
                             ) {
-                                toggleFolder(folderID)
+                                tab.pruneWorktrees()
+                            },
+                        ]
+                    }
+                }
+
+                Section(isExpanded: isFilteringSidebar ? .constant(true) : $isTagsExpanded) {
+                    if isFilteringSidebar || isTagsExpanded {
+                        if filteredTags.isEmpty {
+                            EmptySectionLabel(text: isFilteringSidebar ? "No matching tags" : "No tags")
+                        } else {
+                            ForEach(filteredTags, id: \.fullRef) { tag in
+                                TagRowView(tab: tab, tag: tag)
                             }
-                            .nativeContextMenu {
-                                guard row.depth == 0,
-                                      let remote = tab.remotes.first(where: { $0.name == name })
-                                else { return [] }
-                                return remoteContextMenuEntries(for: remote)
+                        }
+                    }
+                } header: {
+                    SectionHeaderLabel(title: "TAGS") {
+                        [.item("New Tag…") {
+                            tab.presentNewTag()
+                        }]
+                    }
+                }
+
+                Section(isExpanded: $isStashesExpanded) {
+                    if isStashesExpanded {
+                        if tab.stashes.isEmpty {
+                            EmptySectionLabel(text: "No stashes")
+                        } else {
+                            ForEach(tab.stashes, id: \.index) { stash in
+                                StashRowView(tab: tab, stash: stash)
                             }
-                        case let .branch(branch, leafName):
-                            RemoteBranchRowView(
-                                tab: tab,
-                                branch: branch,
-                                displayName: leafName,
-                                depth: row.depth
-                            )
                         }
                     }
-                }
-            } header: {
-                SectionHeaderLabel(title: "REMOTES") {
-                    [
-                        .item("Add Remote…", enabled: !tab.isBusy) {
-                            tab.presentAddRemote()
-                        },
-                    ]
+                } header: {
+                    SectionHeaderLabel(title: "STASHES") {
+                        [.item("Stash Changes…", enabled: tab.totalChangesCount > 0 && !tab.isBusy) {
+                            tab.presentNewStash()
+                        }]
+                    }
                 }
             }
+            .listStyle(.sidebar)
 
-            Section(isExpanded: $isWorktreesExpanded) {
-                if isWorktreesExpanded {
-                    if !tab.worktrees.contains(where: { !$0.isMain }) {
-                        EmptySectionLabel(text: "No worktrees")
-                    } else {
-                        ForEach(tab.worktrees, id: \.path) { worktree in
-                            WorktreeRowView(tab: tab, worktree: worktree)
-                        }
-                    }
-                }
-            } header: {
-                SectionHeaderLabel(title: "WORKTREES") {
-                    [
-                        .item("New Worktree…", enabled: !tab.isBusy) {
-                            tab.presentNewWorktree(source: .head)
-                        },
-                        .item(
-                            "Prune Stale Worktrees",
-                            enabled: !tab.isBusy && tab.worktrees.contains { $0.isPrunable }
-                        ) {
-                            tab.pruneWorktrees()
-                        },
-                    ]
-                }
-            }
-
-            Section(isExpanded: $isTagsExpanded) {
-                if isTagsExpanded {
-                    if tab.tags.isEmpty {
-                        EmptySectionLabel(text: "No tags")
-                    } else {
-                        ForEach(tab.tags, id: \.fullRef) { tag in
-                            TagRowView(tab: tab, tag: tag)
-                        }
-                    }
-                }
-            } header: {
-                SectionHeaderLabel(title: "TAGS") {
-                    [.item("New Tag…") {
-                        tab.presentNewTag()
-                    }]
-                }
-            }
-
-            Section(isExpanded: $isStashesExpanded) {
-                if isStashesExpanded {
-                    if tab.stashes.isEmpty {
-                        EmptySectionLabel(text: "No stashes")
-                    } else {
-                        ForEach(tab.stashes, id: \.index) { stash in
-                            StashRowView(tab: tab, stash: stash)
-                        }
-                    }
-                }
-            } header: {
-                SectionHeaderLabel(title: "STASHES") {
-                    [.item("Stash Changes…", enabled: tab.totalChangesCount > 0 && !tab.isBusy) {
-                        tab.presentNewStash()
-                    }]
-                }
-            }
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 1)
+            filterField
         }
-        .listStyle(.sidebar)
+    }
+}
+
+/// Attaches inside the list so it can configure the scroller SwiftUI creates.
+private struct SidebarScrollerSetup: NSViewRepresentable {
+    func makeNSView(context: Context) -> ScrollerSizingView {
+        ScrollerSizingView()
+    }
+
+    func updateNSView(_ view: ScrollerSizingView, context: Context) {
+        view.installScrollerVisibility()
+    }
+
+    final class ScrollerSizingView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            installScrollerVisibility()
+        }
+
+        func installScrollerVisibility() {
+            guard let scrollView = enclosingScrollView else { return }
+            // The native thumb is more pronounced on the tinted sidebar surface in light mode.
+            PaneScrollerVisibility.install(on: scrollView, lightAppearanceOpacity: 0.65)
+        }
     }
 }
 
