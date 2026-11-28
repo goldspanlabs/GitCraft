@@ -441,12 +441,117 @@ fn ignored_files_do_not_block_an_otherwise_clean_drop() {
     write(dir.path(), "ignored.txt", "keep ignored file\n");
     let session = open(dir.path());
     let expected = session.head_position().unwrap();
-    assert!(session
-        .integrate_drop(source, None, DropIntegration::Merge, expected)
+    let movement = session
+        .integrate_drop(source, None, DropIntegration::Merge, expected.clone())
         .unwrap()
-        .is_some());
+        .unwrap();
+    session
+        .undo_head_move(movement.after, expected.oid.clone(), ResetMode::Keep)
+        .unwrap();
+    assert_eq!(session.head_position().unwrap(), expected);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("ignored.txt")).unwrap(),
         "keep ignored file\n"
     );
+}
+
+#[test]
+fn merge_drop_refuses_to_overwrite_ignored_local_data() {
+    for diverged in [false, true] {
+        for merge_options in [
+            "",
+            "--overwrite-ignore",
+            "--squash --no-commit --overwrite-ignore",
+        ] {
+            let (dir, source) = fixture();
+            if diverged {
+                commit_file(dir.path(), "main.txt", "main\n", "main local change");
+            }
+            if !merge_options.is_empty() {
+                run_git(
+                    dir.path(),
+                    &["config", "branch.main.mergeOptions", merge_options],
+                );
+            }
+            // The source tracks feature.txt; main has valuable ignored content at that path.
+            write(dir.path(), ".git/info/exclude", "feature.txt\n");
+            write(
+                dir.path(),
+                "feature.txt",
+                "valuable ignored local content\n",
+            );
+            let session = open(dir.path());
+            assert!(session.status().unwrap().is_clean);
+            let before = session.head_position().unwrap();
+            let refs = run_git(dir.path(), &["show-ref"]);
+            let index_tree = run_git(dir.path(), &["write-tree"]);
+            let error = session
+                .integrate_drop(
+                    source.clone(),
+                    Some("refs/heads/feature".into()),
+                    DropIntegration::Merge,
+                    before.clone(),
+                )
+                .expect_err(&format!("a merge must refuse ignored data loss: diverged={diverged}, options={merge_options}"));
+            assert!(error.to_string().contains("overwritten"), "{error}");
+            assert_eq!(session.head_position().unwrap(), before);
+            assert_eq!(run_git(dir.path(), &["show-ref"]), refs);
+            assert_eq!(run_git(dir.path(), &["write-tree"]), index_tree);
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("feature.txt")).unwrap(),
+                "valuable ignored local content\n"
+            );
+            let status = session.status().unwrap();
+            assert!(status.is_clean);
+            assert!(!status.is_merging);
+            assert!(run_git(dir.path(), &["stash", "list"]).is_empty());
+        }
+    }
+}
+
+#[test]
+fn merge_drop_refuses_ignored_file_directory_collisions() {
+    for incoming_directory in [false, true] {
+        let (dir, _) = fixture();
+        run_git(dir.path(), &["checkout", "feature"]);
+        if incoming_directory {
+            std::fs::create_dir(dir.path().join("cache")).unwrap();
+            write(dir.path(), "cache/tracked.txt", "incoming content\n");
+        } else {
+            write(dir.path(), "cache", "incoming content\n");
+        }
+        run_git(dir.path(), &["add", "cache"]);
+        run_git(dir.path(), &["commit", "-m", "add incoming cache path"]);
+        let source = head(dir.path());
+        run_git(dir.path(), &["checkout", "main"]);
+        commit_file(dir.path(), "main.txt", "main\n", "diverge before merging");
+        write(dir.path(), ".git/info/exclude", "cache\n");
+        let local_path = if incoming_directory {
+            "cache"
+        } else {
+            std::fs::create_dir(dir.path().join("cache")).unwrap();
+            "cache/local.txt"
+        };
+        write(dir.path(), local_path, "valuable ignored data\n");
+        let session = open(dir.path());
+        let before = session.head_position().unwrap();
+        let index_tree = run_git(dir.path(), &["write-tree"]);
+        let error = session
+            .integrate_drop(
+                source.clone(),
+                Some("refs/heads/feature".into()),
+                DropIntegration::Merge,
+                before.clone(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("Ignored local files"));
+        assert_eq!(session.head_position().unwrap(), before);
+        assert_eq!(run_git(dir.path(), &["write-tree"]), index_tree);
+        assert_eq!(rev(dir.path(), "feature"), source);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(local_path)).unwrap(),
+            "valuable ignored data\n"
+        );
+        assert!(!session.status().unwrap().is_merging);
+    }
 }

@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::{
     git_cli,
     validation::{
@@ -74,13 +76,20 @@ impl RepoSession {
                     format_ref_display(&oid)
                 )));
             }
+            if action == crate::DropIntegration::Merge {
+                self.refuse_ignored_merge_collisions(&oid)?;
+            }
             let mut args = vec![command];
             // Undo records only HEAD; never move other branch refs through user config.
             match action {
                 crate::DropIntegration::Rebase => args.push("--no-update-refs"),
                 // A confirmed Merge must complete and produce an undoable HEAD move even
                 // when branch.<name>.mergeOptions requests --squash or --no-commit.
-                crate::DropIntegration::Merge => args.extend(["--no-squash", "--commit"]),
+                crate::DropIntegration::Merge => {
+                    // Ignored local files are absent from status and HEAD-only Undo cannot
+                    // recover them. Refuse a collision rather than Git's default overwrite.
+                    args.extend(["--no-squash", "--commit", "--no-overwrite-ignore"]);
+                }
                 crate::DropIntegration::CherryPick => {}
             }
             args.push(&oid);
@@ -93,6 +102,52 @@ impl RepoSession {
             }
             Ok(movement)
         })
+    }
+
+    /// `--no-overwrite-ignore` alone does not protect a divergent merge's strategy.
+    /// Refuse overlapping ignored data before starting either kind of merge. Collapsing
+    /// ignored directories keeps this check cheap for build trees such as node_modules.
+    fn refuse_ignored_merge_collisions(&self, commit: &str) -> Result<(), GitCraftError> {
+        let output = git_cli::run(
+            &self.path,
+            &[
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+                "-z",
+            ],
+        )?;
+        let ignored: BTreeSet<String> = output
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(|p| p.trim_end_matches('/').to_owned())
+            .collect();
+        if ignored.is_empty() {
+            return Ok(());
+        }
+        let tree = git_cli::run(
+            &self.path,
+            &["ls-tree", "--full-tree", "-r", "--name-only", "-z", commit],
+        )?;
+        for path in tree.split('\0').filter(|p| !p.is_empty()) {
+            let prefix = format!("{path}/");
+            let collision = ignored.contains(path)
+                || path
+                    .match_indices('/')
+                    .any(|(at, _)| ignored.contains(&path[..at]))
+                || ignored
+                    .range(prefix.clone()..)
+                    .next()
+                    .is_some_and(|p| p.starts_with(&prefix));
+            if collision {
+                return Err(GitCraftError::warning(
+                    "Ignored local files could be overwritten by this merge. Move them outside the repository before merging.",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn checkout_branch(&self, branch_name: String) -> Result<Option<HeadMove>, GitCraftError> {
