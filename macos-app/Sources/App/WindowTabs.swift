@@ -266,6 +266,8 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
         } else {
             search.beginSearchInteraction()
         }
+        // The editor may already be installed, even if the next window update hasn't run.
+        updateSearchCollapse()
     }
 
     private func refreshChrome() {
