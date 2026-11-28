@@ -47,12 +47,6 @@ final class ShortcutUITests: XCTestCase {
 
     // MARK: Shortcuts
 
-    func testCommandFFocusesTheCommitFilter() throws {
-        try launch(fixture: FixtureRepository.make(twoBranches: true))
-
-        filterCommits(with: "feature")
-    }
-
     func testStageAndUnstageAllShortcuts() throws {
         try launch(fixture: FixtureRepository.make(twoBranches: true, unstagedFiles: ["README.md"]))
         XCTAssertTrue(app.element("unstaged-file:README.md").waitForExistence(timeout: 60))
@@ -164,7 +158,18 @@ final class ShortcutUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Create Tag"].waitForNonExistence(timeout: 10))
 
         description.click()
-        filterCommits(with: "needle")
+        app.typeKey("f", modifierFlags: .command)
+        // AppKit expands the magnifying glass into an editable field before routing typing to it.
+        let search = app.windows.firstMatch.toolbars.firstMatch.searchFields.firstMatch
+        XCTAssertTrue(
+            waitUntil(timeout: 10) { search.exists && search.isHittable && search.frame.width > 100 },
+            "⌘F opens the commit filter for editing"
+        )
+        app.typeText("needle")
+        XCTAssertTrue(
+            wait(for: search, toSatisfy: "value == %@", argument: "needle", timeout: 10),
+            "The commit filter receives the full query"
+        )
         XCTAssertEqual(description.value as? String, "body text")
     }
 
@@ -291,21 +296,6 @@ final class ShortcutUITests: XCTestCase {
     }
 
     // MARK: Helpers
-
-    private func filterCommits(with query: String, file: StaticString = #filePath, line: UInt = #line) {
-        app.typeKey("f", modifierFlags: .command)
-        // AppKit expands the magnifying glass into an editable field before routing typing to it.
-        let search = app.windows.firstMatch.toolbars.firstMatch.searchFields.firstMatch
-        XCTAssertTrue(
-            waitUntil(timeout: 10) { search.exists && search.isHittable && search.frame.width > 100 },
-            "⌘F opens the commit filter for editing", file: file, line: line
-        )
-        app.typeText(query)
-        XCTAssertTrue(
-            wait(for: search, toSatisfy: "value == %@", argument: query, timeout: 10),
-            "The commit filter receives the full query", file: file, line: line
-        )
-    }
 
     private func launch(fixture: FixtureRepository) throws {
         self.fixture = fixture
