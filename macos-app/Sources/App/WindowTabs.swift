@@ -150,6 +150,7 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     private static let collapsedSearchWidth: CGFloat = 36
     private var titleWidthConstraints: [NSLayoutConstraint] = []
     private var searchCollapseConstraint: NSLayoutConstraint?
+    private var isOpeningSearch = false
     private weak var titleRow: NSView?
     private weak var actionsView: NSView?
     private let sidebarItem: NSSplitViewItem
@@ -251,8 +252,22 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
 
     /// Puts the cursor in the toolbar's commit filter, expanding it if the toolbar collapsed it.
     func focusSearchField() {
-        let search = window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first
-        search?.beginSearchInteraction()
+        guard let window,
+              let search = window.toolbar?.items.first(where: { $0.itemIdentifier == .repoSearch }) as? NSSearchToolbarItem
+        else { return }
+
+        expandSearchField()
+        let field = search.searchField
+        // AppKit can finish focusing after its animation starts. If the field is visible,
+        // give it the keyboard now so the next keystroke reaches the filter.
+        if field.window === window, !field.isHiddenOrHasHiddenAncestor,
+           window.makeFirstResponder(field), let editor = field.currentEditor() {
+            editor.selectAll(nil)
+        } else {
+            search.beginSearchInteraction()
+        }
+        // The editor may already be installed, even if the next window update hasn't run.
+        updateSearchCollapse()
     }
 
     private func refreshChrome() {
@@ -311,8 +326,11 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     /// Shrinks the filter to a button on a narrow window, unless it's being typed in or holds a filter.
     private func updateSearchCollapse() {
         guard let window, let field = searchField, let constraint = searchCollapseConstraint else { return }
+        let isEditing = field.currentEditor() != nil
+        if isEditing { isOpeningSearch = false }
         let collapsed = window.frame.width - topBarLeadingEdge < Self.searchCollapseWidth
-            && field.currentEditor() == nil
+            && !isOpeningSearch
+            && !isEditing
             && field.stringValue.isEmpty
         if constraint.isActive != collapsed { constraint.isActive = collapsed }
     }
@@ -320,8 +338,16 @@ final class RepoWindowController: WorkspaceWindowController, NSWindowDelegate, N
     /// Lifts the collapsed width ahead of a search: macOS 26 won't put the cursor in a field
     /// still held to the size of its button.
     private func expandSearchField() {
+        guard !isOpeningSearch else { return }
+        // Window updates can run during layout and before AppKit installs the field editor.
+        isOpeningSearch = true
         searchCollapseConstraint?.isActive = false
         window?.layoutIfNeeded()
+    }
+
+    func windowDidResignKey(_: Notification) {
+        isOpeningSearch = false
+        updateSearchCollapse()
     }
 
     /// Scales the title block with the window, so it is the same for every name at a given width,
