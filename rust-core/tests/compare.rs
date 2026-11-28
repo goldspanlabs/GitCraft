@@ -286,11 +286,11 @@ fn branch_eligibility_tracks_head_and_tip_changes() {
     let tips = vec![main.clone(), other.clone(), main.clone()];
     assert_eq!(
         session.comparable_branch_tips(tips.clone()).unwrap(),
-        [main.clone()]
+        std::slice::from_ref(&main)
     );
     assert_eq!(
         session.comparable_branch_tips(tips.clone()).unwrap(),
-        [main.clone()]
+        std::slice::from_ref(&main)
     );
 
     let next = commit_file(dir, "next.txt", "next\n", "Advance main");
