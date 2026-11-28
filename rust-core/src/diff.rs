@@ -34,7 +34,10 @@ pub fn working_tree_file(
     // An empty unstaged diff only means "untracked" if git doesn't know the
     // path. A tracked file with no unstaged changes must yield no rows.
     if raw.trim().is_empty() && !staged {
-        if let Some(rows) = path.and_then(|rel_path| untracked_file_rows(repo, rel_path, ext)) {
+        if let Some(rows) = path
+            .filter(|rel_path| !is_tracked(repo, rel_path))
+            .and_then(|rel_path| untracked_file_rows(repo, rel_path, ext))
+        {
             return Ok(rows);
         }
     }
@@ -47,13 +50,9 @@ fn file_ext(path: &str) -> Option<&str> {
     Path::new(path).extension().and_then(|e| e.to_str())
 }
 
-/// Shows an untracked file as one hunk that adds every line, or `None` when `rel_path` is
-/// tracked, not a regular file, or can't be read.
+/// Shows an untracked file as one hunk that adds every line. The caller checks Git status.
 fn untracked_file_rows(repo: &Path, rel_path: &str, ext: Option<&str>) -> Option<Vec<DiffRow>> {
     let full_path = repo.join(rel_path);
-    if is_tracked(repo, rel_path) {
-        return None;
-    }
     let canonical_root = std::fs::canonicalize(repo).ok()?;
     let parent = std::fs::canonicalize(full_path.parent()?).ok()?;
     if !parent.starts_with(canonical_root) {
@@ -131,6 +130,16 @@ pub(crate) fn compare_file_diff(
     file: &CompareFile,
 ) -> Result<Vec<DiffRow>, GitCraftError> {
     let ext = file_ext(&file.path);
+    // Even a literal pathspec for a new file can match the old directory's descendants.
+    if head.is_none()
+        && file.status == "A"
+        && compare_untracked_paths(repo, &[&file.path])?
+            .split_terminator('\0')
+            .any(|path| path == file.path)
+    {
+        return Ok(untracked_file_rows(repo, &file.path, ext).unwrap_or_default());
+    }
+
     let mut args = vec![
         "--literal-pathspecs",
         "diff",
@@ -156,11 +165,6 @@ pub(crate) fn compare_file_diff(
     } else {
         git_cli::run(repo, &args)?
     };
-    if raw.is_empty() && head.is_none() && file.status == "A" {
-        if let Some(rows) = untracked_file_rows(repo, &file.path, ext) {
-            return Ok(rows);
-        }
-    }
     Ok(parse_with_ext(&raw, ext)?)
 }
 

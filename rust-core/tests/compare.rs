@@ -309,3 +309,45 @@ fn branch_eligibility_tracks_head_and_tip_changes() {
     run_git(dir, &["switch", "--detach", "HEAD"]);
     assert!(session.comparable_branch_tips(tips).unwrap().is_empty());
 }
+
+#[test]
+fn untracked_file_replacing_a_directory_has_its_own_addition_patch() {
+    let repo = init_repo_with_commit();
+    let dir = repo.path();
+    std::fs::create_dir(dir.join("docs")).unwrap();
+    commit_file(
+        dir,
+        "docs/old.txt",
+        "old contents\n",
+        "Track a file in docs",
+    );
+    std::fs::remove_file(dir.join("docs/old.txt")).unwrap();
+    std::fs::remove_dir(dir.join("docs")).unwrap();
+    write(dir, "docs", "replacement contents\n");
+
+    let session = open(dir);
+    let result = session.compare_working_tree("main".into()).unwrap();
+    assert_eq!(
+        files(&result),
+        BTreeMap::from([("docs", ("A", None)), ("docs/old.txt", ("D", None))])
+    );
+    for (path, kind, text) in [
+        ("docs", "addition", "+replacement contents"),
+        ("docs/old.txt", "deletion", "-old contents"),
+    ] {
+        let file = result.files.iter().find(|file| file.path == path).unwrap();
+        let rows = session
+            .get_compare_diff(
+                result.merge_base_oid.clone(),
+                result.head_oid.clone(),
+                file.clone(),
+            )
+            .unwrap();
+        let changes: Vec<_> = rows
+            .iter()
+            .filter(|row| matches!(row.kind.as_str(), "addition" | "deletion"))
+            .map(|row| (row.kind.as_str(), row.text.as_str()))
+            .collect();
+        assert_eq!(changes, [(kind, text)]);
+    }
+}
