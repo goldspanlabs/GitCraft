@@ -120,7 +120,7 @@ struct RepoCommands: Commands {
         CommandGroup(replacing: .undoRedo) {
             UndoRedoMenuItems(tab: workspace.activeTab)
         }
-        CommandGroup(after: .pasteboard) {
+        CommandGroup(after: .textEditing) {
             Divider()
             Button("Filter Commits") { workspace.focusCommitFilter() }
                 .keyboardShortcut("f", modifiers: .command)
