@@ -188,6 +188,7 @@ struct SidebarView: View {
                             tab.presentNewBranch()
                         }]
                     }
+                    .gitDropTarget(tab: tab, target: .branches)
                     .background(alignment: .topLeading) {
                         SidebarScrollerSetup()
                             .frame(width: 0, height: 0)
@@ -284,6 +285,7 @@ struct SidebarView: View {
                             tab.presentNewTag()
                         }]
                     }
+                    .gitDropTarget(tab: tab, target: .tags)
                 }
 
                 Section(isExpanded: $isStashesExpanded) {
@@ -687,6 +689,11 @@ private struct BranchRowContainer<Trailing: View>: View {
         // One accessibility element per row, so UI tests can find it by branch name.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("branch-row:\(branch.name)")
+        .onDrag {
+            tab.makeGitDrag(oids: [branch.targetOidHex], sourceRef: branch.fullRef,
+                            label: branch.name)?.itemProvider ?? NSItemProvider()
+        }
+        .gitDropTarget(tab: tab, target: .branch(branch.isRemote ? branch.fullRef : branch.name))
         // Single tap must fire immediately; a count:1 gesture declared next to a
         // count:2 one makes SwiftUI wait out the double-click interval first.
         .onTapGesture {

@@ -13,4 +13,10 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>© 2026 Goldspan Labs Inc.
 Open source under the MIT License</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>dev.gitcraft.git-object.v1</string>
+        <key>UTTypeDescription</key><string>GitCraft Git object drag</string>
+        <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    </dict></array>
 </dict></plist>

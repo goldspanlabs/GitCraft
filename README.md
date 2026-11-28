@@ -33,6 +33,7 @@
 
 ## Features
 
+- **Drag and drop Git actions:** Drag branches onto HEAD to merge (hold Option to rebase), commits onto Working Changes or HEAD to cherry-pick, and consecutive commits onto their oldest commit to squash (Option to fixup). Drop a commit or branch onto the Local Branches or Tags heading to create a ref. Actions open a review sheet before changing Git.
 - **Basic Features:** Everyday Git workflows alongside merge, rebase, cherry-pick, revert, reset, squash, stashes, and tags.
 - **Undo & Redo for most local Git actions:** Undo or redo changes (`⌘Z` / `⇧⌘Z`), including commits, merges, rebases, resets, cherry-picks, and branch or tag updates.
 - **First-class Git worktrees:** Create, lock, prune, and switch between linked worktrees with live dirty counts across sibling checkouts.

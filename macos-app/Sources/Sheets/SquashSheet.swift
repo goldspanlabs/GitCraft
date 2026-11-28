@@ -9,15 +9,19 @@ struct SquashSheet: View {
 
     @ObservedObject var tab: RepoTab
     let preview: SquashPreview
+    let expectedCheckout: String?
+    @State private var fixup: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var summary: String
     @State private var description: String
     @FocusState private var focusedField: Field?
 
-    init(tab: RepoTab, preview: SquashPreview) {
+    init(tab: RepoTab, preview: SquashPreview, fixup: Bool = false, expectedCheckout: String? = nil) {
         self.tab = tab
         self.preview = preview
-        let draft = SquashMessage.draft(for: preview.commits)
+        self.expectedCheckout = expectedCheckout
+        _fixup = State(initialValue: fixup)
+        let draft = SquashMessage.draft(for: preview.commits, fixup: fixup)
         _summary = State(initialValue: draft.summary)
         _description = State(initialValue: draft.description)
     }
@@ -28,18 +32,31 @@ struct SquashSheet: View {
 
     var body: some View {
         ActionSheetLayout(
-            title: "Squash \(preview.commits.count) commits on \"\(branch)\"",
+            title: "\(fixup ? "Fixup" : "Squash") \(preview.commits.count) commits on \"\(branch)\"",
             subtitle: "Combine the selected commits into one.",
-            confirmLabel: "Squash",
+            confirmLabel: fixup ? "Fixup" : "Squash",
             confirmDisabled: summary.trimmed.isEmpty || tab.isBusy,
             onCancel: { dismiss() },
             onConfirm: {
-                tab.squash(preview, summary: summary, description: description)
+                if let expectedCheckout, expectedCheckout != tab.activeCheckoutPath {
+                    tab.showToast("The checkout changed. Start the drag again.")
+                } else {
+                    tab.squash(preview, summary: summary, description: description, fixup: fixup)
+                }
                 dismiss()
             }
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 commitList
+                Text("Target: \(preview.commits[0].shortOid) — \(preview.commits[0].summary)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Fixup — keep only the target commit message", isOn: $fixup)
+                    .accessibilityIdentifier("squash-fixup")
+                    .onChange(of: fixup) { _, value in
+                        let draft = SquashMessage.draft(for: preview.commits, fixup: value)
+                        summary = draft.summary
+                        description = draft.description
+                    }
 
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
                     GridRow {

@@ -8,6 +8,60 @@ use crate::{
 };
 
 impl RepoSession {
+    /// Executes a pinned drop plan. Rechecks HEAD, source ref and working state under the
+    /// session mutation lock, so another app action cannot retarget a confirmed operation.
+    pub fn integrate_drop(
+        &self,
+        commit: String,
+        source_ref: Option<String>,
+        action: crate::DropIntegration,
+        expected: HeadPosition,
+    ) -> Result<Option<HeadMove>, GitCraftError> {
+        let oid = gix::ObjectId::from_hex(commit.as_bytes())
+            .map_err(GitCraftError::from_display)?
+            .to_string();
+        self.with_mutation_lock(|| {
+            if expected.branch.is_none() || self.head_position().as_ref() != Some(&expected) {
+                return Err(GitCraftError::warning(
+                    "The branch changed. Start the drag again.",
+                ));
+            }
+            if let Some(source) = source_ref {
+                if !(source.starts_with("refs/heads/") || source.starts_with("refs/remotes/"))
+                    || self.ref_oid(source).as_deref() != Some(oid.as_str())
+                {
+                    return Err(GitCraftError::warning(
+                        "The source branch changed. Start the drag again.",
+                    ));
+                }
+            }
+            let status = self.status()?;
+            if status.is_merging
+                || status.is_rebasing
+                || status.is_cherry_picking
+                || status.is_reverting
+                || status.has_conflicts
+            {
+                return Err(GitCraftError::warning("Finish the current operation first"));
+            }
+            if !status.is_clean {
+                return Err(GitCraftError::warning("Commit or stash your changes first"));
+            }
+            let command = match action {
+                crate::DropIntegration::Merge => "merge",
+                crate::DropIntegration::Rebase => "rebase",
+                crate::DropIntegration::CherryPick => "cherry-pick",
+            };
+            // Resolve before mutating to reject non-commit objects.
+            resolve_commit(&self.path, &oid)?;
+            git_cli::mutate(&self.path, &[command, &oid])?;
+            Ok(Self::head_move_if_changed(
+                Some(expected),
+                self.head_position(),
+            ))
+        })
+    }
+
     pub fn checkout_branch(&self, branch_name: String) -> Result<Option<HeadMove>, GitCraftError> {
         let branch_name = validate_ref_arg(&branch_name)?;
         self.with_mutation_lock(|| {

@@ -1,3 +1,5 @@
+enum DropIntegration { "Merge", "Rebase", "CherryPick" };
+
 namespace gitcraft_core {
   GitAvailability check_git_availability();
   string minimum_git_version();
@@ -446,6 +448,9 @@ interface RepoSession {
 
   [Throws=GitCraftError]
   HeadMove? cherry_pick(string commit);
+
+  [Throws=GitCraftError]
+  HeadMove? integrate_drop(string commit, string? source_ref, DropIntegration action, HeadPosition expected);
 
   [Throws=GitCraftError]
   HeadMove? revert_commit(string commit);

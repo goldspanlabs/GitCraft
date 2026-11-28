@@ -7,8 +7,9 @@ enum SquashMessage {
     /// `commits` is oldest first. The summary is the oldest commit's. The description is its
     /// body, then each later commit's summary and body, then one `Co-authored-by:` line per
     /// other author.
-    static func draft(for commits: [SquashCommit]) -> (summary: String, description: String) {
+    static func draft(for commits: [SquashCommit], fixup: Bool = false) -> (summary: String, description: String) {
         guard let oldest = commits.first else { return ("", "") }
+        if fixup { return (oldest.summary, oldest.body) }
         var paragraphs: [String] = []
         var coAuthors: [String] = []
         var credited = Set<String>()

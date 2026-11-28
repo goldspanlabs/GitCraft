@@ -1,0 +1,214 @@
+mod common;
+
+use common::{commit_file, head, init_repo_with_commit, open, rev, run_git, write};
+use gitcraft_core::{DropIntegration, ResetMode};
+
+fn fixture() -> (tempfile::TempDir, String) {
+    let dir = init_repo_with_commit();
+    run_git(dir.path(), &["checkout", "-b", "feature"]);
+    commit_file(dir.path(), "feature.txt", "feature\n", "feature change");
+    let source = head(dir.path());
+    run_git(dir.path(), &["checkout", "main"]);
+    (dir, source)
+}
+
+#[test]
+fn merge_and_cherry_pick_have_undoable_head_moves() {
+    for action in [DropIntegration::Merge, DropIntegration::CherryPick] {
+        let (dir, source) = fixture();
+        let session = open(dir.path());
+        let expected = session.head_position().unwrap();
+        let movement = session
+            .integrate_drop(
+                source.clone(),
+                Some("refs/heads/feature".into()),
+                action,
+                expected.clone(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(movement.before, expected);
+        assert!(dir.path().join("feature.txt").exists());
+        assert_eq!(rev(dir.path(), "feature"), source);
+        assert_eq!(
+            run_git(dir.path(), &["branch", "--show-current"]).trim(),
+            "main"
+        );
+        session
+            .undo_head_move(movement.after, movement.before.oid.clone(), ResetMode::Keep)
+            .unwrap();
+        assert_eq!(head(dir.path()), movement.before.oid);
+        assert!(!dir.path().join("feature.txt").exists());
+    }
+}
+
+#[test]
+fn rebase_replays_destination_onto_dragged_source() {
+    let (dir, source) = fixture();
+    commit_file(dir.path(), "main.txt", "main\n", "main change");
+    let session = open(dir.path());
+    let expected = session.head_position().unwrap();
+    let movement = session
+        .integrate_drop(
+            source.clone(),
+            Some("refs/heads/feature".into()),
+            DropIntegration::Rebase,
+            expected.clone(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(rev(dir.path(), "HEAD^"), source);
+    assert_eq!(rev(dir.path(), "feature"), source);
+    assert_eq!(
+        run_git(dir.path(), &["log", "-1", "--format=%s"]).trim(),
+        "main change"
+    );
+    session
+        .undo_head_move(movement.after, expected.oid.clone(), ResetMode::Keep)
+        .unwrap();
+    assert_eq!(head(dir.path()), expected.oid);
+}
+
+#[test]
+fn stale_head_and_changed_branch_identity_refuse_without_mutating() {
+    for action in [
+        DropIntegration::Merge,
+        DropIntegration::Rebase,
+        DropIntegration::CherryPick,
+    ] {
+        let (dir, source) = fixture();
+        let session = open(dir.path());
+        let expected = session.head_position().unwrap();
+        // Same OID, different branch: checking only the hash would apply to the wrong branch.
+        run_git(dir.path(), &["checkout", "-b", "other"]);
+        assert!(session
+            .integrate_drop(source.clone(), None, action, expected.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("branch changed"));
+        assert_eq!(head(dir.path()), expected.oid);
+        run_git(dir.path(), &["checkout", "main"]);
+        commit_file(dir.path(), "new.txt", "new\n", "new commit");
+        let before = head(dir.path());
+        assert!(session
+            .integrate_drop(source.clone(), None, action, expected)
+            .is_err());
+        assert_eq!(head(dir.path()), before);
+        assert!(!dir.path().join("feature.txt").exists());
+    }
+}
+
+#[test]
+fn changed_or_deleted_source_branch_refuses_without_mutating() {
+    for deleted in [false, true] {
+        let (dir, source) = fixture();
+        let session = open(dir.path());
+        let expected = session.head_position().unwrap();
+        if deleted {
+            run_git(dir.path(), &["branch", "-D", "feature"]);
+        } else {
+            run_git(dir.path(), &["branch", "-f", "feature", "main"]);
+        }
+        assert!(session
+            .integrate_drop(
+                source,
+                Some("refs/heads/feature".into()),
+                DropIntegration::Merge,
+                expected.clone()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("source branch changed"));
+        assert_eq!(head(dir.path()), expected.oid);
+    }
+}
+
+#[test]
+fn dirty_state_is_preserved_and_never_automatically_stashed() {
+    for action in [
+        DropIntegration::Merge,
+        DropIntegration::Rebase,
+        DropIntegration::CherryPick,
+    ] {
+        let (dir, source) = fixture();
+        let session = open(dir.path());
+        let expected = session.head_position().unwrap();
+        write(dir.path(), "staged.txt", "staged\n");
+        run_git(dir.path(), &["add", "staged.txt"]);
+        write(dir.path(), "staged.txt", "unstaged\n");
+        write(dir.path(), "untracked.txt", "untracked\n");
+        let before = run_git(dir.path(), &["status", "--porcelain"]);
+        assert!(session
+            .integrate_drop(source, None, action, expected.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("stash"));
+        assert_eq!(head(dir.path()), expected.oid);
+        assert_eq!(run_git(dir.path(), &["status", "--porcelain"]), before);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("staged.txt")).unwrap(),
+            "unstaged\n"
+        );
+        assert!(run_git(dir.path(), &["stash", "list"]).is_empty());
+    }
+}
+
+#[test]
+fn invalid_object_and_merge_commit_cherry_pick_do_not_change_head() {
+    let (dir, source) = fixture();
+    let session = open(dir.path());
+    let expected = session.head_position().unwrap();
+    for invalid in [
+        "--help".to_owned(),
+        "0".repeat(40),
+        run_git(dir.path(), &["rev-parse", "HEAD^{tree}"])
+            .trim()
+            .to_owned(),
+    ] {
+        assert!(session
+            .integrate_drop(invalid, None, DropIntegration::CherryPick, expected.clone())
+            .is_err());
+        assert_eq!(head(dir.path()), expected.oid);
+    }
+    commit_file(dir.path(), "main.txt", "main\n", "main change");
+    run_git(dir.path(), &["merge", "--no-edit", &source]);
+    let merge = head(dir.path());
+    run_git(dir.path(), &["reset", "--hard", &expected.oid]);
+    assert!(session
+        .integrate_drop(merge, None, DropIntegration::CherryPick, expected.clone())
+        .is_err());
+    assert_eq!(head(dir.path()), expected.oid);
+}
+
+#[test]
+fn conflicts_enter_standard_recovery_and_abort_preserves_original_head() {
+    for action in [
+        DropIntegration::Merge,
+        DropIntegration::Rebase,
+        DropIntegration::CherryPick,
+    ] {
+        let dir = init_repo_with_commit();
+        run_git(dir.path(), &["checkout", "-b", "feature"]);
+        commit_file(dir.path(), "a.txt", "feature conflict\n", "feature change");
+        let source = head(dir.path());
+        run_git(dir.path(), &["checkout", "main"]);
+        commit_file(dir.path(), "a.txt", "main conflict\n", "main change");
+        let session = open(dir.path());
+        let expected = session.head_position().unwrap();
+        assert!(session
+            .integrate_drop(source.clone(), None, action, expected.clone())
+            .is_err());
+        let status = session.status().unwrap();
+        assert!(status.has_conflicts);
+        assert!(session
+            .integrate_drop(source, None, action, session.head_position().unwrap())
+            .is_err());
+        match action {
+            DropIntegration::Merge => session.abort_merge().unwrap(),
+            DropIntegration::Rebase => session.abort_rebase().unwrap(),
+            DropIntegration::CherryPick => session.abort_cherry_pick().unwrap(),
+        }
+        assert_eq!(head(dir.path()), expected.oid);
+        assert!(session.status().unwrap().is_clean);
+    }
+}

@@ -86,6 +86,14 @@ pub enum PullStrategy {
     FastForwardOnly,
 }
 
+/// Integration selected by a checked drag-and-drop plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropIntegration {
+    Merge,
+    Rebase,
+    CherryPick,
+}
+
 /// How `merge_commit` joins a commit to the checked-out branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeType {

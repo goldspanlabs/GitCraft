@@ -15,6 +15,17 @@ final class SquashMessageTests: XCTestCase {
         )
     }
 
+    func testFixupRetainsOnlyTheTargetsExactMessage() {
+        let body = "Reason.\n\nCo-authored-by: Cy <cy@x.com>\n"
+        let draft = SquashMessage.draft(for: [
+            commit("Target", body: body),
+            commit("Newer message", body: "Discard this", author: "Bo", email: "bo@x.com"),
+        ], fixup: true)
+        XCTAssertEqual(draft.summary, "Target")
+        XCTAssertEqual(draft.description, body)
+        XCTAssertEqual(SquashMessage.draft(for: [], fixup: true).summary, "")
+    }
+
     func testCombinesMessagesAndCreditsOtherAuthorsOnce() {
         let draft = SquashMessage.draft(for: [
             commit("Add parser", body: "Why."),

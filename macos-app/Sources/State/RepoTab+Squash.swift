@@ -84,7 +84,7 @@ extension RepoTab {
     }
 
     /// Combines `preview`'s commits into one with the given message. Undoable.
-    func squash(_ preview: SquashPreview, summary: String, description: String) {
+    func squash(_ preview: SquashPreview, summary: String, description: String, fixup: Bool = false) {
         let summary = summary.trimmed
         guard !isBusy, !summary.isEmpty else { return }
         let body = description.trimmed
@@ -101,9 +101,9 @@ extension RepoTab {
             self.pendingSelectionOid = result.squashedOid
             // A soft reset moves back without touching the index or files, as the squash did.
             self.recordUndo(
-                actionName: "Squash",
+                actionName: fixup ? "Fixup" : "Squash",
                 step: .moveHead(result.headMove, mode: .soft),
-                message: "Squashed \(oids.count) commits on \"\(branch)\"."
+                message: "\(fixup ? "Fixed up" : "Squashed") \(oids.count) commits on \"\(branch)\"."
             )
         })
     }
