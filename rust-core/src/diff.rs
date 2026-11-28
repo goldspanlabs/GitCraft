@@ -143,10 +143,14 @@ pub(crate) fn compare_file_diff(
     args.extend(head);
     args.extend(["--", &file.path]);
     args.extend(file.old_path.as_deref());
-    let raw = if head.is_none() && file.status != "A" {
-        let restored: Vec<_> = std::iter::once(file.path.as_str())
+    let raw = if head.is_none() && !matches!(file.status.as_str(), "A" | "D") {
+        let paths: Vec<_> = std::iter::once(file.path.as_str())
             .chain(file.old_path.as_deref())
-            .filter(|path| repo.join(path).symlink_metadata().is_ok() && !is_tracked(repo, path))
+            .collect();
+        let untracked = compare_untracked_paths(repo, &paths)?;
+        let restored: Vec<_> = untracked
+            .split_terminator('\0')
+            .filter(|path| paths.contains(path))
             .collect();
         run_compare_worktree_diff(repo, &args, base, &restored)?
     } else {
@@ -158,6 +162,23 @@ pub(crate) fn compare_file_diff(
         }
     }
     Ok(parse_with_ext(&raw, ext)?)
+}
+
+/// Lists untracked paths eligible for the working-tree comparison.
+pub(crate) fn compare_untracked_paths(
+    repo: &Path,
+    paths: &[&str],
+) -> Result<String, GitCraftError> {
+    let mut args = vec![
+        "--literal-pathspecs",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+    ];
+    args.extend_from_slice(paths);
+    git_cli::run(repo, &args)
 }
 
 /// Supplies a temporary index when a path from the base has been staged for
@@ -219,6 +240,7 @@ pub(crate) fn compare_file_content_pair(
     };
     let new_content = match head {
         Some(oid) => commit_file_content(sync_repo, oid, &file.path)?,
+        None if file.status == "D" => None,
         None => working_file_content(repo_path, sync_repo, &file.path, false)?,
     };
     Ok(FileContentPair {
@@ -612,6 +634,7 @@ fn parse_with_ext(input: &str, default_ext: Option<&str>) -> io::Result<Vec<Diff
             || (!in_hunk
                 && (line.starts_with("index ")
                     || line.starts_with("--- ")
+                    || line == "+++ /dev/null"
                     || line.starts_with("new file mode")
                     || line.starts_with("deleted file mode")))
         {

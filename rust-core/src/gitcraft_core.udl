@@ -10,6 +10,7 @@ namespace gitcraft_core {
 
   string render_markdown_html(string markdown);
   string render_markdown_diff_html(string? old_markdown, string? new_markdown);
+  string render_compare_markdown_html(string? old_markdown, string? new_markdown, string? old_path);
 };
 
 [Error]

@@ -229,3 +229,46 @@ fn a_recreated_tracked_file_is_compared_using_its_working_copy() {
     assert!(rows.iter().any(|row| row.text == "+recreated"));
     assert_eq!(run_git(dir, &["status", "--porcelain", "-z"]), before);
 }
+
+#[test]
+fn ignored_file_left_on_disk_is_still_deleted_in_patch_and_preview() {
+    let repo = init_repo_with_commit();
+    let dir = repo.path();
+    commit_file(dir, "guide.md", "# Original\n", "Track guide");
+    run_git(dir, &["rm", "--cached", "guide.md"]);
+    write(dir, ".git/info/exclude", "guide.md\n");
+    write(dir, "guide.md", "# Ignored\n");
+
+    let session = open(dir);
+    let result = session.compare_working_tree("main".into()).unwrap();
+    assert_eq!(files(&result), BTreeMap::from([("guide.md", ("D", None))]));
+    let file = result.files[0].clone();
+    let rows = session
+        .get_compare_diff(
+            result.merge_base_oid.clone(),
+            result.head_oid.clone(),
+            file.clone(),
+        )
+        .unwrap();
+    assert!(rows
+        .iter()
+        .any(|row| row.kind == "deletion" && row.text == "-# Original"));
+    assert!(!rows.iter().any(|row| row.kind == "addition"));
+    let pair = session
+        .get_compare_file_contents(result.merge_base_oid, result.head_oid, file)
+        .unwrap();
+    assert_eq!(pair.old_content.as_deref(), Some("# Original\n"));
+    assert_eq!(pair.new_content, None);
+}
+
+#[test]
+fn moved_markdown_uses_old_directory_only_for_removed_relative_assets() {
+    let html = gitcraft_core::render_compare_markdown_html(
+        Some("![old](../diagram.png)\n\n![root](/icon.png)\n".into()),
+        Some("![new](diagram.png)\n".into()),
+        Some("docs/old #β/guide.md".into()),
+    );
+    assert!(html.contains(r#"src="/docs/old%20%23%CE%B2/../diagram.png?diff-side=old""#));
+    assert!(html.contains(r#"src="/icon.png?diff-side=old""#));
+    assert!(html.contains(r#"src="diagram.png""#));
+}

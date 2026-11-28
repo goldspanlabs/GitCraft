@@ -68,10 +68,7 @@ impl RepoSession {
         args.push("--");
         let mut files = parse_files(&git_cli::run(&self.path, &args)?)?;
         if working {
-            let untracked = git_cli::run(
-                &self.path,
-                &["ls-files", "--others", "--exclude-standard", "-z"],
-            )?;
+            let untracked = diff::compare_untracked_paths(&self.path, &[])?;
             let untracked: HashSet<_> = untracked.split_terminator('\0').collect();
             // Git's real index can omit a base file that was staged for deletion
             // and then recreated. Include those paths in the net tree comparison.

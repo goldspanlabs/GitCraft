@@ -165,7 +165,9 @@ extension RepoTab {
         let head = summary.headOid
         loadInBackground({ session in
             let versions = try session.getCompareFileContents(mergeBaseOid: base, headOid: head, file: file)
-            return renderMarkdownDiffHtml(oldMarkdown: versions.oldContent, newMarkdown: versions.newContent)
+            return renderCompareMarkdownHtml(
+                oldMarkdown: versions.oldContent, newMarkdown: versions.newContent, oldPath: file.oldPath
+            )
         }, apply: { [self] html in
             guard compareFileRevision == revision else { return }
             compareMarkdownState = .loaded(html)
